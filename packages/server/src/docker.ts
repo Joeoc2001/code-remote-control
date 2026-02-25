@@ -13,7 +13,6 @@ const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
 
-// In-memory cache of remote URLs and health data
 const remoteUrlCache = new Map<string, string>();
 const healthCache = new Map<string, ContainerHealth>();
 
@@ -126,7 +125,6 @@ export async function createContainer(
 
   await container.start();
 
-  // Start watching logs for remote URL
   watchContainerLogs(container.id);
 
   const info = await container.inspect();
@@ -147,7 +145,6 @@ export async function removeContainer(id: string): Promise<void> {
   try {
     await container.stop();
   } catch {
-    // Container may already be stopped
   }
   await container.remove({ v: true });
   remoteUrlCache.delete(id);
@@ -173,23 +170,17 @@ function watchContainerLogs(containerId: string): void {
       const readable = stream as unknown as NodeJS.ReadableStream;
       readable.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
-        // Look for Claude Code Remote URL in logs
         const urlMatch = text.match(/(https:\/\/claude\.ai\/code\/session_[^\s"']+)/);
         if (urlMatch && !remoteUrlCache.has(containerId)) {
           remoteUrlCache.set(containerId, urlMatch[1]);
           broadcastUpdate(containerId);
         }
       });
-      readable.on("error", () => {
-        // Container may have been removed
-      });
+      readable.on("error", () => {});
     })
-    .catch(() => {
-      // Container may have been removed
-    });
+    .catch(() => {});
 }
 
-// SSE clients
 type SSEClient = {
   id: string;
   res: import("express").Response;
@@ -212,7 +203,6 @@ function broadcastSSE(event: string, data: unknown): void {
     try {
       client.res.write(payload);
     } catch {
-      // Client disconnected
     }
   }
 }
@@ -228,7 +218,6 @@ export function broadcastRemoval(id: string): void {
   broadcastSSE("container-removed", { id });
 }
 
-// Health checking
 export async function runHealthChecks(): Promise<void> {
   const containers = await listContainers();
 
