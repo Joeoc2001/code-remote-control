@@ -1,0 +1,15 @@
+{
+  "name": "code-remote-control",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/client",
+    "packages/server"
+  ],
+  "scripts": {
+    "dev:client": "npm run dev -w packages/client",
+    "dev:server": "npm run dev -w packages/server",
+    "build": "npm run build -w packages/client && npm run build -w packages/server",
+    "typecheck": "npm run typecheck -w packages/client && npm run typecheck -w packages/server"
+  }
+}
