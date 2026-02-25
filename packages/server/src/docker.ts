@@ -1,0 +1,270 @@
+import Dockerode from "dockerode";
+import crypto from "node:crypto";
+import type {
+  ManagedContainer,
+  ContainerHealth,
+  EnvironmentConfig,
+} from "./types.js";
+import { GITHUB_TOKEN, ANTHROPIC_API_KEY, CRC_ENV_IMAGE } from "./config.js";
+
+const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
+
+const CONTAINER_PREFIX = "crc-";
+const LABEL_CONFIG_NAME = "crc.config-name";
+const LABEL_REPO_NAME = "crc.repo-name";
+
+// In-memory cache of remote URLs and health data
+const remoteUrlCache = new Map<string, string>();
+const healthCache = new Map<string, ContainerHealth>();
+
+function slugify(input: string): string {
+  return input
+    .replace(/[^a-zA-Z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase()
+    .slice(0, 30);
+}
+
+function generateId(): string {
+  return crypto.randomBytes(4).toString("hex");
+}
+
+function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContainer {
+  const name = (container.Names[0] || "").replace(/^\//, "");
+  const configName = container.Labels[LABEL_CONFIG_NAME] || "unknown";
+  const repoName = container.Labels[LABEL_REPO_NAME] || "unknown";
+  const status = container.State || "unknown";
+  const health = healthCache.get(container.Id) || {
+    container: status === "running" ? "running" as const : "stopped" as const,
+    claudeCode: "unknown" as const,
+  };
+
+  return {
+    id: container.Id,
+    name,
+    configName,
+    repoName,
+    status,
+    health,
+    remoteUrl: remoteUrlCache.get(container.Id) || null,
+    createdAt: new Date(container.Created * 1000).toISOString(),
+  };
+}
+
+export async function listContainers(): Promise<ManagedContainer[]> {
+  const containers = await docker.listContainers({
+    all: true,
+    filters: { name: [CONTAINER_PREFIX] },
+  });
+
+  return containers
+    .filter((c) => {
+      const name = (c.Names[0] || "").replace(/^\//, "");
+      return name.startsWith(CONTAINER_PREFIX);
+    })
+    .map(parseContainerInfo);
+}
+
+export async function getContainer(id: string): Promise<ManagedContainer | null> {
+  try {
+    const container = docker.getContainer(id);
+    const info = await container.inspect();
+    const name = info.Name.replace(/^\//, "");
+    if (!name.startsWith(CONTAINER_PREFIX)) return null;
+
+    const configName = info.Config.Labels[LABEL_CONFIG_NAME] || "unknown";
+    const repoName = info.Config.Labels[LABEL_REPO_NAME] || "unknown";
+    const status = info.State.Running ? "running" : info.State.Status;
+    const health = healthCache.get(id) || {
+      container: info.State.Running ? "running" as const : "stopped" as const,
+      claudeCode: "unknown" as const,
+    };
+
+    return {
+      id: info.Id,
+      name,
+      configName,
+      repoName,
+      status,
+      health,
+      remoteUrl: remoteUrlCache.get(info.Id) || null,
+      createdAt: info.Created,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function createContainer(
+  config: EnvironmentConfig,
+  repoFullName: string
+): Promise<ManagedContainer> {
+  const repoShortName = slugify(repoFullName.split("/").pop() || "repo");
+  const containerName = `${CONTAINER_PREFIX}${slugify(config.name)}-${repoShortName}-${generateId()}`;
+  const repoUrl = `https://github.com/${repoFullName}.git`;
+
+  const envVars = [
+    `REPO_URL=${repoUrl}`,
+    `GITHUB_TOKEN=${GITHUB_TOKEN}`,
+    `ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}`,
+    ...Object.entries(config.env).map(([k, v]) => `${k}=${v}`),
+  ];
+
+  const container = await docker.createContainer({
+    Image: CRC_ENV_IMAGE,
+    name: containerName,
+    Env: envVars,
+    Labels: {
+      [LABEL_CONFIG_NAME]: config.name,
+      [LABEL_REPO_NAME]: repoFullName,
+    },
+    HostConfig: {
+      AutoRemove: false,
+    },
+  });
+
+  await container.start();
+
+  // Start watching logs for remote URL
+  watchContainerLogs(container.id);
+
+  const info = await container.inspect();
+  return {
+    id: info.Id,
+    name: containerName,
+    configName: config.name,
+    repoName: repoFullName,
+    status: "running",
+    health: { container: "running", claudeCode: "unknown" },
+    remoteUrl: null,
+    createdAt: info.Created,
+  };
+}
+
+export async function removeContainer(id: string): Promise<void> {
+  const container = docker.getContainer(id);
+  try {
+    await container.stop();
+  } catch {
+    // Container may already be stopped
+  }
+  await container.remove({ v: true });
+  remoteUrlCache.delete(id);
+  healthCache.delete(id);
+}
+
+export async function getContainerLogStream(id: string): Promise<NodeJS.ReadableStream> {
+  const container = docker.getContainer(id);
+  const stream = await container.logs({
+    follow: true,
+    stdout: true,
+    stderr: true,
+    tail: 100,
+  });
+  return stream as unknown as NodeJS.ReadableStream;
+}
+
+function watchContainerLogs(containerId: string): void {
+  const container = docker.getContainer(containerId);
+  container
+    .logs({ follow: true, stdout: true, stderr: true, tail: 0 })
+    .then((stream) => {
+      const readable = stream as unknown as NodeJS.ReadableStream;
+      readable.on("data", (chunk: Buffer) => {
+        const text = chunk.toString("utf-8");
+        // Look for Claude Code Remote URL in logs
+        const urlMatch = text.match(/(https:\/\/claude\.ai\/code\/session_[^\s"']+)/);
+        if (urlMatch && !remoteUrlCache.has(containerId)) {
+          remoteUrlCache.set(containerId, urlMatch[1]);
+          broadcastUpdate(containerId);
+        }
+      });
+      readable.on("error", () => {
+        // Container may have been removed
+      });
+    })
+    .catch(() => {
+      // Container may have been removed
+    });
+}
+
+// SSE clients
+type SSEClient = {
+  id: string;
+  res: import("express").Response;
+};
+
+const sseClients: SSEClient[] = [];
+
+export function addSSEClient(client: SSEClient): void {
+  sseClients.push(client);
+}
+
+export function removeSSEClient(clientId: string): void {
+  const index = sseClients.findIndex((c) => c.id === clientId);
+  if (index !== -1) sseClients.splice(index, 1);
+}
+
+function broadcastSSE(event: string, data: unknown): void {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.res.write(payload);
+    } catch {
+      // Client disconnected
+    }
+  }
+}
+
+async function broadcastUpdate(containerId: string): Promise<void> {
+  const container = await getContainer(containerId);
+  if (container) {
+    broadcastSSE("container-updated", container);
+  }
+}
+
+export function broadcastRemoval(id: string): void {
+  broadcastSSE("container-removed", { id });
+}
+
+// Health checking
+export async function runHealthChecks(): Promise<void> {
+  const containers = await listContainers();
+
+  for (const managed of containers) {
+    const containerState: ContainerHealth["container"] =
+      managed.status === "running" ? "running" : "stopped";
+    let claudeCodeState: ContainerHealth["claudeCode"] = "unknown";
+
+    if (containerState === "running") {
+      try {
+        const container = docker.getContainer(managed.id);
+        const exec = await container.exec({
+          Cmd: ["pgrep", "-f", "claude"],
+          AttachStdout: true,
+          AttachStderr: true,
+        });
+        const execStream = await exec.start({ Detach: false });
+        const output = await new Promise<string>((resolve) => {
+          let data = "";
+          (execStream as unknown as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
+            data += chunk.toString();
+          });
+          (execStream as unknown as NodeJS.ReadableStream).on("end", () => resolve(data));
+          (execStream as unknown as NodeJS.ReadableStream).on("error", () => resolve(""));
+        });
+        claudeCodeState = output.trim().length > 0 ? "healthy" : "unhealthy";
+      } catch {
+        claudeCodeState = "unhealthy";
+      }
+    }
+
+    const health: ContainerHealth = {
+      container: containerState,
+      claudeCode: claudeCodeState,
+    };
+    healthCache.set(managed.id, health);
+    broadcastUpdate(managed.id);
+  }
+}

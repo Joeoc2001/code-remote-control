@@ -1,0 +1,80 @@
+import { useState, useEffect, useCallback } from "react";
+import type { ManagedContainer } from "./types";
+import { fetchContainers, subscribeToEvents } from "./api";
+import Header from "./components/Header";
+import ContainerGrid from "./components/ContainerGrid";
+import NewContainerModal from "./components/NewContainerModal";
+
+export default function App() {
+  const [containers, setContainers] = useState<ManagedContainer[]>([]);
+  const [showModal, setShowModal] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const loadContainers = useCallback(async () => {
+    try {
+      const data = await fetchContainers();
+      setContainers(data);
+    } catch (err) {
+      console.error("Failed to load containers:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadContainers();
+  }, [loadContainers]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToEvents(
+      (updated) => {
+        setContainers((prev) => {
+          const index = prev.findIndex((c) => c.id === updated.id);
+          if (index >= 0) {
+            const next = [...prev];
+            next[index] = updated;
+            return next;
+          }
+          return [updated, ...prev];
+        });
+      },
+      (removedId) => {
+        setContainers((prev) => prev.filter((c) => c.id !== removedId));
+      }
+    );
+    return unsubscribe;
+  }, []);
+
+  const handleContainerCreated = (container: ManagedContainer) => {
+    setContainers((prev) => [container, ...prev]);
+    setShowModal(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-950">
+      <Header onNewContainer={() => setShowModal(true)} />
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        {loading ? (
+          <div className="flex justify-center py-20">
+            <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full" />
+          </div>
+        ) : containers.length === 0 ? (
+          <div className="text-center py-20 text-gray-500">
+            <p className="text-lg">No containers running</p>
+            <p className="mt-2">
+              Click "New Container" to spawn a development environment.
+            </p>
+          </div>
+        ) : (
+          <ContainerGrid containers={containers} onRefresh={loadContainers} />
+        )}
+      </main>
+      {showModal && (
+        <NewContainerModal
+          onClose={() => setShowModal(false)}
+          onCreated={handleContainerCreated}
+        />
+      )}
+    </div>
+  );
+}
