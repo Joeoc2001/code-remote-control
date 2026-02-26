@@ -40,13 +40,17 @@ export default function App() {
       },
       (removedId) => {
         setContainers((prev) => prev.filter((c) => c.id !== removedId));
-      }
+      },
+      loadContainers,
     );
     return unsubscribe;
-  }, []);
+  }, [loadContainers]);
 
   const handleContainerCreated = (container: ManagedContainer) => {
-    setContainers((prev) => [container, ...prev]);
+    setContainers((prev) => {
+      if (prev.some((c) => c.id === container.id)) return prev;
+      return [container, ...prev];
+    });
     setShowModal(false);
   };
 

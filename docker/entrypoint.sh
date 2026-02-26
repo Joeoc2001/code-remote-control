@@ -20,4 +20,5 @@ fi
 cd /workspace
 
 echo "Starting Claude Code Remote..."
-exec claude --remote $CLAUDE_CODE_ARGS
+read -ra extra_args <<< "${CLAUDE_CODE_ARGS:-}"
+exec claude --remote "${extra_args[@]}"

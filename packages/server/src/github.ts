@@ -1,12 +1,14 @@
 import type { GitHubRepo } from "./types.js";
 import { GITHUB_TOKEN } from "./config.js";
 
+const MAX_PAGES = 10;
+
 export async function fetchRepos(): Promise<GitHubRepo[]> {
   const repos: GitHubRepo[] = [];
   let page = 1;
   const perPage = 100;
 
-  while (true) {
+  while (page <= MAX_PAGES) {
     const response = await fetch(
       `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=updated`,
       {

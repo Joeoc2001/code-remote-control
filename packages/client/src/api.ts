@@ -42,9 +42,11 @@ export async function fetchGitHubRepos(): Promise<GitHubRepo[]> {
 
 export function subscribeToEvents(
   onContainerUpdated: (container: ManagedContainer) => void,
-  onContainerRemoved: (id: string) => void
+  onContainerRemoved: (id: string) => void,
+  onReconnect?: () => void,
 ): () => void {
   const eventSource = new EventSource(`${BASE}/events`);
+  let wasConnected = false;
 
   eventSource.addEventListener("container-updated", (event) => {
     const container = JSON.parse(event.data) as ManagedContainer;
@@ -54,6 +56,13 @@ export function subscribeToEvents(
   eventSource.addEventListener("container-removed", (event) => {
     const { id } = JSON.parse(event.data) as { id: string };
     onContainerRemoved(id);
+  });
+
+  eventSource.addEventListener("open", () => {
+    if (wasConnected && onReconnect) {
+      onReconnect();
+    }
+    wasConnected = true;
   });
 
   return () => eventSource.close();

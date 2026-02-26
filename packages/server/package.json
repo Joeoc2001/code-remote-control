@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@crc/shared": "*",
     "cors": "^2.8.5",
     "dockerode": "^4.0.4",
     "express": "^4.21.2"
