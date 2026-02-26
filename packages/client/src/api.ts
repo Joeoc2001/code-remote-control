@@ -44,6 +44,7 @@ export function subscribeToEvents(
   onContainerUpdated: (container: ManagedContainer) => void,
   onContainerRemoved: (id: string) => void,
   onReconnect?: () => void,
+  onConnectionError?: (connected: boolean) => void,
 ): () => void {
   const eventSource = new EventSource(`${BASE}/events`);
   let wasConnected = false;
@@ -58,12 +59,17 @@ export function subscribeToEvents(
     onContainerRemoved(id);
   });
 
-  eventSource.addEventListener("open", () => {
+  eventSource.onopen = () => {
+    onConnectionError?.(true);
     if (wasConnected && onReconnect) {
       onReconnect();
     }
     wasConnected = true;
-  });
+  };
+
+  eventSource.onerror = () => {
+    onConnectionError?.(false);
+  };
 
   return () => eventSource.close();
 }

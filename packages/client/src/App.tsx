@@ -9,13 +9,17 @@ export default function App() {
   const [containers, setContainers] = useState<ManagedContainer[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(true);
 
   const loadContainers = useCallback(async () => {
     try {
       const data = await fetchContainers();
       setContainers(data);
+      setError(null);
     } catch (err) {
       console.error("Failed to load containers:", err);
+      setError("Failed to load containers");
     } finally {
       setLoading(false);
     }
@@ -42,6 +46,7 @@ export default function App() {
         setContainers((prev) => prev.filter((c) => c.id !== removedId));
       },
       loadContainers,
+      setConnected,
     );
     return unsubscribe;
   }, [loadContainers]);
@@ -57,10 +62,25 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-950">
       <Header onNewContainer={() => setShowModal(true)} />
+      {!connected && (
+        <div className="bg-yellow-900/50 border-b border-yellow-700 px-4 py-2 text-center text-yellow-300 text-sm">
+          Connection lost — reconnecting...
+        </div>
+      )}
       <main className="max-w-7xl mx-auto px-4 py-8">
         {loading ? (
           <div className="flex justify-center py-20">
             <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full" />
+          </div>
+        ) : error ? (
+          <div className="text-center py-20">
+            <p className="text-red-400 text-lg">{error}</p>
+            <button
+              onClick={loadContainers}
+              className="mt-4 px-4 py-2 text-sm text-gray-300 hover:text-white border border-gray-700 rounded-lg transition-colors"
+            >
+              Retry
+            </button>
           </div>
         ) : containers.length === 0 ? (
           <div className="text-center py-20 text-gray-500">

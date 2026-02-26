@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { EnvironmentConfig, GitHubRepo, ManagedContainer } from "../types";
 import { fetchConfigs, fetchGitHubRepos, createContainer } from "../api";
 
@@ -33,6 +33,25 @@ export default function NewContainerModal({
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !spawning) onClose();
+    },
+    [onClose, spawning],
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
   const filteredRepos = repos.filter((r) =>
     r.fullName.toLowerCase().includes(repoSearch.toLowerCase())
   );
@@ -52,7 +71,12 @@ export default function NewContainerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !spawning) onClose();
+      }}
+    >
       <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg mx-4">
         <div className="flex items-center justify-between p-5 border-b border-gray-800">
           <h2 className="text-lg font-semibold text-white">New Container</h2>

@@ -15,6 +15,12 @@ import type { CreateContainerRequest } from "./types.js";
 
 export const router = Router();
 
+const REPO_NAME_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+
+function isValidContainerId(id: string): boolean {
+  return /^[a-f0-9]+$/.test(id) && id.length >= 12 && id.length <= 64;
+}
+
 router.get("/api/containers", async (_req, res) => {
   try {
     const containers = await listContainers();
@@ -31,6 +37,11 @@ router.post("/api/containers", async (req, res) => {
 
     if (!configName || !repoFullName) {
       res.status(400).json({ error: "configName and repoFullName are required" });
+      return;
+    }
+
+    if (!REPO_NAME_RE.test(repoFullName)) {
+      res.status(400).json({ error: "repoFullName must be in owner/repo format" });
       return;
     }
 
@@ -52,6 +63,10 @@ router.post("/api/containers", async (req, res) => {
 router.delete("/api/containers/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    if (!isValidContainerId(id)) {
+      res.status(400).json({ error: "Invalid container ID" });
+      return;
+    }
     await removeContainer(id);
     broadcastRemoval(id);
     res.status(204).send();
@@ -64,6 +79,10 @@ router.delete("/api/containers/:id", async (req, res) => {
 router.get("/api/containers/:id/logs", async (req, res) => {
   try {
     const { id } = req.params;
+    if (!isValidContainerId(id)) {
+      res.status(400).json({ error: "Invalid container ID" });
+      return;
+    }
     const stream = await getContainerLogStream(id);
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -90,6 +109,9 @@ router.get("/api/containers/:id/logs", async (req, res) => {
 
     req.on("close", () => {
       stream.removeAllListeners();
+      if ("destroy" in stream && typeof stream.destroy === "function") {
+        stream.destroy();
+      }
     });
   } catch (err) {
     console.error("Error streaming logs:", err);

@@ -9,16 +9,20 @@ if [ -n "$GIT_USER_EMAIL" ]; then
 fi
 
 if [ -n "$GITHUB_TOKEN" ]; then
-  git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+  git config --global credential.helper 'store --file=/tmp/.git-credentials'
+  echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > /tmp/.git-credentials
+  chmod 600 /tmp/.git-credentials
 fi
 
 if [ -n "$REPO_URL" ]; then
   echo "Cloning $REPO_URL into /workspace..."
   git clone "$REPO_URL" /workspace
+else
+  echo "Warning: REPO_URL not set, starting in empty /workspace directory"
 fi
 
 cd /workspace
 
 echo "Starting Claude Code Remote..."
-read -ra extra_args <<< "${CLAUDE_CODE_ARGS:-}"
+eval "extra_args=(${CLAUDE_CODE_ARGS:-})"
 exec claude --remote "${extra_args[@]}"
