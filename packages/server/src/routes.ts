@@ -34,7 +34,7 @@ router.post("/api/containers", async (req, res) => {
       return;
     }
 
-    const configs = loadConfigurations();
+    const configs = await loadConfigurations();
     const config = configs.configurations.find((c) => c.name === configName);
     if (!config) {
       res.status(400).json({ error: `Configuration '${configName}' not found` });
@@ -64,13 +64,12 @@ router.delete("/api/containers/:id", async (req, res) => {
 router.get("/api/containers/:id/logs", async (req, res) => {
   try {
     const { id } = req.params;
+    const stream = await getContainerLogStream(id);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
-
-    const stream = await getContainerLogStream(id);
     stream.on("data", (chunk: Buffer) => {
       const lines = chunk.toString("utf-8").split("\n");
       for (const line of lines) {
@@ -98,9 +97,9 @@ router.get("/api/containers/:id/logs", async (req, res) => {
   }
 });
 
-router.get("/api/configs", (_req, res) => {
+router.get("/api/configs", async (_req, res) => {
   try {
-    const configs = loadConfigurations();
+    const configs = await loadConfigurations();
     res.json(configs);
   } catch (err) {
     console.error("Error loading configs:", err);

@@ -33,7 +33,18 @@ export default function ContainerCard({
 
   const handleCopyUrl = async () => {
     if (!container.remoteUrl) return;
-    await navigator.clipboard.writeText(container.remoteUrl);
+    try {
+      await navigator.clipboard.writeText(container.remoteUrl);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = container.remoteUrl;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -73,11 +84,13 @@ export default function ContainerCard({
               {copied ? "Copied!" : "Copy"}
             </button>
           </div>
-        ) : (
+        ) : container.status === "running" ? (
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <div className="animate-spin h-4 w-4 border-2 border-gray-500 border-t-transparent rounded-full" />
             Waiting for Remote URL...
           </div>
+        ) : (
+          <div className="text-sm text-gray-600">No Remote URL</div>
         )}
       </div>
 

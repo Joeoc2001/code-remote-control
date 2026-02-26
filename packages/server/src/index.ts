@@ -5,16 +5,22 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { router } from "./routes.js";
 import { runHealthChecks } from "./docker.js";
-import { PORT } from "./config.js";
+import { PORT, validateEnvironment } from "./config.js";
+
+validateEnvironment();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "100kb" }));
 
 app.use(router);
+
+app.all(/^\/api\//, (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
 
 const clientDistPath = resolve(__dirname, "../../client/dist");
 if (existsSync(clientDistPath)) {

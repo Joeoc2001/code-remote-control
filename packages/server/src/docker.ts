@@ -1,5 +1,6 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
+import { PassThrough } from "node:stream";
 import type {
   ManagedContainer,
   ContainerHealth,
@@ -12,9 +13,11 @@ const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
+const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 
 const remoteUrlCache = new Map<string, string>();
 const healthCache = new Map<string, ContainerHealth>();
+const logWatchers = new Map<string, NodeJS.ReadableStream>();
 
 function slugify(input: string): string {
   return input
@@ -27,6 +30,23 @@ function slugify(input: string): string {
 
 function generateId(): string {
   return crypto.randomBytes(4).toString("hex");
+}
+
+function demuxDockerStream(rawStream: NodeJS.ReadableStream): NodeJS.ReadableStream {
+  const output = new PassThrough();
+  docker.modem.demuxStream(rawStream as unknown as NodeJS.ReadWriteStream, output, output);
+  rawStream.on("end", () => output.end());
+  rawStream.on("error", (err) => output.destroy(err));
+  return output;
+}
+
+async function assertManagedContainer(id: string): Promise<void> {
+  const container = docker.getContainer(id);
+  const info = await container.inspect();
+  const name = info.Name.replace(/^\//, "");
+  if (!name.startsWith(CONTAINER_PREFIX)) {
+    throw new Error("Container is not managed by CRC");
+  }
 }
 
 function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContainer {
@@ -141,17 +161,20 @@ export async function createContainer(
 }
 
 export async function removeContainer(id: string): Promise<void> {
+  await assertManagedContainer(id);
   const container = docker.getContainer(id);
   try {
     await container.stop();
   } catch {
   }
   await container.remove({ v: true });
+  cleanupLogWatcher(id);
   remoteUrlCache.delete(id);
   healthCache.delete(id);
 }
 
 export async function getContainerLogStream(id: string): Promise<NodeJS.ReadableStream> {
+  await assertManagedContainer(id);
   const container = docker.getContainer(id);
   const stream = await container.logs({
     follow: true,
@@ -159,7 +182,15 @@ export async function getContainerLogStream(id: string): Promise<NodeJS.Readable
     stderr: true,
     tail: 100,
   });
-  return stream as unknown as NodeJS.ReadableStream;
+  return demuxDockerStream(stream as unknown as NodeJS.ReadableStream);
+}
+
+function cleanupLogWatcher(containerId: string): void {
+  const existing = logWatchers.get(containerId);
+  if (existing) {
+    existing.removeAllListeners();
+    logWatchers.delete(containerId);
+  }
 }
 
 function watchContainerLogs(containerId: string): void {
@@ -167,7 +198,8 @@ function watchContainerLogs(containerId: string): void {
   container
     .logs({ follow: true, stdout: true, stderr: true, tail: 0 })
     .then((stream) => {
-      const readable = stream as unknown as NodeJS.ReadableStream;
+      const readable = demuxDockerStream(stream as unknown as NodeJS.ReadableStream);
+      logWatchers.set(containerId, readable);
       readable.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         const urlMatch = text.match(/(https:\/\/claude\.ai\/code\/session_[^\s"']+)/);
@@ -176,7 +208,12 @@ function watchContainerLogs(containerId: string): void {
           broadcastUpdate(containerId);
         }
       });
-      readable.on("error", () => {});
+      readable.on("end", () => {
+        logWatchers.delete(containerId);
+      });
+      readable.on("error", () => {
+        logWatchers.delete(containerId);
+      });
     })
     .catch(() => {});
 }
@@ -218,6 +255,16 @@ export function broadcastRemoval(id: string): void {
   broadcastSSE("container-removed", { id });
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timeout")), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
 export async function runHealthChecks(): Promise<void> {
   const containers = await listContainers();
 
@@ -235,14 +282,17 @@ export async function runHealthChecks(): Promise<void> {
           AttachStderr: true,
         });
         const execStream = await exec.start({ Detach: false });
-        const output = await new Promise<string>((resolve) => {
-          let data = "";
-          (execStream as unknown as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
-            data += chunk.toString();
-          });
-          (execStream as unknown as NodeJS.ReadableStream).on("end", () => resolve(data));
-          (execStream as unknown as NodeJS.ReadableStream).on("error", () => resolve(""));
-        });
+        const output = await withTimeout(
+          new Promise<string>((resolve) => {
+            let data = "";
+            (execStream as unknown as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
+              data += chunk.toString();
+            });
+            (execStream as unknown as NodeJS.ReadableStream).on("end", () => resolve(data));
+            (execStream as unknown as NodeJS.ReadableStream).on("error", () => resolve(""));
+          }),
+          HEALTH_CHECK_TIMEOUT_MS,
+        );
         claudeCodeState = output.trim().length > 0 ? "healthy" : "unhealthy";
       } catch {
         claudeCodeState = "unhealthy";
