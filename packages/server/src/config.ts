@@ -1,9 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { EnvironmentsFile, EnvironmentConfig } from "./types.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let configCache: EnvironmentsFile | null = null;
 
@@ -31,8 +27,7 @@ function validateConfigShape(data: unknown): asserts data is EnvironmentsFile {
 
 export async function loadConfigurations(): Promise<EnvironmentsFile> {
   if (configCache) return configCache;
-  const configPath = resolve(__dirname, "../../../configs/environments.json");
-  const raw = await readFile(configPath, "utf-8");
+  const raw = await readFile("/configs/environments.json", "utf-8");
   const parsed: unknown = JSON.parse(raw);
   validateConfigShape(parsed);
   configCache = parsed;
