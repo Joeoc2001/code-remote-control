@@ -14,10 +14,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// API routes
 app.use(router);
 
-// Serve static frontend files in production
 const clientDistPath = resolve(__dirname, "../../client/dist");
 if (existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
@@ -26,7 +24,6 @@ if (existsSync(clientDistPath)) {
   });
 }
 
-// Start health check interval (every 30 seconds)
 setInterval(() => {
   runHealthChecks().catch((err) => {
     console.error("Health check error:", err);

@@ -15,7 +15,6 @@ import type { CreateContainerRequest } from "./types.js";
 
 export const router = Router();
 
-// List all managed containers
 router.get("/api/containers", async (_req, res) => {
   try {
     const containers = await listContainers();
@@ -26,7 +25,6 @@ router.get("/api/containers", async (_req, res) => {
   }
 });
 
-// Create a new container
 router.post("/api/containers", async (req, res) => {
   try {
     const { configName, repoFullName } = req.body as CreateContainerRequest;
@@ -51,7 +49,6 @@ router.post("/api/containers", async (req, res) => {
   }
 });
 
-// Delete a container
 router.delete("/api/containers/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -64,7 +61,6 @@ router.delete("/api/containers/:id", async (req, res) => {
   }
 });
 
-// Stream container logs via SSE
 router.get("/api/containers/:id/logs", async (req, res) => {
   try {
     const { id } = req.params;
@@ -102,7 +98,6 @@ router.get("/api/containers/:id/logs", async (req, res) => {
   }
 });
 
-// Get configurations
 router.get("/api/configs", (_req, res) => {
   try {
     const configs = loadConfigurations();
@@ -113,7 +108,6 @@ router.get("/api/configs", (_req, res) => {
   }
 });
 
-// Get GitHub repos
 router.get("/api/github/repos", async (_req, res) => {
   try {
     const repos = await fetchRepos();
@@ -124,7 +118,6 @@ router.get("/api/github/repos", async (_req, res) => {
   }
 });
 
-// SSE endpoint for real-time updates
 router.get("/api/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -134,7 +127,6 @@ router.get("/api/events", (req, res) => {
   const clientId = crypto.randomUUID();
   addSSEClient({ id: clientId, res });
 
-  // Send heartbeat every 30 seconds to keep connection alive
   const heartbeat = setInterval(() => {
     res.write(":heartbeat\n\n");
   }, 30000);
