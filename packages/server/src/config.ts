@@ -37,7 +37,7 @@ export async function loadConfigurations(): Promise<EnvironmentsFile> {
 export const PORT = parseInt(process.env.PORT || "3000", 10);
 export const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
-export const CRC_ENV_IMAGE = process.env.CRC_ENV_IMAGE || "crc-env:latest";
+export const CRC_ENV_IMAGE = "ghcr.io/joeoc2001/code-remote-control-env:latest";
 
 export function validateEnvironment(): void {
   const missing: string[] = [];

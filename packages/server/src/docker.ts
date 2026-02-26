@@ -224,7 +224,7 @@ function watchContainerLogs(containerId: string): void {
         logWatchers.delete(containerId);
       });
     })
-    .catch(() => {});
+    .catch(() => { });
 }
 
 export async function attachWatchersToExistingContainers(): Promise<void> {
@@ -363,7 +363,7 @@ export function cleanupAll(): void {
   for (const client of sseClients) {
     try {
       client.res.end();
-    } catch {}
+    } catch { }
   }
   sseClients.length = 0;
 }

@@ -1,4 +1,4 @@
-name: Build & Push App Image
+name: Build & Push Images
 
 on:
   push:
@@ -21,15 +21,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set image name
-        run: echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+      - name: Set image names
+        run: |
+          REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')
+          echo "APP_IMAGE=ghcr.io/${REPO}" >> $GITHUB_ENV
+          echo "ENV_IMAGE=ghcr.io/${REPO}-env" >> $GITHUB_ENV
 
-      - name: Build and push Docker image
+      - name: Build and push environment image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.env
+          push: true
+          tags: |
+            ${{ env.ENV_IMAGE }}:latest
+            ${{ env.ENV_IMAGE }}:${{ github.sha }}
+
+      - name: Build and push app image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile.app
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.APP_IMAGE }}:latest
+            ${{ env.APP_IMAGE }}:${{ github.sha }}
