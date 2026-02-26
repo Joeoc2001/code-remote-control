@@ -30,7 +30,6 @@ COPY packages/client/package.json ./packages/client/
 RUN npm ci --omit=dev
 
 COPY packages/shared/ ./packages/shared/
-COPY configs/ ./configs/
 COPY --from=build /app/packages/server/dist/ ./packages/server/dist/
 COPY --from=build /app/packages/client/dist/ ./packages/client/dist/
 
