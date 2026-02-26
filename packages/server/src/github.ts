@@ -2,8 +2,15 @@ import type { GitHubRepo } from "./types.js";
 import { GITHUB_TOKEN } from "./config.js";
 
 const MAX_PAGES = 10;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+let repoCache: { repos: GitHubRepo[]; fetchedAt: number } | null = null;
 
 export async function fetchRepos(): Promise<GitHubRepo[]> {
+  if (repoCache && Date.now() - repoCache.fetchedAt < CACHE_TTL_MS) {
+    return repoCache.repos;
+  }
+
   const repos: GitHubRepo[] = [];
   let page = 1;
   const perPage = 100;
@@ -45,5 +52,6 @@ export async function fetchRepos(): Promise<GitHubRepo[]> {
     page++;
   }
 
+  repoCache = { repos, fetchedAt: Date.now() };
   return repos;
 }

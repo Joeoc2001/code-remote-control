@@ -165,7 +165,11 @@ export async function removeContainer(id: string): Promise<void> {
   const container = docker.getContainer(id);
   try {
     await container.stop();
-  } catch {
+  } catch (err: unknown) {
+    const isAlreadyStopped =
+      err instanceof Error &&
+      (err.message.includes("304") || err.message.includes("is not running"));
+    if (!isAlreadyStopped) throw err;
   }
   await container.remove({ v: true });
   cleanupLogWatcher(id);
@@ -189,14 +193,19 @@ function cleanupLogWatcher(containerId: string): void {
   const existing = logWatchers.get(containerId);
   if (existing) {
     existing.removeAllListeners();
+    if ("destroy" in existing && typeof existing.destroy === "function") {
+      existing.destroy();
+    }
     logWatchers.delete(containerId);
   }
 }
 
 function watchContainerLogs(containerId: string): void {
+  if (logWatchers.has(containerId)) return;
+
   const container = docker.getContainer(containerId);
   container
-    .logs({ follow: true, stdout: true, stderr: true, tail: 0 })
+    .logs({ follow: true, stdout: true, stderr: true, tail: 50 })
     .then((stream) => {
       const readable = demuxDockerStream(stream as unknown as NodeJS.ReadableStream);
       logWatchers.set(containerId, readable);
@@ -218,6 +227,15 @@ function watchContainerLogs(containerId: string): void {
     .catch(() => {});
 }
 
+export async function attachWatchersToExistingContainers(): Promise<void> {
+  const containers = await listContainers();
+  for (const container of containers) {
+    if (container.status === "running" && !logWatchers.has(container.id)) {
+      watchContainerLogs(container.id);
+    }
+  }
+}
+
 type SSEClient = {
   id: string;
   res: import("express").Response;
@@ -236,11 +254,16 @@ export function removeSSEClient(clientId: string): void {
 
 function broadcastSSE(event: string, data: unknown): void {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const deadClientIds: string[] = [];
   for (const client of sseClients) {
     try {
       client.res.write(payload);
     } catch {
+      deadClientIds.push(client.id);
     }
+  }
+  for (const id of deadClientIds) {
+    removeSSEClient(id);
   }
 }
 
@@ -265,45 +288,82 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+async function checkClaudeHealth(containerId: string): Promise<ContainerHealth["claudeCode"]> {
+  try {
+    const container = docker.getContainer(containerId);
+    const exec = await container.exec({
+      Cmd: ["pgrep", "-f", "claude.*--remote"],
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const execStream = await exec.start({ Detach: false });
+    const output = await withTimeout(
+      new Promise<string>((resolve) => {
+        let data = "";
+        (execStream as unknown as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
+          data += chunk.toString();
+        });
+        (execStream as unknown as NodeJS.ReadableStream).on("end", () => resolve(data));
+        (execStream as unknown as NodeJS.ReadableStream).on("error", () => resolve(""));
+      }),
+      HEALTH_CHECK_TIMEOUT_MS,
+    );
+    return output.trim().length > 0 ? "healthy" : "unhealthy";
+  } catch {
+    return "unhealthy";
+  }
+}
+
 export async function runHealthChecks(): Promise<void> {
   const containers = await listContainers();
 
-  for (const managed of containers) {
-    const containerState: ContainerHealth["container"] =
-      managed.status === "running" ? "running" : "stopped";
-    let claudeCodeState: ContainerHealth["claudeCode"] = "unknown";
-
-    if (containerState === "running") {
-      try {
-        const container = docker.getContainer(managed.id);
-        const exec = await container.exec({
-          Cmd: ["pgrep", "-f", "claude"],
-          AttachStdout: true,
-          AttachStderr: true,
-        });
-        const execStream = await exec.start({ Detach: false });
-        const output = await withTimeout(
-          new Promise<string>((resolve) => {
-            let data = "";
-            (execStream as unknown as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
-              data += chunk.toString();
-            });
-            (execStream as unknown as NodeJS.ReadableStream).on("end", () => resolve(data));
-            (execStream as unknown as NodeJS.ReadableStream).on("error", () => resolve(""));
-          }),
-          HEALTH_CHECK_TIMEOUT_MS,
-        );
-        claudeCodeState = output.trim().length > 0 ? "healthy" : "unhealthy";
-      } catch {
-        claudeCodeState = "unhealthy";
+  const results = await Promise.allSettled(
+    containers.map(async (managed) => {
+      let containerState: ContainerHealth["container"];
+      if (managed.status === "running") {
+        containerState = "running";
+      } else if (managed.status === "exited" || managed.status === "created") {
+        containerState = "stopped";
+      } else {
+        containerState = "error";
       }
-    }
 
-    const health: ContainerHealth = {
-      container: containerState,
-      claudeCode: claudeCodeState,
-    };
-    healthCache.set(managed.id, health);
-    broadcastUpdate(managed.id);
+      const claudeCodeState: ContainerHealth["claudeCode"] =
+        containerState === "running"
+          ? await checkClaudeHealth(managed.id)
+          : "unknown";
+
+      const health: ContainerHealth = {
+        container: containerState,
+        claudeCode: claudeCodeState,
+      };
+
+      const prev = healthCache.get(managed.id);
+      const changed =
+        !prev ||
+        prev.container !== health.container ||
+        prev.claudeCode !== health.claudeCode;
+
+      healthCache.set(managed.id, health);
+      return { id: managed.id, changed };
+    }),
+  );
+
+  for (const result of results) {
+    if (result.status === "fulfilled" && result.value.changed) {
+      await broadcastUpdate(result.value.id);
+    }
   }
+}
+
+export function cleanupAll(): void {
+  for (const [id] of logWatchers) {
+    cleanupLogWatcher(id);
+  }
+  for (const client of sseClients) {
+    try {
+      client.res.end();
+    } catch {}
+  }
+  sseClients.length = 0;
 }
