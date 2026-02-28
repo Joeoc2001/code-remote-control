@@ -1,7 +1,7 @@
 export interface EnvironmentConfig {
   name: string;
-  description: string;
-  env: Record<string, string>;
+  opencode: object;
+  env?: Record<string, string>;
 }
 
 export interface EnvironmentsFile {
@@ -10,7 +10,7 @@ export interface EnvironmentsFile {
 
 export interface ContainerHealth {
   container: "running" | "stopped" | "error";
-  claudeCode: "healthy" | "unhealthy" | "unknown";
+  openCode: "healthy" | "unhealthy" | "unknown";
 }
 
 export interface ManagedContainer {

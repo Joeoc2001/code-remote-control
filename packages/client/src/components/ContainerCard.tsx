@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import type { ManagedContainer } from "../types";
 import { deleteContainer } from "../api";
 import HealthDot from "./HealthDot";
@@ -94,11 +95,17 @@ export default function ContainerCard({
         )}
       </div>
 
-      <div className="mt-auto pt-3 border-t border-gray-800">
+      <div className="mt-auto pt-3 border-t border-gray-800 flex gap-2">
+        <Link
+          to={`/logs/${container.id}`}
+          className="flex-1 px-3 py-2 text-sm font-medium text-center text-gray-300 hover:text-white hover:bg-gray-800 border border-gray-700 rounded-lg transition-colors"
+        >
+          View Logs
+        </Link>
         <button
           onClick={handleKill}
           disabled={killing}
-          className="w-full px-3 py-2 text-sm font-medium text-red-400 hover:text-white hover:bg-red-600 border border-red-800 rounded-lg transition-colors disabled:opacity-50"
+          className="flex-1 px-3 py-2 text-sm font-medium text-red-400 hover:text-white hover:bg-red-600 border border-red-800 rounded-lg transition-colors disabled:opacity-50"
         >
           {killing ? "Killing..." : "Kill"}
         </button>

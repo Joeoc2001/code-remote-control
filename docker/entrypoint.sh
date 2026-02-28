@@ -23,6 +23,6 @@ fi
 
 cd /workspace
 
-echo "Starting Claude Code Remote..."
-eval "extra_args=(${CLAUDE_CODE_ARGS:-})"
-exec claude --remote "${extra_args[@]}"
+echo "Starting opencode Remote..."
+eval "extra_args=(${OPENCODE_ARGS:-})"
+exec opencode remote-control "${extra_args[@]}"

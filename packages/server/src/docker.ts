@@ -6,7 +6,7 @@ import type {
   ContainerHealth,
   EnvironmentConfig,
 } from "./types.js";
-import { GITHUB_TOKEN, ANTHROPIC_API_KEY, CRC_ENV_IMAGE } from "./config.js";
+import { GITHUB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
 
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 
@@ -56,7 +56,7 @@ function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContaine
   const status = container.State || "unknown";
   const health = healthCache.get(container.Id) || {
     container: status === "running" ? "running" as const : "stopped" as const,
-    claudeCode: "unknown" as const,
+    openCode: "unknown" as const,
   };
 
   return {
@@ -97,7 +97,7 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
     const status = info.State.Running ? "running" : info.State.Status;
     const health = healthCache.get(id) || {
       container: info.State.Running ? "running" as const : "stopped" as const,
-      claudeCode: "unknown" as const,
+      openCode: "unknown" as const,
     };
 
     return {
@@ -126,8 +126,8 @@ export async function createContainer(
   const envVars = [
     `REPO_URL=${repoUrl}`,
     `GITHUB_TOKEN=${GITHUB_TOKEN}`,
-    `ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}`,
-    ...Object.entries(config.env).map(([k, v]) => `${k}=${v}`),
+    `OPENCODE_CONFIG=${JSON.stringify(config.opencode)}`,
+    ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
 
   const container = await docker.createContainer({
@@ -145,8 +145,6 @@ export async function createContainer(
 
   await container.start();
 
-  watchContainerLogs(container.id);
-
   const info = await container.inspect();
   return {
     id: info.Id,
@@ -154,7 +152,7 @@ export async function createContainer(
     configName: config.name,
     repoName: repoFullName,
     status: "running",
-    health: { container: "running", claudeCode: "unknown" },
+    health: { container: "running", openCode: "unknown" },
     remoteUrl: null,
     createdAt: info.Created,
   };
@@ -197,42 +195,6 @@ function cleanupLogWatcher(containerId: string): void {
       existing.destroy();
     }
     logWatchers.delete(containerId);
-  }
-}
-
-function watchContainerLogs(containerId: string): void {
-  if (logWatchers.has(containerId)) return;
-
-  const container = docker.getContainer(containerId);
-  container
-    .logs({ follow: true, stdout: true, stderr: true, tail: 50 })
-    .then((stream) => {
-      const readable = demuxDockerStream(stream as unknown as NodeJS.ReadableStream);
-      logWatchers.set(containerId, readable);
-      readable.on("data", (chunk: Buffer) => {
-        const text = chunk.toString("utf-8");
-        const urlMatch = text.match(/(https:\/\/claude\.ai\/code\/session_[^\s"']+)/);
-        if (urlMatch && !remoteUrlCache.has(containerId)) {
-          remoteUrlCache.set(containerId, urlMatch[1]);
-          broadcastUpdate(containerId);
-        }
-      });
-      readable.on("end", () => {
-        logWatchers.delete(containerId);
-      });
-      readable.on("error", () => {
-        logWatchers.delete(containerId);
-      });
-    })
-    .catch(() => { });
-}
-
-export async function attachWatchersToExistingContainers(): Promise<void> {
-  const containers = await listContainers();
-  for (const container of containers) {
-    if (container.status === "running" && !logWatchers.has(container.id)) {
-      watchContainerLogs(container.id);
-    }
   }
 }
 
@@ -288,11 +250,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function checkClaudeHealth(containerId: string): Promise<ContainerHealth["claudeCode"]> {
+async function checkOpencodeHealth(containerId: string): Promise<ContainerHealth["openCode"]> {
   try {
     const container = docker.getContainer(containerId);
     const exec = await container.exec({
-      Cmd: ["pgrep", "-f", "claude.*--remote"],
+      Cmd: ["pgrep", "-f", "opencode.*--remote"],
       AttachStdout: true,
       AttachStderr: true,
     });
@@ -328,21 +290,21 @@ export async function runHealthChecks(): Promise<void> {
         containerState = "error";
       }
 
-      const claudeCodeState: ContainerHealth["claudeCode"] =
+      const opencodeState: ContainerHealth["openCode"] =
         containerState === "running"
-          ? await checkClaudeHealth(managed.id)
+          ? await checkOpencodeHealth(managed.id)
           : "unknown";
 
       const health: ContainerHealth = {
         container: containerState,
-        claudeCode: claudeCodeState,
+        openCode: opencodeState,
       };
 
       const prev = healthCache.get(managed.id);
       const changed =
         !prev ||
         prev.container !== health.container ||
-        prev.claudeCode !== health.claudeCode;
+        prev.openCode !== health.openCode;
 
       healthCache.set(managed.id, health);
       return { id: managed.id, changed };

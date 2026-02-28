@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { router } from "./routes.js";
-import { runHealthChecks, attachWatchersToExistingContainers, cleanupAll } from "./docker.js";
+import { runHealthChecks, cleanupAll } from "./docker.js";
 import { PORT, validateEnvironment } from "./config.js";
 
 validateEnvironment();
@@ -32,10 +32,6 @@ if (existsSync(clientDistPath)) {
 
 runHealthChecks().catch((err) => {
   console.error("Initial health check error:", err);
-});
-
-attachWatchersToExistingContainers().catch((err) => {
-  console.error("Error attaching log watchers to existing containers:", err);
 });
 
 const healthInterval = setInterval(() => {

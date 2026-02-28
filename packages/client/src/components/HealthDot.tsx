@@ -8,12 +8,12 @@ export default function HealthDot({ health }: HealthDotProps) {
   let color: string;
   let label: string;
 
-  if (health.container === "running" && health.claudeCode === "healthy") {
+  if (health.container === "running" && health.openCode === "healthy") {
     color = "bg-green-500";
     label = "Healthy";
   } else if (health.container === "running") {
     color = "bg-yellow-500";
-    label = "Claude Code not detected";
+    label = "opencode not detected";
   } else {
     color = "bg-red-500";
     label = "Stopped / Error";
