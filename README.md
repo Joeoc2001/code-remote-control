@@ -5,46 +5,46 @@ A web app for managing Docker containers that run opencode remote control instan
 ## Prerequisites
 
 - Docker
-- opencode OAuth token 
 - GitHub token for repository access
 
 ## Setup
 
-1. Generate an opencode OAuth token on your host machine:
-   ```bash
-   opencode setup-token
-   ```
-
-2. Set required environment variables:
-   ```bash
-   export GITHUB_TOKEN=ghp_your-github-token-here
-   ```
-
-3. Create your environment configuration file at `configs/environments.json`:
-
-Example `environments.json`:
+Create your environment configuration file to specify the modes a container can be started in:
 
 ```
 {
   "configurations": [
     {
-      "name": "default",
-      "description": "Standard opencode environment",
-      "env": {
-        "OPENCODE_ARGS": "",
-        "GIT_USER_NAME": "Your Name",
-        "GIT_USER_EMAIL": "you@example.com"
-      }
-    },
-    {
-      "name": "with-custom-model",
-      "description": "opencode with custom model override",
-      "env": {
-        "OPENCODE_ARGS": "--model gpt-5.3-codex",
-        "GIT_USER_NAME": "Your Name",
-        "GIT_USER_EMAIL": "you@example.com"
+      "name": "gpt-5.3-codex",
+      "opencode": {
+        "$schema": "https://opencode.ai/config.json",
+        "server": {
+          "port": 4000,
+          "hostname": "192.168.1.2"
+        },
+        "provider": {},
+        "model": "gpt-5.3-codex",
+        "small_model": "gpt-5.3-codex"
       }
     }
   ]
 }
+```
+
+Launch web server docker container:
+```
+services:
+  code-remote-control:
+    image: ghcr.io/joeoc2001/code-remote-control:latest
+    container_name: code-remote-control
+    ports:
+      - "80:3000"
+    env:
+      - GITHUB_TOKEN: ghp_...
+      - GIT_USER_NAME: AI-name
+      - GIT_USER_EMAIL: ai@email.com
+    volumes:
+      - ./environments.json:/configs/environments.json:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
 ```
