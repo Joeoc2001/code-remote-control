@@ -17,10 +17,10 @@ function validateConfigShape(data: unknown): asserts data is EnvironmentsFile {
       throw new Error("Each configuration must have a non-empty 'name' string");
     }
     if (typeof config.opencode !== "object" || config.opencode === null || Array.isArray(config.opencode)) {
-      throw new Error(`Configuration '${config.name}' must have an 'opencode' object`);
+      throw new Error(`Configuration '${config.name}' must have an 'opencode' object ${typeof config.opencode}`);
     }
-    if (typeof config.env !== "object" || Array.isArray(config.env)) {
-      throw new Error(`Configuration '${config.name}' has an invalid 'env' object`);
+    if (config.env !== undefined && config.env !== null && (typeof config.env !== "object" || Array.isArray(config.env))) {
+      throw new Error(`Configuration '${config.name}' has an invalid 'env' object ${typeof config.env}`);
     }
   }
 }
