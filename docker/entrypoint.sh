@@ -23,6 +23,5 @@ fi
 
 cd /workspace
 
-echo "Starting opencode Remote..."
-eval "extra_args=(${OPENCODE_ARGS:-})"
-exec opencode remote-control "${extra_args[@]}"
+echo "Starting opencode..."
+exec opencode web --port 8080 --host 0.0.0.0
