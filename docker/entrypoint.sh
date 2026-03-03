@@ -15,15 +15,13 @@ if [ -n "$GITHUB_TOKEN" ]; then
 fi
 
 if [ -n "$REPO_URL" ]; then
-  echo "Cloning $REPO_URL into /workspace/remote-control..."
-  git clone "$REPO_URL" /workspace/remote-control
+  echo "Cloning $REPO_URL into /workspace..."
+  git clone "$REPO_URL" /workspace
 else
   echo "Warning: REPO_URL not set, starting in empty /workspace directory"
-  mkdir -p /workspace/remote-control
 fi
 
 cd /workspace
 
-echo "Starting opencode Remote..."
-eval "extra_args=(${OPENCODE_ARGS:-})"
-exec opencode remote-control "${extra_args[@]}"
+echo "Starting opencode..."
+exec opencode web --port 8080 --host 0.0.0.0
