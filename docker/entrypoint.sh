@@ -18,10 +18,11 @@ if [ -n "$REPO_URL" ]; then
   echo "Cloning $REPO_URL into /workspace..."
   git clone "$REPO_URL" /workspace
 else
-  echo "Warning: REPO_URL not set, starting in empty /workspace directory"
+  echo "Error: REPO_URL not set"
+  exit -1
 fi
 
-cd /workspace
+cd "/workspace/*"
 
 echo "Starting opencode..."
 exec opencode web --port 8080 --host 0.0.0.0
