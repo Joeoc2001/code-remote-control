@@ -15,10 +15,11 @@ if [ -n "$GITHUB_TOKEN" ]; then
 fi
 
 if [ -n "$REPO_URL" ]; then
-  echo "Cloning $REPO_URL into /workspace..."
-  git clone "$REPO_URL" /workspace
+  echo "Cloning $REPO_URL into /workspace/remote-control..."
+  git clone "$REPO_URL" /workspace/remote-control
 else
   echo "Warning: REPO_URL not set, starting in empty /workspace directory"
+  mkdir -p /workspace/remote-control
 fi
 
 cd /workspace
