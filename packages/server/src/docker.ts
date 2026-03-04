@@ -488,6 +488,7 @@ export async function updateAndRestartSystem(): Promise<void> {
       const OLD_ID = process.env.OLD_ID;
       const NEW_ID = process.env.NEW_ID;
       const NEW_NAME = process.env.NEW_NAME;
+      const SELF_NAME = process.env.SELF_NAME;
       function call(method, path) {
         return new Promise((resolve, reject) => {
           const req = http.request({ socketPath: '/var/run/docker.sock', method, path }, res => {
@@ -502,35 +503,43 @@ export async function updateAndRestartSystem(): Promise<void> {
         await new Promise(r => setTimeout(r, 3000));
         console.log('Stopping old container...');
         await call('POST', '/containers/' + OLD_ID + '/stop');
-        console.log('Removing old container...');
-        await call('DELETE', '/containers/' + OLD_ID + '?v=true');
+        console.log('Renaming old container...');
+        await call('POST', '/containers/' + OLD_ID + '/rename?name=' + OLD_ID + '-old');
         console.log('Renaming new container...');
         await call('POST', '/containers/' + NEW_ID + '/rename?name=' + NEW_NAME);
         console.log('Starting new container...');
-        await call('POST', '/containers/' + NEW_ID + '/start');
+        const startStatus = await call('POST', '/containers/' + NEW_ID + '/start');
+        if (startStatus >= 400) {
+          throw new Error('Failed to start new container (status ' + startStatus + '), old container preserved for log inspection');
+        }
+        console.log('Removing old container...');
+        await call('DELETE', '/containers/' + OLD_ID + '?v=true');
+        console.log('Removing helper container...');
+        call('DELETE', '/containers/' + SELF_NAME + '?v=true&force=true');
         console.log('Restart complete');
       }
       main().catch(e => { console.error(e.message); process.exit(1); });
     `.trim();
 
     console.log("Starting restart helper");
-    await docker.run(
-      IMAGE_1,
-      ["-e", helperScript],
-      process.stdout,
-      {
-        Entrypoint: ["node"],
-        Env: [
-          `OLD_ID=${selfContainer.Id}`,
-          `NEW_ID=${newContainer.id}`,
-          `NEW_NAME=${CONTAINER_NAME}`,
-        ],
-        HostConfig: {
-          AutoRemove: true,
-          Binds: ["/var/run/docker.sock:/var/run/docker.sock"],
-        },
-      }
-    );
+    const helperName = `${CONTAINER_NAME}-helper-${generateId()}`;
+    const helperContainer = await docker.createContainer({
+      Image: IMAGE_1,
+      name: helperName,
+      Entrypoint: ["node"],
+      Cmd: ["-e", helperScript],
+      Env: [
+        `OLD_ID=${selfContainer.Id}`,
+        `NEW_ID=${newContainer.id}`,
+        `NEW_NAME=${CONTAINER_NAME}`,
+        `SELF_NAME=${helperName}`,
+      ],
+      HostConfig: {
+        AutoRemove: false,
+        Binds: ["/var/run/docker.sock:/var/run/docker.sock"],
+      },
+    });
+    await helperContainer.start();
 
     console.log("Restart initiated");
   }
