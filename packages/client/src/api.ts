@@ -26,6 +26,11 @@ export async function deleteContainer(id: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete container");
 }
 
+export async function deleteAllContainers(): Promise<void> {
+  const res = await fetch(`${BASE}/containers`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete all containers");
+}
+
 export async function fetchConfigs(): Promise<EnvironmentConfig[]> {
   const res = await fetch(`${BASE}/configs`);
   if (!res.ok) throw new Error("Failed to fetch configs");
