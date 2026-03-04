@@ -502,12 +502,17 @@ export async function updateAndRestartSystem(): Promise<void> {
         await new Promise(r => setTimeout(r, 3000));
         console.log('Stopping old container...');
         await call('POST', '/containers/' + OLD_ID + '/stop');
-        console.log('Removing old container...');
-        await call('DELETE', '/containers/' + OLD_ID + '?v=true');
+        console.log('Renaming old container...');
+        await call('POST', '/containers/' + OLD_ID + '/rename?name=' + OLD_ID + '-old');
         console.log('Renaming new container...');
         await call('POST', '/containers/' + NEW_ID + '/rename?name=' + NEW_NAME);
         console.log('Starting new container...');
-        await call('POST', '/containers/' + NEW_ID + '/start');
+        const startStatus = await call('POST', '/containers/' + NEW_ID + '/start');
+        if (startStatus >= 400) {
+          throw new Error('Failed to start new container (status ' + startStatus + '), old container preserved for log inspection');
+        }
+        console.log('Removing old container...');
+        await call('DELETE', '/containers/' + OLD_ID + '?v=true');
         console.log('Restart complete');
       }
       main().catch(e => { console.error(e.message); process.exit(1); });
