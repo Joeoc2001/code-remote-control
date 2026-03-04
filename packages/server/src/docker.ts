@@ -399,3 +399,128 @@ export function cleanupAll(): void {
   }
   sseClients.length = 0;
 }
+
+export async function updateAndRestartSystem(): Promise<void> {
+  const IMAGE_1 = "ghcr.io/joeoc2001/code-remote-control:latest";
+  const IMAGE_2 = "ghcr.io/joeoc2001/code-remote-control-env:latest";
+  const CONTAINER_NAME = "code-remote-control";
+
+  async function pullImage(imageName: string): Promise<void> {
+    console.log(`Pulling image: ${imageName}`);
+    const stream = await docker.pull(imageName);
+    await new Promise((resolve, reject) => {
+      docker.modem.followProgress(stream, (err, _output) => {
+        if (err) reject(err);
+        else resolve(undefined);
+      });
+    });
+    console.log(`Successfully pulled: ${imageName}`);
+  }
+
+  async function pruneOldImages(imageRepo: string): Promise<void> {
+    console.log(`Pruning old versions of: ${imageRepo}`);
+    const images = await docker.listImages();
+    const repoPrefix = imageRepo.split(":")[0];
+
+    for (const image of images) {
+      if (!image.RepoTags) continue;
+      for (const tag of image.RepoTags) {
+        if (tag.startsWith(repoPrefix) && tag !== imageRepo) {
+          try {
+            console.log(`Removing old image: ${tag}`);
+            await docker.getImage(tag).remove({ force: false });
+          } catch (err) {
+            console.warn(`Failed to remove image ${tag}:`, err);
+          }
+        }
+      }
+    }
+  }
+
+  async function restartSelfContainer(): Promise<void> {
+    console.log(`Finding container: ${CONTAINER_NAME}`);
+    const containers = await docker.listContainers({ all: true });
+    const selfContainer = containers.find((c) =>
+      c.Names.some((name) => name === `/${CONTAINER_NAME}` || name === CONTAINER_NAME)
+    );
+
+    if (!selfContainer) {
+      throw new Error(`Container ${CONTAINER_NAME} not found`);
+    }
+
+    const container = docker.getContainer(selfContainer.Id);
+    const info = await container.inspect();
+
+    const volumeArgs = (info.HostConfig.Binds || []).map(b => `--volume "${b}"`).join(" ");
+    const portArgs = Object.entries(info.HostConfig.PortBindings || {})
+      .flatMap(([internal, bindings]) => {
+        if (!Array.isArray(bindings)) return [];
+        return bindings.map((b) => `-p ${b.HostPort}:${internal.replace("/tcp", "")}`);
+      })
+      .join(" ");
+    const envArgs = (info.Config.Env || []).map(e => `--env "${e}"`).join(" ");
+    const labelArgs = Object.entries(info.Config.Labels || {})
+      .map(([k, v]) => `--label "${k}=${v}"`)
+      .join(" ");
+    const networkArgs = info.HostConfig.NetworkMode ? `--network ${info.HostConfig.NetworkMode}` : "";
+    const restartPolicy = info.HostConfig.RestartPolicy?.Name ? `--restart ${info.HostConfig.RestartPolicy.Name}` : "";
+    const workdirArg = info.Config.WorkingDir ? `--workdir "${info.Config.WorkingDir}"` : "";
+    const userArg = info.Config.User ? `--user "${info.Config.User}"` : "";
+    const hostnameArg = info.Config.Hostname ? `--hostname "${info.Config.Hostname}"` : "";
+    const privilegedArg = info.HostConfig.Privileged ? "--privileged" : "";
+    const capAddArgs = (info.HostConfig.CapAdd || []).map((cap: string) => `--cap-add ${cap}`).join(" ");
+    const capDropArgs = (info.HostConfig.CapDrop || []).map((cap: string) => `--cap-drop ${cap}`).join(" ");
+
+    console.log(`Creating restart script container`);
+    const restartScript = `
+      sleep 3
+      echo "Stopping old container..."
+      docker stop ${selfContainer.Id}
+      echo "Removing old container..."
+      docker rm ${selfContainer.Id}
+      echo "Creating new container..."
+      docker run -d \\
+        --name ${CONTAINER_NAME} \\
+        ${volumeArgs} \\
+        ${portArgs} \\
+        ${envArgs} \\
+        ${labelArgs} \\
+        ${networkArgs} \\
+        ${restartPolicy} \\
+        ${workdirArg} \\
+        ${userArg} \\
+        ${hostnameArg} \\
+        ${privilegedArg} \\
+        ${capAddArgs} \\
+        ${capDropArgs} \\
+        ${IMAGE_1}
+      echo "Restart complete"
+    `.trim();
+
+    await docker.run(
+      "alpine:latest",
+      ["sh", "-c", restartScript],
+      process.stdout,
+      {
+        HostConfig: {
+          AutoRemove: true,
+          Binds: ["/var/run/docker.sock:/var/run/docker.sock"],
+        },
+      }
+    );
+
+    console.log("Restart script initiated");
+  }
+
+  setTimeout(async () => {
+    try {
+      await pullImage(IMAGE_1);
+      await pullImage(IMAGE_2);
+      await pruneOldImages(IMAGE_1);
+      await pruneOldImages(IMAGE_2);
+      await restartSelfContainer();
+    } catch (err) {
+      console.error("Update and restart failed:", err);
+    }
+  }, 1000);
+}

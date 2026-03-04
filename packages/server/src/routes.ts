@@ -9,6 +9,7 @@ import {
   addSSEClient,
   removeSSEClient,
   broadcastRemoval,
+  updateAndRestartSystem,
 } from "./docker.js";
 import { fetchRepos } from "./github.js";
 import type { CreateContainerRequest } from "./types.js";
@@ -156,4 +157,14 @@ router.get("/api/events", (req, res) => {
     clearInterval(heartbeat);
     removeSSEClient(clientId);
   });
+});
+
+router.post("/api/system/update", async (_req, res) => {
+  try {
+    res.status(202).json({ message: "Update initiated" });
+    updateAndRestartSystem();
+  } catch (err) {
+    console.error("Error initiating update:", err);
+    res.status(500).json({ error: "Failed to initiate update" });
+  }
 });

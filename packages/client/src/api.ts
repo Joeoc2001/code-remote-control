@@ -40,6 +40,11 @@ export async function fetchGitHubRepos(): Promise<GitHubRepo[]> {
   return data.repos;
 }
 
+export async function updateAndRestart(): Promise<void> {
+  const res = await fetch(`${BASE}/system/update`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to initiate update");
+}
+
 export function subscribeToEvents(
   onContainerUpdated: (container: ManagedContainer) => void,
   onContainerRemoved: (id: string) => void,
