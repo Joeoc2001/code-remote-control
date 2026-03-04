@@ -1,5 +1,6 @@
 export interface EnvironmentConfig {
   name: string;
+  description?: string;
   opencode: object;
   env?: Record<string, string>;
 }

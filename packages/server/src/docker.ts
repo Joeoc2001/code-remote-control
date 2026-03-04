@@ -1,6 +1,7 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
 import { PassThrough } from "node:stream";
+import tar from "tar-stream";
 import type {
   ManagedContainer,
   ContainerHealth,
@@ -14,6 +15,20 @@ const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
+const OPENCODE_CONFIG_PATH = "/etc/opencode.json";
+
+function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
+  const pack = tar.pack();
+  pack.entry({ name: filePath, mode }, content);
+  pack.finalize();
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    pack.on("data", (chunk: Buffer) => chunks.push(chunk));
+    pack.on("end", () => resolve(Buffer.concat(chunks)));
+    pack.on("error", reject);
+  });
+}
 
 const remoteUrlCache = new Map<string, string>();
 const healthCache = new Map<string, ContainerHealth>();
@@ -126,7 +141,7 @@ export async function createContainer(
   const envVars = [
     `REPO_URL=${repoUrl}`,
     `GITHUB_TOKEN=${GITHUB_TOKEN}`,
-    `OPENCODE_CONFIG=${JSON.stringify(config.opencode)}`,
+    `OPENCODE_CONFIG=${OPENCODE_CONFIG_PATH}`,
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
 
@@ -142,6 +157,10 @@ export async function createContainer(
       AutoRemove: false,
     },
   });
+
+  const configJson = Buffer.from(JSON.stringify(config.opencode));
+  const configTar = await createSingleFileTar("etc/opencode.json", configJson, 0o444);
+  await container.putArchive(configTar, { path: "/" });
 
   await container.start();
 
