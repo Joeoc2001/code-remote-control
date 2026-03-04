@@ -1,5 +1,5 @@
-# Stage 1 — Build
 FROM node:22-alpine AS build
+ARG BUILD_ID=unknown
 
 WORKDIR /app
 
@@ -15,9 +15,10 @@ COPY packages/shared/ ./packages/shared/
 COPY packages/client/ ./packages/client/
 COPY packages/server/ ./packages/server/
 
+RUN echo "{\"buildId\":\"${BUILD_ID}\"}" > packages/server/build-info.json
+
 RUN npm run build
 
-# Stage 2 — Runtime
 FROM node:22-alpine
 
 WORKDIR /app
@@ -31,6 +32,7 @@ RUN npm ci --omit=dev
 
 COPY packages/shared/ ./packages/shared/
 COPY --from=build /app/packages/server/dist/ ./packages/server/dist/
+COPY --from=build /app/packages/server/build-info.json ./packages/server/build-info.json
 COPY --from=build /app/packages/client/dist/ ./packages/client/dist/
 
 EXPOSE 3000

@@ -50,6 +50,12 @@ export async function updateAndRestart(): Promise<void> {
   if (!res.ok) throw new Error("Failed to initiate update");
 }
 
+export async function fetchBuildInfo(): Promise<{ buildId: string }> {
+  const res = await fetch(`${BASE}/build-info`);
+  if (!res.ok) throw new Error("Failed to fetch build info");
+  return res.json();
+}
+
 export function subscribeToEvents(
   onContainerUpdated: (container: ManagedContainer) => void,
   onContainerRemoved: (id: string) => void,

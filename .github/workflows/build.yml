@@ -43,6 +43,8 @@ jobs:
           context: .
           file: docker/Dockerfile.app
           push: true
+          build-args: |
+            BUILD_ID=${{ github.sha }}
           tags: |
             ${{ env.APP_IMAGE }}:latest
             ${{ env.APP_IMAGE }}:${{ github.sha }}

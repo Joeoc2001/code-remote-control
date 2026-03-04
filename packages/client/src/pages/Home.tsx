@@ -6,6 +6,7 @@ import ContainerGrid from "../components/ContainerGrid";
 import NewContainerModal from "../components/NewContainerModal";
 import SettingsModal from "../components/SettingsModal";
 import DeleteAllModal from "../components/DeleteAllModal";
+import Footer from "../components/Footer";
 
 export default function Home() {
   const [containers, setContainers] = useState<ManagedContainer[]>([]);
@@ -119,6 +120,7 @@ export default function Home() {
           }}
         />
       )}
+      <Footer />
     </div>
   );
 }

@@ -1,5 +1,8 @@
 import { Router } from "express";
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfigurations } from "./config.js";
 import {
   listContainers,
@@ -16,7 +19,19 @@ import type { CreateContainerRequest } from "./types.js";
 
 export const router = Router();
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 const REPO_NAME_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+
+function getBuildId(): string {
+  try {
+    const buildInfoPath = resolve(__dirname, "../build-info.json");
+    const buildInfo = JSON.parse(readFileSync(buildInfoPath, "utf-8"));
+    return buildInfo.buildId || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function isValidContainerId(id: string): boolean {
   return /^[a-f0-9]+$/.test(id) && id.length >= 12 && id.length <= 64;
@@ -144,6 +159,10 @@ router.get("/api/configs", async (_req, res) => {
     console.error("Error loading configs:", err);
     res.status(500).json({ error: "Failed to load configurations" });
   }
+});
+
+router.get("/api/build-info", (_req, res) => {
+  res.json({ buildId: getBuildId() });
 });
 
 router.get("/api/github/repos", async (_req, res) => {
