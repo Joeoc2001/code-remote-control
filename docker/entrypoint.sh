@@ -22,8 +22,7 @@ else
   exit -1
 fi
 
-export REPO_DIR="$(ls /workspace)"
-cd "/workspace/$REPO_DIR"
+cd "/workspace"
 
 echo "Starting opencode..."
 exec opencode web --port 8080 --hostname 0.0.0.0
