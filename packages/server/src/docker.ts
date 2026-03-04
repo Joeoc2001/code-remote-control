@@ -19,7 +19,9 @@ const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const OPENCODE_CONFIG_PATH = "/etc/opencode.json";
 const CONTAINER_INTERNAL_PORT = 8080;
 
-function findFreePort(): Promise<number> {
+const MAX_PORT_ATTEMPTS = 10;
+
+function tryBindPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
     srv.listen(0, () => {
@@ -28,6 +30,15 @@ function findFreePort(): Promise<number> {
     });
     srv.on("error", reject);
   });
+}
+
+async function findFreePort(): Promise<number> {
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
+    const port = await tryBindPort();
+    const inUse = [...portCache.values()].includes(port);
+    if (!inUse) return port;
+  }
+  throw new Error("Failed to find a free port after " + MAX_PORT_ATTEMPTS + " attempts");
 }
 
 function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
@@ -93,7 +104,7 @@ function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContaine
   };
 
   const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
-  const hostPort = portMapping?.PublicPort ?? null;
+  const hostPort = portMapping?.PublicPort ?? portCache.get(container.Id) ?? 0;
   if (hostPort) portCache.set(container.Id, hostPort);
 
   return {
@@ -140,7 +151,7 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
 
     const portKey = `${CONTAINER_INTERNAL_PORT}/tcp`;
     const bindings = info.NetworkSettings?.Ports?.[portKey];
-    const hostPort = bindings?.[0]?.HostPort ? parseInt(bindings[0].HostPort, 10) : null;
+    const hostPort = bindings?.[0]?.HostPort ? parseInt(bindings[0].HostPort, 10) : portCache.get(info.Id) ?? 0;
     if (hostPort) portCache.set(info.Id, hostPort);
 
     return {
