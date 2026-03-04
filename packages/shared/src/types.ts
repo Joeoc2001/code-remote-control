@@ -22,6 +22,7 @@ export interface ManagedContainer {
   status: string;
   health: ContainerHealth;
   remoteUrl: string | null;
+  hostPort: number;
   createdAt: string;
 }
 

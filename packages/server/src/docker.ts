@@ -1,5 +1,6 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
+import net from "node:net";
 import { PassThrough } from "node:stream";
 import tar from "tar-stream";
 import type {
@@ -16,6 +17,29 @@ const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const OPENCODE_CONFIG_PATH = "/etc/opencode.json";
+const CONTAINER_INTERNAL_PORT = 8080;
+
+const MAX_PORT_ATTEMPTS = 10;
+
+function tryBindPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+    srv.on("error", reject);
+  });
+}
+
+async function findFreePort(): Promise<number> {
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
+    const port = await tryBindPort();
+    const inUse = [...portCache.values()].includes(port);
+    if (!inUse) return port;
+  }
+  throw new Error("Failed to find a free port after " + MAX_PORT_ATTEMPTS + " attempts");
+}
 
 function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
   const pack = tar.pack();
@@ -33,6 +57,11 @@ function createSingleFileTar(filePath: string, content: Buffer, mode: number): P
 const remoteUrlCache = new Map<string, string>();
 const healthCache = new Map<string, ContainerHealth>();
 const logWatchers = new Map<string, NodeJS.ReadableStream>();
+const portCache = new Map<string, number>();
+
+export function getContainerPort(id: string): number | null {
+  return portCache.get(id) ?? null;
+}
 
 function slugify(input: string): string {
   return input
@@ -74,6 +103,10 @@ function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContaine
     openCode: "unknown" as const,
   };
 
+  const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
+  const hostPort = portMapping?.PublicPort ?? portCache.get(container.Id) ?? 0;
+  if (hostPort) portCache.set(container.Id, hostPort);
+
   return {
     id: container.Id,
     name,
@@ -82,6 +115,7 @@ function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContaine
     status,
     health,
     remoteUrl: remoteUrlCache.get(container.Id) || null,
+    hostPort,
     createdAt: new Date(container.Created * 1000).toISOString(),
   };
 }
@@ -115,6 +149,11 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
       openCode: "unknown" as const,
     };
 
+    const portKey = `${CONTAINER_INTERNAL_PORT}/tcp`;
+    const bindings = info.NetworkSettings?.Ports?.[portKey];
+    const hostPort = bindings?.[0]?.HostPort ? parseInt(bindings[0].HostPort, 10) : portCache.get(info.Id) ?? 0;
+    if (hostPort) portCache.set(info.Id, hostPort);
+
     return {
       id: info.Id,
       name,
@@ -123,6 +162,7 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
       status,
       health,
       remoteUrl: remoteUrlCache.get(info.Id) || null,
+      hostPort,
       createdAt: info.Created,
     };
   } catch {
@@ -137,6 +177,7 @@ export async function createContainer(
   const repoShortName = slugify(repoFullName.split("/").pop() || "repo");
   const containerName = `${CONTAINER_PREFIX}${slugify(config.name)}-${repoShortName}-${generateId()}`;
   const repoUrl = `https://github.com/${repoFullName}.git`;
+  const hostPort = await findFreePort();
 
   const envVars = [
     `REPO_URL=${repoUrl}`,
@@ -144,6 +185,8 @@ export async function createContainer(
     `OPENCODE_CONFIG=${OPENCODE_CONFIG_PATH}`,
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
+
+  const portKey = `${CONTAINER_INTERNAL_PORT}/tcp`;
 
   const container = await docker.createContainer({
     Image: CRC_ENV_IMAGE,
@@ -153,8 +196,12 @@ export async function createContainer(
       [LABEL_CONFIG_NAME]: config.name,
       [LABEL_REPO_NAME]: repoFullName,
     },
+    ExposedPorts: { [portKey]: {} },
     HostConfig: {
       AutoRemove: false,
+      PortBindings: {
+        [portKey]: [{ HostPort: String(hostPort) }],
+      },
     },
   });
 
@@ -163,6 +210,8 @@ export async function createContainer(
   await container.putArchive(configTar, { path: "/" });
 
   await container.start();
+
+  portCache.set(container.id, hostPort);
 
   const info = await container.inspect();
   return {
@@ -173,6 +222,7 @@ export async function createContainer(
     status: "running",
     health: { container: "running", openCode: "unknown" },
     remoteUrl: null,
+    hostPort,
     createdAt: info.Created,
   };
 }
@@ -192,6 +242,7 @@ export async function removeContainer(id: string): Promise<void> {
   cleanupLogWatcher(id);
   remoteUrlCache.delete(id);
   healthCache.delete(id);
+  portCache.delete(id);
 }
 
 export async function getContainerLogStream(id: string): Promise<NodeJS.ReadableStream> {
