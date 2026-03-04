@@ -5,11 +5,13 @@ import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
 import NewContainerModal from "../components/NewContainerModal";
 import SettingsModal from "../components/SettingsModal";
+import DeleteAllModal from "../components/DeleteAllModal";
 
 export default function Home() {
   const [containers, setContainers] = useState<ManagedContainer[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
@@ -63,7 +65,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-950">
-      <Header onNewContainer={() => setShowModal(true)} onSettings={() => setShowSettings(true)} />
+      <Header
+        onNewContainer={() => setShowModal(true)}
+        onSettings={() => setShowSettings(true)}
+        onDeleteAll={() => setShowDeleteAllModal(true)}
+      />
       {!connected && (
         <div className="bg-yellow-900/50 border-b border-yellow-700 px-4 py-2 text-center text-yellow-300 text-sm">
           Connection lost — reconnecting...
@@ -103,6 +109,15 @@ export default function Home() {
       )}
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+      {showDeleteAllModal && (
+        <DeleteAllModal
+          onClose={() => setShowDeleteAllModal(false)}
+          onDeleted={() => {
+            setShowDeleteAllModal(false);
+            setContainers([]);
+          }}
+        />
       )}
     </div>
   );

@@ -61,6 +61,22 @@ router.post("/api/containers", async (req, res) => {
   }
 });
 
+router.delete("/api/containers", async (_req, res) => {
+  try {
+    const containers = await listContainers();
+    await Promise.all(
+      containers.map(async (c) => {
+        await removeContainer(c.id);
+        broadcastRemoval(c.id);
+      }),
+    );
+    res.status(204).send();
+  } catch (err) {
+    console.error("Error removing all containers:", err);
+    res.status(500).json({ error: "Failed to remove all containers" });
+  }
+});
+
 router.delete("/api/containers/:id", async (req, res) => {
   try {
     const { id } = req.params;
