@@ -488,7 +488,7 @@ export async function updateAndRestartSystem(): Promise<void> {
       const OLD_ID = process.env.OLD_ID;
       const NEW_ID = process.env.NEW_ID;
       const NEW_NAME = process.env.NEW_NAME;
-      const SELF_ID = process.env.SELF_ID;
+      const SELF_NAME = process.env.SELF_NAME;
       function call(method, path) {
         return new Promise((resolve, reject) => {
           const req = http.request({ socketPath: '/var/run/docker.sock', method, path }, res => {
@@ -515,7 +515,7 @@ export async function updateAndRestartSystem(): Promise<void> {
         console.log('Removing old container...');
         await call('DELETE', '/containers/' + OLD_ID + '?v=true');
         console.log('Removing helper container...');
-        call('DELETE', '/containers/' + SELF_ID + '?v=true&force=true');
+        call('DELETE', '/containers/' + SELF_NAME + '?v=true&force=true');
         console.log('Restart complete');
       }
       main().catch(e => { console.error(e.message); process.exit(1); });
@@ -532,7 +532,7 @@ export async function updateAndRestartSystem(): Promise<void> {
         `OLD_ID=${selfContainer.Id}`,
         `NEW_ID=${newContainer.id}`,
         `NEW_NAME=${CONTAINER_NAME}`,
-        `SELF_ID=${helperName}`,
+        `SELF_NAME=${helperName}`,
       ],
       HostConfig: {
         AutoRemove: false,
