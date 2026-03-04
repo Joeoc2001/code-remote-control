@@ -35,7 +35,8 @@ function tryBindPort(): Promise<number> {
 async function findFreePort(): Promise<number> {
   for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
     const port = await tryBindPort();
-    const inUse = [...portCache.values()].includes(port);
+    const portMap = await getPortMap();
+    const inUse = [...portMap.values()].includes(port);
     if (!inUse) return port;
   }
   throw new Error("Failed to find a free port after " + MAX_PORT_ATTEMPTS + " attempts");
@@ -56,10 +57,29 @@ function createSingleFileTar(filePath: string, content: Buffer, mode: number): P
 
 const healthCache = new Map<string, ContainerHealth>();
 const logWatchers = new Map<string, NodeJS.ReadableStream>();
-const portCache = new Map<string, number>();
 
-export function getContainerPort(id: string): number | null {
-  return portCache.get(id) ?? null;
+async function getPortMap(): Promise<Map<string, number>> {
+  const containers = await docker.listContainers({
+    all: true,
+    filters: { name: [CONTAINER_PREFIX] },
+  });
+
+  const portMap = new Map<string, number>();
+  for (const container of containers) {
+    const name = (container.Names[0] || "").replace(/^\//, "");
+    if (!name.startsWith(CONTAINER_PREFIX)) continue;
+
+    const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
+    if (portMapping?.PublicPort) {
+      portMap.set(container.Id, portMapping.PublicPort);
+    }
+  }
+  return portMap;
+}
+
+export async function getContainerPort(id: string): Promise<number | null> {
+  const portMap = await getPortMap();
+  return portMap.get(id) ?? null;
 }
 
 function slugify(input: string): string {
@@ -103,8 +123,7 @@ function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContaine
   };
 
   const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
-  const hostPort = portMapping?.PublicPort ?? portCache.get(container.Id) ?? 0;
-  if (hostPort) portCache.set(container.Id, hostPort);
+  const hostPort = portMapping?.PublicPort ?? 0;
 
   return {
     id: container.Id,
@@ -149,8 +168,7 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
 
     const portKey = `${CONTAINER_INTERNAL_PORT}/tcp`;
     const bindings = info.NetworkSettings?.Ports?.[portKey];
-    const hostPort = bindings?.[0]?.HostPort ? parseInt(bindings[0].HostPort, 10) : portCache.get(info.Id) ?? 0;
-    if (hostPort) portCache.set(info.Id, hostPort);
+    const hostPort = bindings?.[0]?.HostPort ? parseInt(bindings[0].HostPort, 10) : 0;
 
     return {
       id: info.Id,
@@ -208,8 +226,6 @@ export async function createContainer(
 
   await container.start();
 
-  portCache.set(container.id, hostPort);
-
   const info = await container.inspect();
   return {
     id: info.Id,
@@ -237,7 +253,6 @@ export async function removeContainer(id: string): Promise<void> {
   await container.remove({ v: true });
   cleanupLogWatcher(id);
   healthCache.delete(id);
-  portCache.delete(id);
 }
 
 export async function getContainerLogStream(id: string): Promise<NodeJS.ReadableStream> {

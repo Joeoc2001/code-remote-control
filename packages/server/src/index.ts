@@ -27,10 +27,10 @@ proxy.on("error", (_err, _req, res) => {
 
 const CONTAINER_ID_RE = /^[a-f0-9]{12,64}$/;
 
-function proxyToContainer(req: express.Request, res: express.Response) {
+async function proxyToContainer(req: express.Request, res: express.Response) {
   const id = req.params.id as string;
   if (!CONTAINER_ID_RE.test(id)) { res.status(400).json({ error: "Invalid container ID" }); return; }
-  const port = getContainerPort(id);
+  const port = await getContainerPort(id);
   if (!port) { res.status(404).json({ error: "No port mapping for container" }); return; }
   req.url = req.url!.replace(`/proxy/${id}`, "") || "/";
   proxy.web(req, res, { target: `http://127.0.0.1:${port}` });
@@ -67,10 +67,10 @@ const server = app.listen(PORT, () => {
   console.log(`Code Remote Control server listening on port ${PORT}`);
 });
 
-server.on("upgrade", (req, socket, head) => {
+server.on("upgrade", async (req, socket, head) => {
   const match = req.url?.match(/^\/proxy\/([a-f0-9]{12,64})(\/.*)?$/);
   if (!match) { socket.destroy(); return; }
-  const port = getContainerPort(match[1]);
+  const port = await getContainerPort(match[1]);
   if (!port) { socket.destroy(); return; }
   req.url = match[2] || "/";
   proxy.ws(req, socket, head, { target: `http://127.0.0.1:${port}` });
