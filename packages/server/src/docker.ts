@@ -1,6 +1,7 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
 import { PassThrough } from "node:stream";
+import tar from "tar-stream";
 import type {
   ManagedContainer,
   ContainerHealth,
@@ -16,31 +17,17 @@ const LABEL_REPO_NAME = "crc.repo-name";
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const OPENCODE_CONFIG_PATH = "/etc/opencode.json";
 
-function createSingleFileTar(filePath: string, content: Buffer, mode: number): Buffer {
-  const BLOCK_SIZE = 512;
-  const header = Buffer.alloc(BLOCK_SIZE, 0);
+function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
+  const pack = tar.pack();
+  pack.entry({ name: filePath, mode }, content);
+  pack.finalize();
 
-  header.write(filePath, 0, Math.min(filePath.length, 100), "utf8");
-  header.write(mode.toString(8).padStart(7, "0") + "\0", 100, 8, "utf8");
-  header.write("0000000\0", 108, 8, "utf8");
-  header.write("0000000\0", 116, 8, "utf8");
-  header.write(content.length.toString(8).padStart(11, "0") + "\0", 124, 12, "utf8");
-  header.write(Math.floor(Date.now() / 1000).toString(8).padStart(11, "0") + "\0", 136, 12, "utf8");
-  header.write("        ", 148, 8, "utf8");
-  header.write("0", 156, 1, "utf8");
-  header.write("ustar\0", 257, 6, "utf8");
-  header.write("00", 263, 2, "utf8");
-
-  let checksum = 0;
-  for (let i = 0; i < BLOCK_SIZE; i++) checksum += header[i];
-  header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, 8, "utf8");
-
-  const remainder = content.length % BLOCK_SIZE;
-  const paddedContent = remainder === 0
-    ? content
-    : Buffer.concat([content, Buffer.alloc(BLOCK_SIZE - remainder, 0)]);
-
-  return Buffer.concat([header, paddedContent, Buffer.alloc(BLOCK_SIZE * 2, 0)]);
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    pack.on("data", (chunk: Buffer) => chunks.push(chunk));
+    pack.on("end", () => resolve(Buffer.concat(chunks)));
+    pack.on("error", reject);
+  });
 }
 
 const remoteUrlCache = new Map<string, string>();
@@ -172,8 +159,8 @@ export async function createContainer(
   });
 
   const configJson = Buffer.from(JSON.stringify(config.opencode));
-  const tar = createSingleFileTar("etc/opencode.json", configJson, 0o444);
-  await container.putArchive(tar, { path: "/" });
+  const configTar = await createSingleFileTar("etc/opencode.json", configJson, 0o444);
+  await container.putArchive(configTar, { path: "/" });
 
   await container.start();
 
