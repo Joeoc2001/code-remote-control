@@ -443,60 +443,73 @@ export async function updateAndRestartSystem(): Promise<void> {
       throw new Error(`Container ${CONTAINER_NAME} not found`);
     }
 
-    const container = docker.getContainer(selfContainer.Id);
-    const info = await container.inspect();
+    const selfDockerContainer = docker.getContainer(selfContainer.Id);
+    const info = await selfDockerContainer.inspect();
 
-    const volumeArgs = (info.HostConfig.Binds || []).map(b => `--volume "${b}"`).join(" ");
-    const portArgs = Object.entries(info.HostConfig.PortBindings || {})
-      .flatMap(([internal, bindings]) => {
-        if (!Array.isArray(bindings)) return [];
-        return bindings.map((b) => `-p ${b.HostPort}:${internal.replace("/tcp", "")}`);
-      })
-      .join(" ");
-    const envArgs = (info.Config.Env || []).map(e => `--env "${e}"`).join(" ");
-    const labelArgs = Object.entries(info.Config.Labels || {})
-      .map(([k, v]) => `--label "${k}=${v}"`)
-      .join(" ");
-    const networkArgs = info.HostConfig.NetworkMode ? `--network ${info.HostConfig.NetworkMode}` : "";
-    const restartPolicy = info.HostConfig.RestartPolicy?.Name ? `--restart ${info.HostConfig.RestartPolicy.Name}` : "";
-    const workdirArg = info.Config.WorkingDir ? `--workdir "${info.Config.WorkingDir}"` : "";
-    const userArg = info.Config.User ? `--user "${info.Config.User}"` : "";
-    const hostnameArg = info.Config.Hostname ? `--hostname "${info.Config.Hostname}"` : "";
-    const privilegedArg = info.HostConfig.Privileged ? "--privileged" : "";
-    const capAddArgs = (info.HostConfig.CapAdd || []).map((cap: string) => `--cap-add ${cap}`).join(" ");
-    const capDropArgs = (info.HostConfig.CapDrop || []).map((cap: string) => `--cap-drop ${cap}`).join(" ");
+    console.log("Creating replacement container");
+    const tempName = `${CONTAINER_NAME}-next`;
+    const newContainer = await docker.createContainer({
+      Image: IMAGE_1,
+      name: tempName,
+      Env: info.Config.Env ?? [],
+      Labels: info.Config.Labels ?? {},
+      ExposedPorts: info.Config.ExposedPorts,
+      WorkingDir: info.Config.WorkingDir,
+      User: info.Config.User,
+      Hostname: info.Config.Hostname,
+      HostConfig: {
+        Binds: info.HostConfig.Binds ?? [],
+        PortBindings: info.HostConfig.PortBindings ?? {},
+        NetworkMode: info.HostConfig.NetworkMode,
+        RestartPolicy: info.HostConfig.RestartPolicy,
+        Privileged: info.HostConfig.Privileged ?? false,
+        CapAdd: info.HostConfig.CapAdd ?? [],
+        CapDrop: info.HostConfig.CapDrop ?? [],
+      },
+    });
 
-    console.log(`Creating restart script container`);
-    const restartScript = `
-      sleep 3
-      echo "Stopping old container..."
-      docker stop ${selfContainer.Id}
-      echo "Removing old container..."
-      docker rm ${selfContainer.Id}
-      echo "Creating new container..."
-      docker run -d \\
-        --name ${CONTAINER_NAME} \\
-        ${volumeArgs} \\
-        ${portArgs} \\
-        ${envArgs} \\
-        ${labelArgs} \\
-        ${networkArgs} \\
-        ${restartPolicy} \\
-        ${workdirArg} \\
-        ${userArg} \\
-        ${hostnameArg} \\
-        ${privilegedArg} \\
-        ${capAddArgs} \\
-        ${capDropArgs} \\
-        ${IMAGE_1}
-      echo "Restart complete"
+    const helperScript = `
+      const http = require('http');
+      const OLD_ID = process.env.OLD_ID;
+      const NEW_ID = process.env.NEW_ID;
+      const NEW_NAME = process.env.NEW_NAME;
+      function call(method, path) {
+        return new Promise((resolve, reject) => {
+          const req = http.request({ socketPath: '/var/run/docker.sock', method, path }, res => {
+            res.resume();
+            res.on('end', () => resolve(res.statusCode));
+          });
+          req.on('error', reject);
+          req.end();
+        });
+      }
+      async function main() {
+        await new Promise(r => setTimeout(r, 3000));
+        console.log('Stopping old container...');
+        await call('POST', '/containers/' + OLD_ID + '/stop');
+        console.log('Removing old container...');
+        await call('DELETE', '/containers/' + OLD_ID + '?v=true');
+        console.log('Renaming new container...');
+        await call('POST', '/containers/' + NEW_ID + '/rename?name=' + NEW_NAME);
+        console.log('Starting new container...');
+        await call('POST', '/containers/' + NEW_ID + '/start');
+        console.log('Restart complete');
+      }
+      main().catch(e => { console.error(e.message); process.exit(1); });
     `.trim();
 
+    console.log("Starting restart helper");
     await docker.run(
-      "alpine:latest",
-      ["sh", "-c", restartScript],
+      IMAGE_1,
+      ["-e", helperScript],
       process.stdout,
       {
+        Entrypoint: ["node"],
+        Env: [
+          `OLD_ID=${selfContainer.Id}`,
+          `NEW_ID=${newContainer.id}`,
+          `NEW_NAME=${CONTAINER_NAME}`,
+        ],
         HostConfig: {
           AutoRemove: true,
           Binds: ["/var/run/docker.sock:/var/run/docker.sock"],
@@ -504,7 +517,7 @@ export async function updateAndRestartSystem(): Promise<void> {
       }
     );
 
-    console.log("Restart script initiated");
+    console.log("Restart initiated");
   }
 
   setTimeout(async () => {
