@@ -1,6 +1,5 @@
 export interface EnvironmentConfig {
   name: string;
-  description?: string;
   opencode: object;
   env?: Record<string, string>;
 }
@@ -21,7 +20,6 @@ export interface ManagedContainer {
   repoName: string;
   status: string;
   health: ContainerHealth;
-  remoteUrl: string | null;
   hostPort: number;
   createdAt: string;
 }

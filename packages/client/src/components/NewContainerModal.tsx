@@ -106,7 +106,7 @@ export default function NewContainerModal({
                 >
                   {configs.map((c) => (
                     <option key={c.name} value={c.name}>
-                      {c.name} — {c.description}
+                      {c.name}
                     </option>
                   ))}
                 </select>
@@ -133,11 +133,10 @@ export default function NewContainerModal({
                       <button
                         key={repo.fullName}
                         onClick={() => setSelectedRepo(repo.fullName)}
-                        className={`w-full text-left px-3 py-2 text-sm border-b border-gray-800 last:border-0 transition-colors ${
-                          selectedRepo === repo.fullName
+                        className={`w-full text-left px-3 py-2 text-sm border-b border-gray-800 last:border-0 transition-colors ${selectedRepo === repo.fullName
                             ? "bg-blue-600/20 text-blue-300"
                             : "text-gray-300 hover:bg-gray-800"
-                        }`}
+                          }`}
                       >
                         <div className="font-medium">{repo.fullName}</div>
                         {repo.description && (

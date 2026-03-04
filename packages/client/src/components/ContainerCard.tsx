@@ -15,7 +15,6 @@ export default function ContainerCard({
   onRemoved,
 }: ContainerCardProps) {
   const [killing, setKilling] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const displayName = container.name.replace(/^crc-/, "");
 
@@ -30,24 +29,6 @@ export default function ContainerCard({
     } finally {
       setKilling(false);
     }
-  };
-
-  const handleCopyUrl = async () => {
-    if (!container.remoteUrl) return;
-    try {
-      await navigator.clipboard.writeText(container.remoteUrl);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = container.remoteUrl;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -65,34 +46,6 @@ export default function ContainerCard({
       <div className="flex items-center gap-2 text-sm">
         <StatusBadge status={container.status} />
         <span className="text-gray-500">Config: {container.configName}</span>
-      </div>
-
-      <div className="mt-1">
-        {container.remoteUrl ? (
-          <div className="flex items-center gap-2">
-            <a
-              href={container.remoteUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300 text-sm truncate"
-            >
-              {container.remoteUrl}
-            </a>
-            <button
-              onClick={handleCopyUrl}
-              className="shrink-0 text-gray-400 hover:text-white text-xs px-2 py-1 border border-gray-700 rounded transition-colors"
-            >
-              {copied ? "Copied!" : "Copy"}
-            </button>
-          </div>
-        ) : container.status === "running" ? (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <div className="animate-spin h-4 w-4 border-2 border-gray-500 border-t-transparent rounded-full" />
-            Waiting for Remote URL...
-          </div>
-        ) : (
-          <div className="text-sm text-gray-600">No Remote URL</div>
-        )}
       </div>
 
       <div className="mt-auto pt-3 border-t border-gray-800 flex gap-2">

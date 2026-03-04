@@ -54,7 +54,6 @@ function createSingleFileTar(filePath: string, content: Buffer, mode: number): P
   });
 }
 
-const remoteUrlCache = new Map<string, string>();
 const healthCache = new Map<string, ContainerHealth>();
 const logWatchers = new Map<string, NodeJS.ReadableStream>();
 const portCache = new Map<string, number>();
@@ -114,7 +113,6 @@ function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContaine
     repoName,
     status,
     health,
-    remoteUrl: remoteUrlCache.get(container.Id) || null,
     hostPort,
     createdAt: new Date(container.Created * 1000).toISOString(),
   };
@@ -161,7 +159,6 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
       repoName,
       status,
       health,
-      remoteUrl: remoteUrlCache.get(info.Id) || null,
       hostPort,
       createdAt: info.Created,
     };
@@ -221,7 +218,6 @@ export async function createContainer(
     repoName: repoFullName,
     status: "running",
     health: { container: "running", openCode: "unknown" },
-    remoteUrl: null,
     hostPort,
     createdAt: info.Created,
   };
@@ -240,7 +236,6 @@ export async function removeContainer(id: string): Promise<void> {
   }
   await container.remove({ v: true });
   cleanupLogWatcher(id);
-  remoteUrlCache.delete(id);
   healthCache.delete(id);
   portCache.delete(id);
 }
