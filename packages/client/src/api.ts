@@ -45,11 +45,6 @@ export async function fetchGitHubRepos(): Promise<GitHubRepo[]> {
   return data.repos;
 }
 
-export async function updateAndRestart(): Promise<void> {
-  const res = await fetch(`${BASE}/system/update`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to initiate update");
-}
-
 export async function fetchBuildInfo(): Promise<{ buildId: string }> {
   const res = await fetch(`${BASE}/build-info`);
   if (!res.ok) throw new Error("Failed to fetch build info");
