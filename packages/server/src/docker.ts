@@ -16,7 +16,7 @@ const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
-const OPENCODE_CONFIG_PATH = "/etc/opencode.json";
+const OPENCODE_CONFIG_RELATIVE_PATH = "root/.config/opencode/opencode.json";
 const CONTAINER_INTERNAL_PORT = 8080;
 
 const MAX_PORT_ATTEMPTS = 10;
@@ -192,7 +192,6 @@ export async function createContainer(
   const envVars = [
     `REPO_URL=${repoUrl}`,
     `GITHUB_TOKEN=${GITHUB_TOKEN}`,
-    `OPENCODE_CONFIG=${OPENCODE_CONFIG_PATH}`,
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
 
@@ -216,7 +215,7 @@ export async function createContainer(
   });
 
   const configJson = Buffer.from(JSON.stringify(config.opencode));
-  const configTar = await createSingleFileTar("etc/opencode.json", configJson, 0o444);
+  const configTar = await createSingleFileTar(OPENCODE_CONFIG_RELATIVE_PATH, configJson, 0o444);
   await container.putArchive(configTar, { path: "/" });
 
   await container.start();

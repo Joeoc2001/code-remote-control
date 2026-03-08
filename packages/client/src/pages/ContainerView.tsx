@@ -51,7 +51,7 @@ export default function ContainerView() {
         </div>
       ) : (
         <iframe
-          src={`http://localhost:${container.hostPort}/`}
+          src={`http://${window.location.hostname}:${container.hostPort}/`}
           className="flex-1 w-full border-none"
           title="Container Web View"
         />

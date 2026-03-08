@@ -38,7 +38,7 @@ const healthInterval = setInterval(() => {
   runHealthChecks().catch((err) => {
     console.error("Health check error:", err);
   });
-}, 30000);
+}, 1000);
 
 const server = app.listen(PORT, () => {
   console.log(`Code Remote Control server listening on port ${PORT}`);
