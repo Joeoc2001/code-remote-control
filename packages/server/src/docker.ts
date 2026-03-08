@@ -77,11 +77,6 @@ async function getPortMap(): Promise<Map<string, number>> {
   return portMap;
 }
 
-export async function getContainerPort(id: string): Promise<number | null> {
-  const portMap = await getPortMap();
-  return portMap.get(id) ?? null;
-}
-
 function slugify(input: string): string {
   return input
     .replace(/[^a-zA-Z0-9-]/g, "-")
