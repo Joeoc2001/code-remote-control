@@ -1,12 +1,24 @@
-export interface EnvironmentConfig {
-  name: string;
-  opencode: object;
-  env?: Record<string, string>;
-}
+import { z } from "zod";
 
-export interface EnvironmentsFile {
-  configurations: EnvironmentConfig[];
-}
+export const gitConfigSchema = z.object({
+  email: z.string(),
+  username: z.string(),
+});
+
+export const environmentConfigSchema = z.object({
+  name: z.string().min(1),
+  opencode: z.record(z.string(), z.unknown()),
+  env: z.record(z.string(), z.string()).optional(),
+  git: gitConfigSchema,
+});
+
+export const environmentsFileSchema = z.object({
+  configurations: z.array(environmentConfigSchema),
+});
+
+export type GitConfig = z.infer<typeof gitConfigSchema>;
+export type EnvironmentConfig = z.infer<typeof environmentConfigSchema>;
+export type EnvironmentsFile = z.infer<typeof environmentsFileSchema>;
 
 export interface ContainerHealth {
   container: "running" | "stopped" | "error";

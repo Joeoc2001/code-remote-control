@@ -192,6 +192,8 @@ export async function createContainer(
   const envVars = [
     `REPO_URL=${repoUrl}`,
     `GITHUB_TOKEN=${GITHUB_TOKEN}`,
+    `GIT_USER_NAME=${config.git.username}`,
+    `GIT_USER_EMAIL=${config.git.email}`,
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
 

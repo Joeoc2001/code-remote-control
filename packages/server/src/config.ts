@@ -1,36 +1,13 @@
 import { readFile } from "node:fs/promises";
-import type { EnvironmentsFile, EnvironmentConfig } from "./types.js";
+import { environmentsFileSchema, type EnvironmentsFile } from "./types.js";
 
 let configCache: EnvironmentsFile | null = null;
-
-function validateConfigShape(data: unknown): asserts data is EnvironmentsFile {
-  if (typeof data !== "object" || data === null || !("configurations" in data)) {
-    throw new Error("Config file must contain a 'configurations' array");
-  }
-  const { configurations } = data as { configurations: unknown };
-  if (!Array.isArray(configurations)) {
-    throw new Error("'configurations' must be an array");
-  }
-  for (const entry of configurations) {
-    const config = entry as Partial<EnvironmentConfig>;
-    if (typeof config.name !== "string" || !config.name) {
-      throw new Error("Each configuration must have a non-empty 'name' string");
-    }
-    if (typeof config.opencode !== "object" || config.opencode === null || Array.isArray(config.opencode)) {
-      throw new Error(`Configuration '${config.name}' must have an 'opencode' object ${typeof config.opencode}`);
-    }
-    if (config.env !== undefined && config.env !== null && (typeof config.env !== "object" || Array.isArray(config.env))) {
-      throw new Error(`Configuration '${config.name}' has an invalid 'env' object ${typeof config.env}`);
-    }
-  }
-}
 
 export async function loadConfigurations(): Promise<EnvironmentsFile> {
   if (configCache) return configCache;
   const raw = await readFile("/configs/environments.json", "utf-8");
   const parsed: unknown = JSON.parse(raw);
-  validateConfigShape(parsed);
-  configCache = parsed;
+  configCache = environmentsFileSchema.parse(parsed);
   return configCache;
 }
 

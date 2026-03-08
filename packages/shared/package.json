@@ -5,5 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/types.ts"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
   }
 }
