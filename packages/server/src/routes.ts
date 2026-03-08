@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfigurations } from "./config.js";
 import {
   listContainers,
+  getContainer,
   createContainer,
   removeContainer,
   getContainerLogStream,
@@ -43,6 +44,25 @@ router.get("/api/containers", async (_req, res) => {
   } catch (err) {
     console.error("Error listing containers:", err);
     res.status(500).json({ error: "Failed to list containers" });
+  }
+});
+
+router.get("/api/containers/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidContainerId(id)) {
+      res.status(400).json({ error: "Invalid container ID" });
+      return;
+    }
+    const container = await getContainer(id);
+    if (!container) {
+      res.status(404).json({ error: "Container not found" });
+      return;
+    }
+    res.json(container);
+  } catch (err) {
+    console.error("Error fetching container:", err);
+    res.status(500).json({ error: "Failed to fetch container" });
   }
 });
 

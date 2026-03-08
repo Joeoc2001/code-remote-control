@@ -15,7 +15,7 @@ const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
-const HEALTH_CHECK_TIMEOUT_MS = 10_000;
+const HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const OPENCODE_CONFIG_PATH = "/etc/opencode.json";
 const CONTAINER_INTERNAL_PORT = 8080;
 
@@ -325,27 +325,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function checkOpencodeHealth(containerId: string): Promise<ContainerHealth["openCode"]> {
+async function checkOpencodeHealth(hostPort: number): Promise<ContainerHealth["openCode"]> {
+  if (!hostPort) return "unhealthy";
+
   try {
-    const container = docker.getContainer(containerId);
-    const exec = await container.exec({
-      Cmd: ["pgrep", "-f", "opencode.*--remote"],
-      AttachStdout: true,
-      AttachStderr: true,
-    });
-    const execStream = await exec.start({ Detach: false });
-    const output = await withTimeout(
-      new Promise<string>((resolve) => {
-        let data = "";
-        (execStream as unknown as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
-          data += chunk.toString();
-        });
-        (execStream as unknown as NodeJS.ReadableStream).on("end", () => resolve(data));
-        (execStream as unknown as NodeJS.ReadableStream).on("error", () => resolve(""));
-      }),
+    const response = await withTimeout(
+      fetch(`http://localhost:${hostPort}/global/health`),
       HEALTH_CHECK_TIMEOUT_MS,
     );
-    return output.trim().length > 0 ? "healthy" : "unhealthy";
+
+    if (response.status !== 200) return "unhealthy";
+
+    const data = await response.json() as { healthy?: boolean };
+    return data.healthy === true ? "healthy" : "unhealthy";
   } catch {
     return "unhealthy";
   }
@@ -367,7 +359,7 @@ export async function runHealthChecks(): Promise<void> {
 
       const opencodeState: ContainerHealth["openCode"] =
         containerState === "running"
-          ? await checkOpencodeHealth(managed.id)
+          ? await checkOpencodeHealth(managed.hostPort)
           : "unknown";
 
       const health: ContainerHealth = {
