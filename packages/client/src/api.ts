@@ -1,4 +1,4 @@
-import type { ManagedContainer, EnvironmentConfig, GitHubRepo } from "./types";
+import type { ManagedContainer, EnvironmentConfig, EnvironmentsFile, GitHubRepo } from "./types";
 
 const BASE = "/api";
 
@@ -36,6 +36,13 @@ export async function fetchConfigs(): Promise<EnvironmentConfig[]> {
   if (!res.ok) throw new Error("Failed to fetch configs");
   const data = await res.json();
   return data.configurations;
+}
+
+export async function fetchIframeDomain(): Promise<string | undefined> {
+  const res = await fetch(`${BASE}/configs`);
+  if (!res.ok) throw new Error("Failed to fetch configs");
+  const data: EnvironmentsFile = await res.json();
+  return data.iframeDomain;
 }
 
 export async function fetchGitHubRepos(): Promise<GitHubRepo[]> {

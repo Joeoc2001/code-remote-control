@@ -14,6 +14,7 @@ export const environmentConfigSchema = z.object({
 
 export const environmentsFileSchema = z.object({
   configurations: z.array(environmentConfigSchema),
+  iframeDomain: z.string().optional(),
 });
 
 export type GitConfig = z.infer<typeof gitConfigSchema>;
