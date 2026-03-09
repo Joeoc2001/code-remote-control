@@ -1,22 +1,28 @@
 import { useParams, Link } from "react-router-dom";
 import { useState, useEffect } from "react";
 import type { ManagedContainer } from "../types";
+import { fetchIframeDomain } from "../api";
 
 const BASE = "/api";
 
 export default function ContainerView() {
   const { id } = useParams<{ id: string }>();
   const [container, setContainer] = useState<ManagedContainer | null>(null);
+  const [iframeDomain, setIframeDomain] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchContainer() {
+    async function fetchData() {
       try {
-        const res = await fetch(`${BASE}/containers/${id}`);
+        const [res, domain] = await Promise.all([
+          fetch(`${BASE}/containers/${id}`),
+          fetchIframeDomain(),
+        ]);
         if (!res.ok) throw new Error("Failed to fetch container");
         const data = await res.json();
         setContainer(data);
+        setIframeDomain(domain);
         setError(null);
       } catch (err) {
         console.error("Failed to load container:", err);
@@ -25,7 +31,7 @@ export default function ContainerView() {
         setLoading(false);
       }
     }
-    fetchContainer();
+    fetchData();
   }, [id]);
 
   return (
@@ -51,7 +57,7 @@ export default function ContainerView() {
         </div>
       ) : (
         <iframe
-          src={`http://${window.location.hostname}:${container.hostPort}/`}
+          src={`http://${iframeDomain ?? window.location.hostname}:${container.hostPort}/`}
           className="flex-1 w-full border-none"
           title="Container Web View"
         />
