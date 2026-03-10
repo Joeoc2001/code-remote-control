@@ -3,11 +3,9 @@ import Home from "./pages/Home";
 import ContainerLogs from "./pages/ContainerLogs";
 import ContainerView from "./pages/ContainerView";
 
-const basePath = window.__BASE_PATH__ || "";
-
 export default function App() {
   return (
-    <BrowserRouter basename={basePath}>
+    <BrowserRouter>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/logs/:id" element={<ContainerLogs />} />

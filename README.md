@@ -61,6 +61,3 @@ services:
     restart: always
 ```
 
-## Reverse Proxy
-
-When using a path-based reverse proxy, use `BASE_PATH=/code` to prepend the `/code` prefix to all paths fetched.

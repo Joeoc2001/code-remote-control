@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { router } from "./routes.js";
 import { runHealthChecks, cleanupAll, pullLatestImageAndPrune } from "./docker.js";
-import { PORT, validateEnvironment, BASE_PATH } from "./config.js";
+import { PORT, validateEnvironment } from "./config.js";
 
 validateEnvironment();
 
@@ -22,36 +22,18 @@ let indexHtml: string | null = null;
 
 if (existsSync(indexHtmlPath)) {
   indexHtml = readFileSync(indexHtmlPath, "utf-8");
-  const baseTag = BASE_PATH ? `<base href="${BASE_PATH}/">` : "";
-  const basePathScript = `<script>window.__BASE_PATH__ = ${JSON.stringify(BASE_PATH)};</script>`;
-  indexHtml = indexHtml.replace("<head>", `<head>${baseTag}`);
-  indexHtml = indexHtml.replace("</head>", `${basePathScript}</head>`);
 }
 
-if (BASE_PATH) {
-  app.use(BASE_PATH, router);
-  app.all(`${BASE_PATH}/api/*`, (_req, res) => {
-    res.status(404).json({ error: "Not found" });
+app.use(router);
+app.all(/^\/api\//, (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+if (existsSync(clientDistPath) && indexHtml) {
+  app.use(express.static(clientDistPath, { index: false }));
+  app.get("*", (_req, res) => {
+    res.setHeader("Content-Type", "text/html");
+    res.send(indexHtml);
   });
-  if (existsSync(clientDistPath) && indexHtml) {
-    app.use(BASE_PATH, express.static(clientDistPath, { index: false }));
-    app.get(`${BASE_PATH}*`, (_req, res) => {
-      res.setHeader("Content-Type", "text/html");
-      res.send(indexHtml);
-    });
-  }
-} else {
-  app.use(router);
-  app.all(/^\/api\//, (_req, res) => {
-    res.status(404).json({ error: "Not found" });
-  });
-  if (existsSync(clientDistPath) && indexHtml) {
-    app.use(express.static(clientDistPath, { index: false }));
-    app.get("*", (_req, res) => {
-      res.setHeader("Content-Type", "text/html");
-      res.send(indexHtml);
-    });
-  }
 }
 
 pullLatestImageAndPrune().catch((err) => {
