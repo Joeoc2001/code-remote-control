@@ -1,6 +1,7 @@
 import type { ManagedContainer, EnvironmentConfig, EnvironmentsFile, GitHubRepo } from "./types";
 
-const BASE = "/api";
+const basePath = window.__BASE_PATH__ || "";
+const BASE = `${basePath}/api`.replace(/\/+/g, "/");
 
 export async function fetchContainers(): Promise<ManagedContainer[]> {
   const res = await fetch(`${BASE}/containers`);

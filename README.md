@@ -13,21 +13,35 @@ Create your environment configuration file to specify the modes a container can 
 
 ```
 {
-  "configurations": [
-    {
-      "name": "gpt-5.3-codex",
-      "opencode": {
-        "$schema": "https://opencode.ai/config.json",
-        "server": {
-          "port": 4000,
-          "hostname": "192.168.1.2"
-        },
-        "provider": {},
-        "model": "gpt-5.3-codex",
-        "small_model": "gpt-5.3-codex"
-      }
-    }
-  ]
+    "configurations": [
+        {
+            "name": "gpt-5.3-codex",
+            "iframeDomain": "inwintower.tail2cfcb0.ts.net",
+            "git": {
+                "username": "joeoc2001-ai",
+                "email": "joeoc2625.ai@gmail.com"
+            },
+            "opencode": {
+                "$schema": "https://opencode.ai/config.json",
+                "model": "openai/gpt-5.3-codex",
+                "small_model": "openai/gpt-5.3-codex",
+                "enabled_providers": [
+                    "openai"
+                ],
+                "provider": {
+                    "openai": {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": "LiteLLM Proxy",
+                        "options": {
+                            "baseURL": "http://192.168.1.2:4000/v1",
+                            "apiKey": "sk-dud",
+                            "timeout": 3600000
+                        }
+                    }
+                }
+            }
+        }
+    ]
 }
 ```
 
@@ -41,10 +55,12 @@ services:
       - "80:3000"
     env:
       - GITHUB_TOKEN: ghp_...
-      - GIT_USER_NAME: AI-name
-      - GIT_USER_EMAIL: ai@email.com
     volumes:
       - ./environments.json:/configs/environments.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
     restart: always
 ```
+
+## Reverse Proxy
+
+When using a path-based reverse proxy, use `BASE_PATH=/code` to prepend the `/code` prefix to all paths fetched.
