@@ -386,6 +386,28 @@ export async function runHealthChecks(): Promise<void> {
   }
 }
 
+export async function pullLatestImageAndPrune(): Promise<void> {
+  console.log(`Pulling latest image: ${CRC_ENV_IMAGE}`);
+
+  const stream = await docker.pull(CRC_ENV_IMAGE);
+
+  await new Promise<void>((resolve, reject) => {
+    docker.modem.followProgress(stream, (err: Error | null) => {
+      if (err) {
+        console.error("Failed to pull image:", err);
+        reject(err);
+      } else {
+        console.log("Image pull complete");
+        resolve();
+      }
+    });
+  });
+
+  console.log("Pruning dangling images");
+  await docker.pruneImages({ filters: { dangling: ["true"] } });
+  console.log("Image prune complete");
+}
+
 export function cleanupAll(): void {
   for (const [id] of logWatchers) {
     cleanupLogWatcher(id);

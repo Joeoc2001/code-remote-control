@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { router } from "./routes.js";
-import { runHealthChecks, cleanupAll } from "./docker.js";
+import { runHealthChecks, cleanupAll, pullLatestImageAndPrune } from "./docker.js";
 import { PORT, validateEnvironment, BASE_PATH } from "./config.js";
 
 validateEnvironment();
@@ -53,6 +53,10 @@ if (BASE_PATH) {
     });
   }
 }
+
+pullLatestImageAndPrune().catch((err) => {
+  console.error("Failed to pull image and prune:", err);
+});
 
 runHealthChecks().catch((err) => {
   console.error("Initial health check error:", err);
