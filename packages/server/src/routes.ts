@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfigurations, IFRAME_DOMAIN } from "./config.js";
+import { loadConfigurations, ROOT_DOMAIN } from "./config.js";
 import {
   listContainers,
   getContainer,
@@ -188,7 +188,7 @@ router.get("/api/configs", async (_req, res) => {
 });
 
 router.get("/api/iframe-domain", (_req, res) => {
-  res.json({ iframeDomain: IFRAME_DOMAIN || undefined });
+  res.json({ iframeDomain: ROOT_DOMAIN || undefined });
 });
 
 router.get("/api/build-info", (_req, res) => {
