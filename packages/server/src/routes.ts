@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfigurations } from "./config.js";
+import { loadConfigurations, ROOT_DOMAIN } from "./config.js";
 import {
   listContainers,
   getContainer,
@@ -185,6 +185,10 @@ router.get("/api/configs", async (_req, res) => {
     console.error("Error loading configs:", err);
     res.status(500).json({ error: "Failed to load configurations" });
   }
+});
+
+router.get("/api/iframe-domain", (_req, res) => {
+  res.json({ rootDomain: ROOT_DOMAIN || undefined });
 });
 
 router.get("/api/build-info", (_req, res) => {
