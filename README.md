@@ -16,7 +16,6 @@ Create your environment configuration file to specify the modes a container can 
     "configurations": [
         {
             "name": "gpt-5.3-codex",
-            "iframeDomain": "inwintower.tail2cfcb0.ts.net",
             "git": {
                 "username": "joeoc2001-ai",
                 "email": "joeoc2625.ai@gmail.com"
@@ -53,8 +52,9 @@ services:
     container_name: code-remote-control
     ports:
       - "80:3000"
-    env:
-      - GITHUB_TOKEN: ghp_...
+    environment:
+      GITHUB_TOKEN: ghp_...
+      ROOT_DOMAIN: inwintower.tail2cfcb0.ts.net  # hostname used for container iframes, without protocol (defaults to window.location.hostname)
     volumes:
       - ./environments.json:/configs/environments.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
