@@ -1,5 +1,9 @@
 This is a repo for a web app which lets me manage containers for running opencode remote instances on my home PC. It is built with Node/Express/React/Tailwind and integrates with both Docker and GitHub.
 
+## Functionality
+
+This app functions as a wrapper around Docker to spawn containers which each contain an instance of OpenCode's web interface.
+
 ## Repo setup
 
 The repo is composed of 2 docker container definitions:

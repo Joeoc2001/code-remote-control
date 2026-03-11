@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { router } from "./routes.js";
 import { runHealthChecks, cleanupAll, pullLatestImageAndPrune } from "./docker.js";
 import { PORT, validateEnvironment } from "./config.js";
+import { proxyMiddleware } from "./proxy.js";
 
 validateEnvironment();
 
@@ -13,6 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 
+app.use(proxyMiddleware);
 app.use(cors());
 app.use(express.json({ limit: "100kb" }));
 

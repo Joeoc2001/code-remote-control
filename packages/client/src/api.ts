@@ -40,7 +40,7 @@ export async function fetchConfigs(): Promise<EnvironmentConfig[]> {
 }
 
 export async function fetchIframeDomain(): Promise<string | undefined> {
-  const res = await fetch(`${BASE}/iframe-domain`);
+  const res = await fetch(`${BASE}/root-domain`);
   if (!res.ok) throw new Error("Failed to fetch iframe domain");
   const data: { rootDomain?: string } = await res.json();
   return data.rootDomain;

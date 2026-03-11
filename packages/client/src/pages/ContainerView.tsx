@@ -8,7 +8,7 @@ const BASE = "/api";
 export default function ContainerView() {
   const { id } = useParams<{ id: string }>();
   const [container, setContainer] = useState<ManagedContainer | null>(null);
-  const [iframeDomain, setIframeDomain] = useState<string | undefined>(undefined);
+  const [rootDomain, setRootDomain] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +22,7 @@ export default function ContainerView() {
         if (!res.ok) throw new Error("Failed to fetch container");
         const data = await res.json();
         setContainer(data);
-        setIframeDomain(domain);
+        setRootDomain(domain);
         setError(null);
       } catch (err) {
         console.error("Failed to load container:", err);
@@ -57,7 +57,11 @@ export default function ContainerView() {
         </div>
       ) : (
         <iframe
-          src={`http://${iframeDomain ?? window.location.hostname}:${container.hostPort}/`}
+          src={
+            rootDomain && container.subdomain
+              ? `https://${container.subdomain}.${rootDomain}/`
+              : `http://${window.location.hostname}:${container.hostPort}/`
+          }
           className="flex-1 w-full border-none"
           title="Container Web View"
         />

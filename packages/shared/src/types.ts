@@ -33,6 +33,7 @@ export interface ManagedContainer {
   status: string;
   health: ContainerHealth;
   hostPort: number;
+  subdomain: string;
   createdAt: string;
 }
 

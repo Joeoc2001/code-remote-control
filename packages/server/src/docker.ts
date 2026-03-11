@@ -16,6 +16,7 @@ const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
+const LABEL_SUBDOMAIN = "crc.subdomain";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const OPENCODE_CONFIG_RELATIVE_PATH = "root/.config/opencode/opencode.json";
 const CONTAINER_INTERNAL_PORT = 8080;
@@ -108,29 +109,54 @@ async function assertManagedContainer(id: string): Promise<void> {
   }
 }
 
-function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContainer {
-  const name = (container.Names[0] || "").replace(/^\//, "");
-  const configName = container.Labels[LABEL_CONFIG_NAME] || "unknown";
-  const repoName = container.Labels[LABEL_REPO_NAME] || "unknown";
-  const status = container.State || "unknown";
-  const health = healthCache.get(container.Id) || {
+function buildManagedContainer(
+  id: string,
+  name: string,
+  labels: Record<string, string>,
+  status: string,
+  hostPort: number,
+  createdAt: string | number,
+): ManagedContainer {
+  const configName = labels[LABEL_CONFIG_NAME] || "unknown";
+  const repoName = labels[LABEL_REPO_NAME] || "unknown";
+  const subdomain = labels[LABEL_SUBDOMAIN] || "";
+
+  const health = healthCache.get(id) || {
     container: status === "running" ? "running" as const : "stopped" as const,
     openCode: "unknown" as const,
   };
 
-  const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
-  const hostPort = portMapping?.PublicPort ?? 0;
+  const createdAtStr = typeof createdAt === "number"
+    ? new Date(createdAt * 1000).toISOString()
+    : createdAt;
 
   return {
-    id: container.Id,
+    id,
     name,
     configName,
     repoName,
     status,
     health,
     hostPort,
-    createdAt: new Date(container.Created * 1000).toISOString(),
+    subdomain,
+    createdAt: createdAtStr,
   };
+}
+
+function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContainer {
+  const name = (container.Names[0] || "").replace(/^\//, "");
+  const status = container.State || "unknown";
+  const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
+  const hostPort = portMapping?.PublicPort ?? 0;
+
+  return buildManagedContainer(
+    container.Id,
+    name,
+    container.Labels,
+    status,
+    hostPort,
+    container.Created,
+  );
 }
 
 export async function listContainers(): Promise<ManagedContainer[]> {
@@ -154,28 +180,19 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
     const name = info.Name.replace(/^\//, "");
     if (!name.startsWith(CONTAINER_PREFIX)) return null;
 
-    const configName = info.Config.Labels[LABEL_CONFIG_NAME] || "unknown";
-    const repoName = info.Config.Labels[LABEL_REPO_NAME] || "unknown";
     const status = info.State.Running ? "running" : info.State.Status;
-    const health = healthCache.get(id) || {
-      container: info.State.Running ? "running" as const : "stopped" as const,
-      openCode: "unknown" as const,
-    };
-
     const portKey = `${CONTAINER_INTERNAL_PORT}/tcp`;
     const bindings = info.NetworkSettings?.Ports?.[portKey];
     const hostPort = bindings?.[0]?.HostPort ? parseInt(bindings[0].HostPort, 10) : 0;
 
-    return {
-      id: info.Id,
+    return buildManagedContainer(
+      info.Id,
       name,
-      configName,
-      repoName,
+      info.Config.Labels,
       status,
-      health,
       hostPort,
-      createdAt: info.Created,
-    };
+      info.Created,
+    );
   } catch {
     return null;
   }
@@ -187,7 +204,8 @@ export async function createContainer(
   repoSource: RepoSource = "github"
 ): Promise<ManagedContainer> {
   const repoShortName = slugify(repoFullName.split("/").pop() || "repo");
-  const containerName = `${CONTAINER_PREFIX}${slugify(config.name)}-${repoShortName}-${generateId()}`;
+  const subdomain = `${slugify(config.name)}-${repoShortName}-${generateId()}`;
+  const containerName = `${CONTAINER_PREFIX}${subdomain}`;
   const gitlabHost = GITLAB_URL.replace(/\/+$/, "");
   const repoUrl = repoSource === "gitlab"
     ? `${gitlabHost}/${repoFullName}.git`
@@ -213,6 +231,7 @@ export async function createContainer(
     Labels: {
       [LABEL_CONFIG_NAME]: config.name,
       [LABEL_REPO_NAME]: repoFullName,
+      [LABEL_SUBDOMAIN]: subdomain,
     },
     ExposedPorts: { [portKey]: {} },
     HostConfig: {
@@ -230,16 +249,14 @@ export async function createContainer(
   await container.start();
 
   const info = await container.inspect();
-  return {
-    id: info.Id,
-    name: containerName,
-    configName: config.name,
-    repoName: repoFullName,
-    status: "running",
-    health: { container: "running", openCode: "unknown" },
+  return buildManagedContainer(
+    info.Id,
+    containerName,
+    info.Config.Labels,
+    "running",
     hostPort,
-    createdAt: info.Created,
-  };
+    info.Created,
+  );
 }
 
 export async function removeContainer(id: string): Promise<void> {

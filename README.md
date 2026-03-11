@@ -54,7 +54,7 @@ services:
       - "80:3000"
     environment:
       GITHUB_TOKEN: ghp_...
-      ROOT_DOMAIN: inwintower.tail2cfcb0.ts.net  # hostname used for container iframes, without protocol (defaults to window.location.hostname)
+      ROOT_DOMAIN: example.com
     volumes:
       - ./environments.json:/configs/environments.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
