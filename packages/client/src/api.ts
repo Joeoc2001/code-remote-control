@@ -42,8 +42,8 @@ export async function fetchConfigs(): Promise<EnvironmentConfig[]> {
 export async function fetchIframeDomain(): Promise<string | undefined> {
   const res = await fetch(`${BASE}/iframe-domain`);
   if (!res.ok) throw new Error("Failed to fetch iframe domain");
-  const data: { iframeDomain?: string } = await res.json();
-  return data.iframeDomain;
+  const data: { rootDomain?: string } = await res.json();
+  return data.rootDomain;
 }
 
 export async function fetchGitHubRepos(): Promise<GitHubRepo[]> {

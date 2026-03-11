@@ -188,7 +188,7 @@ router.get("/api/configs", async (_req, res) => {
 });
 
 router.get("/api/iframe-domain", (_req, res) => {
-  res.json({ iframeDomain: ROOT_DOMAIN || undefined });
+  res.json({ rootDomain: ROOT_DOMAIN || undefined });
 });
 
 router.get("/api/build-info", (_req, res) => {
