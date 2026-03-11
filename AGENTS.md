@@ -14,3 +14,4 @@ The remainder of the TS code is in `./packages`.
 - Do not add superfluous comments. Your code should be self-documenting — ideally your code should contain no comments at all.
 - Always prefer to fail fast and fail loudly over recovering from errors.
 - The code is not licensed, and especially not under MIT. 
+- We are the only user of the API — do not be afraid to change endpoint names and schemas.
