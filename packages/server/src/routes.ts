@@ -14,8 +14,9 @@ import {
   removeSSEClient,
   broadcastRemoval,
 } from "./docker.js";
-import { fetchRepos } from "./github.js";
-import type { CreateContainerRequest } from "./types.js";
+import { fetchRepos as fetchGitHubRepos } from "./github.js";
+import { fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
+import type { CreateContainerRequestV2, RepoSource } from "./types.js";
 
 export const router = Router();
 
@@ -68,7 +69,7 @@ router.get("/api/containers/:id", async (req, res) => {
 
 router.post("/api/containers", async (req, res) => {
   try {
-    const { configName, repoFullName } = req.body as CreateContainerRequest;
+    const { configName, repoFullName, repoSource = "github" } = req.body as CreateContainerRequestV2;
 
     if (!configName || !repoFullName) {
       res.status(400).json({ error: "configName and repoFullName are required" });
@@ -80,6 +81,12 @@ router.post("/api/containers", async (req, res) => {
       return;
     }
 
+    const validSources: RepoSource[] = ["github", "gitlab"];
+    if (!validSources.includes(repoSource)) {
+      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+      return;
+    }
+
     const configs = await loadConfigurations();
     const config = configs.configurations.find((c) => c.name === configName);
     if (!config) {
@@ -87,7 +94,7 @@ router.post("/api/containers", async (req, res) => {
       return;
     }
 
-    const container = await createContainer(config, repoFullName);
+    const container = await createContainer(config, repoFullName, repoSource);
     res.status(201).json(container);
   } catch (err) {
     console.error("Error creating container:", err);
@@ -186,11 +193,25 @@ router.get("/api/build-info", (_req, res) => {
 
 router.get("/api/github/repos", async (_req, res) => {
   try {
-    const repos = await fetchRepos();
+    const repos = await fetchGitHubRepos();
     res.json({ repos });
   } catch (err) {
-    console.error("Error fetching repos:", err);
-    res.status(500).json({ error: "Failed to fetch repositories" });
+    console.error("Error fetching GitHub repos:", err);
+    res.status(500).json({ error: "Failed to fetch GitHub repositories" });
+  }
+});
+
+router.get("/api/gitlab/repos", async (_req, res) => {
+  try {
+    if (!isGitLabConfigured()) {
+      res.json({ repos: [], configured: false });
+      return;
+    }
+    const repos = await fetchGitLabRepos();
+    res.json({ repos, configured: true });
+  } catch (err) {
+    console.error("Error fetching GitLab repos:", err);
+    res.status(500).json({ error: "Failed to fetch GitLab repositories" });
   }
 });
 

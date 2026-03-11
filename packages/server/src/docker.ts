@@ -8,7 +8,8 @@ import type {
   ContainerHealth,
   EnvironmentConfig,
 } from "./types.js";
-import { GITHUB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
+import { GITHUB_TOKEN, GITLAB_TOKEN, GITLAB_URL, CRC_ENV_IMAGE } from "./config.js";
+import type { RepoSource } from "./types.js";
 
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 
@@ -182,16 +183,22 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
 
 export async function createContainer(
   config: EnvironmentConfig,
-  repoFullName: string
+  repoFullName: string,
+  repoSource: RepoSource = "github"
 ): Promise<ManagedContainer> {
   const repoShortName = slugify(repoFullName.split("/").pop() || "repo");
   const containerName = `${CONTAINER_PREFIX}${slugify(config.name)}-${repoShortName}-${generateId()}`;
-  const repoUrl = `https://github.com/${repoFullName}.git`;
+  const gitlabHost = GITLAB_URL.replace(/\/+$/, "");
+  const repoUrl = repoSource === "gitlab"
+    ? `${gitlabHost}/${repoFullName}.git`
+    : `https://github.com/${repoFullName}.git`;
   const hostPort = await findFreePort();
 
   const envVars = [
     `REPO_URL=${repoUrl}`,
     `GITHUB_TOKEN=${GITHUB_TOKEN}`,
+    `GITLAB_TOKEN=${GITLAB_TOKEN}`,
+    `GITLAB_URL=${GITLAB_URL}`,
     `GIT_USER_NAME=${config.git.username}`,
     `GIT_USER_EMAIL=${config.git.email}`,
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
