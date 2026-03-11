@@ -4,7 +4,10 @@ export type {
   ContainerHealth,
   ManagedContainer,
   CreateContainerRequest,
+  CreateContainerRequestV2,
   GitHubRepo,
+  GitLabRepo,
+  RepoSource,
   SSEEvent,
 } from "@crc/shared";
 

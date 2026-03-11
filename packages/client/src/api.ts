@@ -1,4 +1,4 @@
-import type { ManagedContainer, EnvironmentConfig, EnvironmentsFile, GitHubRepo } from "./types";
+import type { ManagedContainer, EnvironmentConfig, EnvironmentsFile, GitHubRepo, GitLabRepo, RepoSource } from "./types";
 
 const BASE = "/api";
 
@@ -10,12 +10,13 @@ export async function fetchContainers(): Promise<ManagedContainer[]> {
 
 export async function createContainer(
   configName: string,
-  repoFullName: string
+  repoFullName: string,
+  repoSource: RepoSource = "github"
 ): Promise<ManagedContainer> {
   const res = await fetch(`${BASE}/containers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ configName, repoFullName }),
+    body: JSON.stringify({ configName, repoFullName, repoSource }),
   });
   if (!res.ok) throw new Error("Failed to create container");
   return res.json();
@@ -50,6 +51,12 @@ export async function fetchGitHubRepos(): Promise<GitHubRepo[]> {
   if (!res.ok) throw new Error("Failed to fetch repos");
   const data = await res.json();
   return data.repos;
+}
+
+export async function fetchGitLabRepos(): Promise<{ repos: GitLabRepo[]; configured: boolean }> {
+  const res = await fetch(`${BASE}/gitlab/repos`);
+  if (!res.ok) throw new Error("Failed to fetch GitLab repos");
+  return res.json();
 }
 
 export async function fetchBuildInfo(): Promise<{ buildId: string }> {

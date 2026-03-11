@@ -49,6 +49,21 @@ export interface GitHubRepo {
   defaultBranch: string;
 }
 
+export interface GitLabRepo {
+  fullName: string;
+  description: string | null;
+  private: boolean;
+  defaultBranch: string;
+}
+
+export type RepoSource = "github" | "gitlab";
+
+export interface CreateContainerRequestV2 {
+  configName: string;
+  repoFullName: string;
+  repoSource: RepoSource;
+}
+
 export type SSEEvent =
   | { type: "container-updated"; data: ManagedContainer }
   | { type: "container-removed"; data: { id: string } };
