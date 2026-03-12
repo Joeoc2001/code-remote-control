@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfigurations, ROOT_DOMAIN } from "./config.js";
+import { loadConfigurations } from "./config.js";
 import {
   listContainers,
   getContainer,
@@ -187,8 +187,9 @@ router.get("/api/configs", async (_req, res) => {
   }
 });
 
-router.get("/api/root-domain", (_req, res) => {
-  res.json({ rootDomain: ROOT_DOMAIN || undefined });
+router.get("/api/root-domain", async (_req, res) => {
+  const configs = await loadConfigurations();
+  res.json({ rootDomain: configs.root_domain || undefined });
 });
 
 router.get("/api/build-info", (_req, res) => {

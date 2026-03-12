@@ -1,5 +1,5 @@
 import type { GitLabRepo } from "./types.js";
-import { GITLAB_TOKEN, GITLAB_URL } from "./config.js";
+import { GITLAB_TOKEN, loadConfigurations } from "./config.js";
 
 const MAX_PAGES = 10;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -17,10 +17,13 @@ export async function fetchRepos(): Promise<GitLabRepo[]> {
     return repoCache.repos;
   }
 
+  const config = await loadConfigurations();
+  const gitlabUrl = config.gitlab_url || "https://gitlab.com";
+
   const repos: GitLabRepo[] = [];
   let page = 1;
   const perPage = 100;
-  const apiBase = GITLAB_URL.replace(/\/+$/, "");
+  const apiBase = gitlabUrl.replace(/\/+$/, "");
 
   while (page <= MAX_PAGES) {
     const response = await fetch(

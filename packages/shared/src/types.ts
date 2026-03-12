@@ -12,13 +12,16 @@ export const environmentConfigSchema = z.object({
   git: gitConfigSchema,
 });
 
-export const environmentsFileSchema = z.object({
+export const configFileSchema = z.object({
+  root_domain: z.string().optional(),
+  gitlab_url: z.string().optional(),
+  docker_networks: z.array(z.string()).optional(),
   configurations: z.array(environmentConfigSchema),
 });
 
 export type GitConfig = z.infer<typeof gitConfigSchema>;
 export type EnvironmentConfig = z.infer<typeof environmentConfigSchema>;
-export type EnvironmentsFile = z.infer<typeof environmentsFileSchema>;
+export type ConfigFile = z.infer<typeof configFileSchema>;
 
 export interface ContainerHealth {
   container: "running" | "stopped" | "error";
