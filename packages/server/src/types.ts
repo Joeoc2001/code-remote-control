@@ -1,6 +1,6 @@
 export type {
   EnvironmentConfig,
-  EnvironmentsFile,
+  ConfigFile,
   ContainerHealth,
   ManagedContainer,
   CreateContainerRequest,
@@ -12,7 +12,7 @@ export type {
 } from "@crc/shared";
 
 export {
-  environmentsFileSchema,
+  configFileSchema,
   environmentConfigSchema,
   gitConfigSchema,
 } from "@crc/shared";

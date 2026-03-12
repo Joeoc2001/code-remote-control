@@ -1,10 +1,13 @@
 import type { Request, Response, NextFunction } from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
-import { ROOT_DOMAIN } from "./config.js";
+import { loadConfigurations } from "./config.js";
 import { listContainers } from "./docker.js";
 
 export async function proxyMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!ROOT_DOMAIN) {
+  const config = await loadConfigurations();
+  const rootDomain = config.root_domain;
+
+  if (!rootDomain) {
     next();
     return;
   }
@@ -15,7 +18,7 @@ export async function proxyMiddleware(req: Request, res: Response, next: NextFun
     return;
   }
 
-  const rootDomainPattern = ROOT_DOMAIN.replace(/\./g, "\\.");
+  const rootDomainPattern = rootDomain.replace(/\./g, "\\.");
   const subdomainMatch = host.match(new RegExp(`^(.+)\\.${rootDomainPattern}$`, "i"));
 
   if (!subdomainMatch) {
