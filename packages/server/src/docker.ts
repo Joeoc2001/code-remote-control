@@ -249,12 +249,12 @@ export async function createContainer(
   const configTar = await createSingleFileTar(OPENCODE_CONFIG_RELATIVE_PATH, configJson, 0o444);
   await container.putArchive(configTar, { path: "/" });
 
-  await container.start();
-
   for (const networkName of appConfig.docker_networks || []) {
     const network = docker.getNetwork(networkName);
     await network.connect({ Container: container.id });
   }
+
+  await container.start();
 
   const info = await container.inspect();
   return buildManagedContainer(
