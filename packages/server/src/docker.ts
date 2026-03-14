@@ -1,6 +1,5 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
-import net from "node:net";
 import { PassThrough } from "node:stream";
 import tar from "tar-stream";
 import type {
@@ -9,7 +8,7 @@ import type {
   EnvironmentConfig,
   ConfigFile,
 } from "./types.js";
-import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE, loadConfigurations } from "./config.js";
+import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
 import type { RepoSource } from "./types.js";
 
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });

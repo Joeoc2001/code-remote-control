@@ -5,7 +5,7 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
-  const [updating, setUpdating] = useState(false);
+  const [updating, _setUpdating] = useState(false);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
