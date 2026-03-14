@@ -4,8 +4,8 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { router } from "./routes.js";
-import { runHealthChecks, cleanupAll, pullLatestImageAndPrune } from "./docker.js";
-import { PORT, validateEnvironment } from "./config.js";
+import { runHealthChecks, cleanupAll, pullLatestImage, buildCustomImage } from "./docker.js";
+import { PORT, validateEnvironment, loadConfigurations } from "./config.js";
 import { proxyMiddleware } from "./proxy.js";
 
 validateEnvironment();
@@ -38,8 +38,12 @@ if (existsSync(clientDistPath) && indexHtml) {
   });
 }
 
-pullLatestImageAndPrune().catch((err) => {
-  console.error("Failed to pull image and prune:", err);
+loadConfigurations().then((config) =>
+  config.env_dockerfile
+    ? buildCustomImage(config.env_dockerfile)
+    : pullLatestImage()
+).catch((err) => {
+  console.error("Failed to set up env image:", err);
 });
 
 runHealthChecks().catch((err) => {

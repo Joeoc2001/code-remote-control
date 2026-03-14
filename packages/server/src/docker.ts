@@ -1,6 +1,8 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
 import { PassThrough } from "node:stream";
+import { readdirSync } from "node:fs";
+import { dirname, basename } from "node:path";
 import tar from "tar-stream";
 import type {
   ManagedContainer,
@@ -9,6 +11,8 @@ import type {
   ConfigFile,
 } from "./types.js";
 import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
+
+
 import type { RepoSource } from "./types.js";
 
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
@@ -173,8 +177,10 @@ export async function createContainer(
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
 
+  const image = CRC_ENV_IMAGE;
+
   const container = await docker.createContainer({
-    Image: CRC_ENV_IMAGE,
+    Image: image,
     name: containerName,
     Env: envVars,
     Labels: {
@@ -357,7 +363,7 @@ export async function runHealthChecks(): Promise<void> {
   }
 }
 
-export async function pullLatestImageAndPrune(): Promise<void> {
+export async function pullLatestImage(): Promise<void> {
   console.log(`Pulling latest image: ${CRC_ENV_IMAGE}`);
 
   const stream = await docker.pull(CRC_ENV_IMAGE);
@@ -373,10 +379,29 @@ export async function pullLatestImageAndPrune(): Promise<void> {
       }
     });
   });
+}
 
-  console.log("Pruning dangling images");
-  await docker.pruneImages({ filters: { dangling: ["true"] } });
-  console.log("Image prune complete");
+export async function buildCustomImage(dockerfilePath: string): Promise<void> {
+  console.log(`Building image from: ${dockerfilePath}`);
+
+  const contextDir = dirname(dockerfilePath);
+  const dockerfileName = basename(dockerfilePath);
+  const stream = await docker.buildImage(
+    { context: contextDir, src: readdirSync(contextDir) },
+    { t: CRC_ENV_IMAGE, pull: true, dockerfile: dockerfileName },
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    docker.modem.followProgress(stream, (err: Error | null) => {
+      if (err) {
+        console.error("Failed to build image:", err);
+        reject(err);
+      } else {
+        console.log("Image build complete");
+        resolve();
+      }
+    });
+  });
 }
 
 export function cleanupAll(): void {

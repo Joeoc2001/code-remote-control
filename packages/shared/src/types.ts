@@ -16,6 +16,7 @@ export const configFileSchema = z.object({
   git: gitConfigSchema,
   gitlab_url: z.string().optional(),
   docker_networks: z.array(z.string()).optional(),
+  env_dockerfile: z.string().optional(),
   configurations: z.array(environmentConfigSchema),
 });
 

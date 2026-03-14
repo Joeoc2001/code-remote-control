@@ -20,6 +20,7 @@ Create your environment configuration file to specify the modes a container can 
     },
     "gitlab_url": "https://gitlab.example.com",
     "docker_networks": ["runner-network"],
+    "env_dockerfile": "/configs/Dockerfile",
     "configurations": [
         {
             "name": "gpt-5.3-codex",
@@ -50,6 +51,8 @@ Create your environment configuration file to specify the modes a container can 
 }
 ```
 
+If `env_dockerfile` is set, the image is built locally from that Dockerfile (with `--pull`) on startup instead of pulling from the registry. Mount the Dockerfile into the container to make it accessible (see the volume example below).
+
 Launch web server docker container:
 ```
 services:
@@ -62,6 +65,7 @@ services:
       GITHUB_TOKEN: ghp_...
     volumes:
       - ./environments.json:/configs/environments.json:ro
+      - ./Dockerfile.env:/configs/Dockerfile:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - runner-network
