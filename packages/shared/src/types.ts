@@ -9,11 +9,11 @@ export const environmentConfigSchema = z.object({
   name: z.string().min(1),
   opencode: z.record(z.string(), z.unknown()),
   env: z.record(z.string(), z.string()).optional(),
-  git: gitConfigSchema,
 });
 
 export const configFileSchema = z.object({
-  root_domain: z.string().optional(),
+  root_domain: z.string(),
+  git: gitConfigSchema,
   gitlab_url: z.string().optional(),
   docker_networks: z.array(z.string()).optional(),
   configurations: z.array(environmentConfigSchema),
@@ -35,7 +35,6 @@ export interface ManagedContainer {
   repoName: string;
   status: string;
   health: ContainerHealth;
-  hostPort: number;
   subdomain: string;
   createdAt: string;
 }

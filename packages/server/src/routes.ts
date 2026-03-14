@@ -94,7 +94,7 @@ router.post("/api/containers", async (req, res) => {
       return;
     }
 
-    const container = await createContainer(config, repoFullName, repoSource);
+    const container = await createContainer(configs, config, repoFullName, repoSource);
     res.status(201).json(container);
   } catch (err) {
     console.error("Error creating container:", err);

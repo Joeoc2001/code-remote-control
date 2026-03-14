@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { EnvironmentConfig, GitHubRepo, GitLabRepo, ManagedContainer, RepoSource } from "../types";
+import type { EnvironmentConfig, ManagedContainer, RepoSource } from "../types";
 import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, createContainer } from "../api";
 
 interface NewContainerModalProps {
@@ -162,16 +162,15 @@ export default function NewContainerModal({
                         key={`${repo.source}:${repo.fullName}`}
                         onClick={() => setSelectedRepo(repo)}
                         className={`w-full text-left px-3 py-2 text-sm border-b border-gray-800 last:border-0 transition-colors ${selectedRepo?.source === repo.source && selectedRepo?.fullName === repo.fullName
-                            ? "bg-blue-600/20 text-blue-300"
-                            : "text-gray-300 hover:bg-gray-800"
+                          ? "bg-blue-600/20 text-blue-300"
+                          : "text-gray-300 hover:bg-gray-800"
                           }`}
                       >
                         <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
-                            repo.source === "gitlab"
+                          <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${repo.source === "gitlab"
                               ? "bg-orange-900/40 text-orange-300"
                               : "bg-gray-700 text-gray-300"
-                          }`}>
+                            }`}>
                             {repo.source === "gitlab" ? "GL" : "GH"}
                           </span>
                           <span className="font-medium">{repo.fullName}</span>

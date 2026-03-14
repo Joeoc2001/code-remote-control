@@ -7,42 +7,20 @@ import type {
   ManagedContainer,
   ContainerHealth,
   EnvironmentConfig,
+  ConfigFile,
 } from "./types.js";
 import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE, loadConfigurations } from "./config.js";
 import type { RepoSource } from "./types.js";
 
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 
+export const CONTAINER_INTERNAL_PORT = 8080;
 const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
 const LABEL_SUBDOMAIN = "crc.subdomain";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const OPENCODE_CONFIG_RELATIVE_PATH = "root/.config/opencode/opencode.json";
-const CONTAINER_INTERNAL_PORT = 8080;
-
-const MAX_PORT_ATTEMPTS = 10;
-
-function tryBindPort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, () => {
-      const port = (srv.address() as net.AddressInfo).port;
-      srv.close(() => resolve(port));
-    });
-    srv.on("error", reject);
-  });
-}
-
-async function findFreePort(): Promise<number> {
-  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt++) {
-    const port = await tryBindPort();
-    const portMap = await getPortMap();
-    const inUse = [...portMap.values()].includes(port);
-    if (!inUse) return port;
-  }
-  throw new Error("Failed to find a free port after " + MAX_PORT_ATTEMPTS + " attempts");
-}
 
 function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
   const pack = tar.pack();
@@ -59,25 +37,6 @@ function createSingleFileTar(filePath: string, content: Buffer, mode: number): P
 
 const healthCache = new Map<string, ContainerHealth>();
 const logWatchers = new Map<string, NodeJS.ReadableStream>();
-
-async function getPortMap(): Promise<Map<string, number>> {
-  const containers = await docker.listContainers({
-    all: true,
-    filters: { name: [CONTAINER_PREFIX] },
-  });
-
-  const portMap = new Map<string, number>();
-  for (const container of containers) {
-    const name = (container.Names[0] || "").replace(/^\//, "");
-    if (!name.startsWith(CONTAINER_PREFIX)) continue;
-
-    const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
-    if (portMapping?.PublicPort) {
-      portMap.set(container.Id, portMapping.PublicPort);
-    }
-  }
-  return portMap;
-}
 
 function slugify(input: string): string {
   return input
@@ -114,7 +73,6 @@ function buildManagedContainer(
   name: string,
   labels: Record<string, string>,
   status: string,
-  hostPort: number,
   createdAt: string | number,
 ): ManagedContainer {
   const configName = labels[LABEL_CONFIG_NAME] || "unknown";
@@ -137,7 +95,6 @@ function buildManagedContainer(
     repoName,
     status,
     health,
-    hostPort,
     subdomain,
     createdAt: createdAtStr,
   };
@@ -146,15 +103,12 @@ function buildManagedContainer(
 function parseContainerInfo(container: Dockerode.ContainerInfo): ManagedContainer {
   const name = (container.Names[0] || "").replace(/^\//, "");
   const status = container.State || "unknown";
-  const portMapping = container.Ports.find(p => p.PrivatePort === CONTAINER_INTERNAL_PORT);
-  const hostPort = portMapping?.PublicPort ?? 0;
 
   return buildManagedContainer(
     container.Id,
     name,
     container.Labels,
     status,
-    hostPort,
     container.Created,
   );
 }
@@ -181,16 +135,12 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
     if (!name.startsWith(CONTAINER_PREFIX)) return null;
 
     const status = info.State.Running ? "running" : info.State.Status;
-    const portKey = `${CONTAINER_INTERNAL_PORT}/tcp`;
-    const bindings = info.NetworkSettings?.Ports?.[portKey];
-    const hostPort = bindings?.[0]?.HostPort ? parseInt(bindings[0].HostPort, 10) : 0;
 
     return buildManagedContainer(
       info.Id,
       name,
       info.Config.Labels,
       status,
-      hostPort,
       info.Created,
     );
   } catch {
@@ -199,11 +149,11 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
 }
 
 export async function createContainer(
+  appConfig: ConfigFile,
   config: EnvironmentConfig,
   repoFullName: string,
   repoSource: RepoSource = "github"
 ): Promise<ManagedContainer> {
-  const appConfig = await loadConfigurations();
   const gitlabUrl = appConfig.gitlab_url || "https://gitlab.com";
 
   const repoShortName = slugify(repoFullName.split("/").pop() || "repo");
@@ -213,19 +163,16 @@ export async function createContainer(
   const repoUrl = repoSource === "gitlab"
     ? `${gitlabHost}/${repoFullName}.git`
     : `https://github.com/${repoFullName}.git`;
-  const hostPort = await findFreePort();
 
   const envVars = [
     `REPO_URL=${repoUrl}`,
     `GITHUB_TOKEN=${GITHUB_TOKEN}`,
     `GITLAB_TOKEN=${GITLAB_TOKEN}`,
     `GITLAB_URL=${gitlabUrl}`,
-    `GIT_USER_NAME=${config.git.username}`,
-    `GIT_USER_EMAIL=${config.git.email}`,
+    `GIT_USER_NAME=${appConfig.git.username}`,
+    `GIT_USER_EMAIL=${appConfig.git.email}`,
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
-
-  const portKey = `${CONTAINER_INTERNAL_PORT}/tcp`;
 
   const container = await docker.createContainer({
     Image: CRC_ENV_IMAGE,
@@ -236,12 +183,8 @@ export async function createContainer(
       [LABEL_REPO_NAME]: repoFullName,
       [LABEL_SUBDOMAIN]: subdomain,
     },
-    ExposedPorts: { [portKey]: {} },
     HostConfig: {
       AutoRemove: false,
-      PortBindings: {
-        [portKey]: [{ HostPort: String(hostPort) }],
-      },
     },
   });
 
@@ -262,7 +205,6 @@ export async function createContainer(
     containerName,
     info.Config.Labels,
     "running",
-    hostPort,
     info.Created,
   );
 }
@@ -358,12 +300,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function checkOpencodeHealth(hostPort: number): Promise<ContainerHealth["openCode"]> {
-  if (!hostPort) return "unhealthy";
-
+async function checkOpencodeHealth(container: ManagedContainer): Promise<ContainerHealth["openCode"]> {
   try {
     const response = await withTimeout(
-      fetch(`http://localhost:${hostPort}/global/health`),
+      fetch(`http://${container.name}:${CONTAINER_INTERNAL_PORT}/global/health`),
       HEALTH_CHECK_TIMEOUT_MS,
     );
 
@@ -392,7 +332,7 @@ export async function runHealthChecks(): Promise<void> {
 
       const opencodeState: ContainerHealth["openCode"] =
         containerState === "running"
-          ? await checkOpencodeHealth(managed.hostPort)
+          ? await checkOpencodeHealth(managed)
           : "unknown";
 
       const health: ContainerHealth = {

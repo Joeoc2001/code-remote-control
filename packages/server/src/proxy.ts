@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { loadConfigurations } from "./config.js";
-import { listContainers } from "./docker.js";
+import { listContainers, CONTAINER_INTERNAL_PORT } from "./docker.js";
 
 export async function proxyMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   const config = await loadConfigurations();
@@ -30,13 +30,13 @@ export async function proxyMiddleware(req: Request, res: Response, next: NextFun
   const containers = await listContainers();
   const container = containers.find(c => c.subdomain === subdomain);
 
-  if (!container || !container.hostPort) {
+  if (!container) {
     res.status(404).json({ error: "Container not found" });
     return;
   }
 
   const proxy = createProxyMiddleware({
-    target: `http://localhost:${container.hostPort}`,
+    target: `http://${container.name}:${CONTAINER_INTERNAL_PORT}`,
     changeOrigin: true,
     ws: true,
   });

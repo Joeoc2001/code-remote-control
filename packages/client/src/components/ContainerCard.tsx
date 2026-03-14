@@ -49,14 +49,12 @@ export default function ContainerCard({
       </div>
 
       <div className="mt-auto pt-3 border-t border-gray-800 flex gap-2">
-        {container.hostPort && (
-          <Link
-            to={`/view/${container.id}`}
-            className="flex-1 px-3 py-2 text-sm font-medium text-center text-blue-400 hover:text-white hover:bg-blue-600 border border-blue-800 rounded-lg transition-colors"
-          >
-            View
-          </Link>
-        )}
+        <Link
+          to={`/view/${container.id}`}
+          className="flex-1 px-3 py-2 text-sm font-medium text-center text-blue-400 hover:text-white hover:bg-blue-600 border border-blue-800 rounded-lg transition-colors"
+        >
+          View
+        </Link>
         <Link
           to={`/logs/${container.id}`}
           className="flex-1 px-3 py-2 text-sm font-medium text-center text-gray-300 hover:text-white hover:bg-gray-800 border border-gray-700 rounded-lg transition-colors"
