@@ -20,6 +20,7 @@ if [ -n "$GITLAB_TOKEN" ]; then
   GITLAB_HOST=$(echo "${GITLAB_URL:-https://gitlab.com}" | sed 's|.*://||' | sed 's|/.*||')
   echo "${GITLAB_SCHEME}://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}" >> /tmp/.git-credentials
   export GITLAB_HOST="${GITLAB_SCHEME}://${GITLAB_HOST}"
+  printf "%s" "$GITLAB_TOKEN" | glab auth login --hostname gitlab --stdin
 fi
 
 chmod 600 /tmp/.git-credentials
