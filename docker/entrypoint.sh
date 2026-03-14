@@ -16,8 +16,9 @@ if [ -n "$GITHUB_TOKEN" ]; then
 fi
 
 if [ -n "$GITLAB_TOKEN" ]; then
-  GITLAB_HOST=$(echo "${GITLAB_URL:-https://gitlab.com}" | sed 's|https\?://||' | sed 's|/.*||')
-  echo "https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}" >> /tmp/.git-credentials
+  GITLAB_SCHEME=$(echo "${GITLAB_URL:-https://gitlab.com}" | sed 's|://.*||')
+  GITLAB_HOST=$(echo "${GITLAB_URL:-https://gitlab.com}" | sed 's|.*://||' | sed 's|/.*||')
+  echo "${GITLAB_SCHEME}://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}" >> /tmp/.git-credentials
 fi
 
 chmod 600 /tmp/.git-credentials
