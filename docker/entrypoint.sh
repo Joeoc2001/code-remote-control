@@ -17,10 +17,12 @@ fi
 
 if [ -n "$GITLAB_TOKEN" ]; then
   GITLAB_SCHEME=$(echo "${GITLAB_URL:-https://gitlab.com}" | sed 's|://.*||')
-  GITLAB_HOST=$(echo "${GITLAB_URL:-https://gitlab.com}" | sed 's|.*://||' | sed 's|/.*||')
-  echo "${GITLAB_SCHEME}://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}" >> /tmp/.git-credentials
-  export GITLAB_HOST="${GITLAB_SCHEME}://${GITLAB_HOST}"
-  printf "%s" "$GITLAB_TOKEN" | glab auth login --hostname gitlab --stdin
+  GITLAB_NAME=$(echo "${GITLAB_URL:-https://gitlab.com}" | sed 's|.*://||' | sed 's|/.*||')
+  echo "${GITLAB_SCHEME}://oauth2:${GITLAB_TOKEN}@${GITLAB_NAME}" >> /tmp/.git-credentials
+  export GITLAB_HOST="${GITLAB_SCHEME}://${GITLAB_NAME}"
+  printf "%s" "$GITLAB_TOKEN" | glab auth login --hostname "$GITLAB_NAME" --stdin
+  glab config set -g host "$GITLAB_NAME"
+  glab config set api_protocol "$GITLAB_SCHEME" --host "$GITLAB_NAME"
 fi
 
 chmod 600 /tmp/.git-credentials
