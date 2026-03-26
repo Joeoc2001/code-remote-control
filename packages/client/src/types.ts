@@ -6,3 +6,10 @@ export type {
   GitLabRepo,
   RepoSource,
 } from "@crc/shared";
+
+export type {
+  ContainerCodeStatus,
+  ReviewRequestStatus,
+  PipelineStatus,
+  ForgeProvider,
+} from "@crc/container-metadata-types";

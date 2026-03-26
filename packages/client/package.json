@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@crc/container-metadata-types": "*",
     "@crc/shared": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

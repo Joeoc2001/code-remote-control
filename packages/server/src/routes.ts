@@ -10,6 +10,7 @@ import {
   createContainer,
   removeContainer,
   getContainerLogStream,
+  CONTAINER_METADATA_INTERNAL_PORT,
   addSSEClient,
   removeSSEClient,
   broadcastRemoval,
@@ -17,6 +18,7 @@ import {
 import { fetchRepos as fetchGitHubRepos } from "./github.js";
 import { fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
 import type { CreateContainerRequestV2, RepoSource } from "./types.js";
+import type { ContainerCodeStatus } from "@crc/container-metadata-types";
 
 export const router = Router();
 
@@ -174,6 +176,43 @@ router.get("/api/containers/:id/logs", async (req, res) => {
   } catch (err) {
     console.error("Error streaming logs:", err);
     res.status(500).json({ error: "Failed to stream logs" });
+  }
+});
+
+router.get("/api/containers/:id/code-status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidContainerId(id)) {
+      res.status(400).json({ error: "Invalid container ID" });
+      return;
+    }
+
+    const container = await getContainer(id);
+    if (!container) {
+      res.status(404).json({ error: "Container not found" });
+      return;
+    }
+
+    if (container.status !== "running") {
+      res.status(409).json({ error: "Container is not running" });
+      return;
+    }
+
+    const response = await fetch(
+      `http://${container.name}:${CONTAINER_METADATA_INTERNAL_PORT}/api/code-status`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+
+    if (!response.ok) {
+      res.status(502).json({ error: "Container metadata server returned an error" });
+      return;
+    }
+
+    const payload = await response.json() as ContainerCodeStatus;
+    res.json(payload);
+  } catch (err) {
+    console.error("Error fetching container code status:", err);
+    res.status(500).json({ error: "Failed to fetch container code status" });
   }
 });
 

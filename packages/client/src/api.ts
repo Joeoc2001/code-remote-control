@@ -1,4 +1,11 @@
-import type { ManagedContainer, EnvironmentConfig, GitHubRepo, GitLabRepo, RepoSource } from "./types";
+import type {
+  ManagedContainer,
+  EnvironmentConfig,
+  GitHubRepo,
+  GitLabRepo,
+  RepoSource,
+  ContainerCodeStatus,
+} from "./types";
 
 const BASE = "/api";
 
@@ -62,6 +69,12 @@ export async function fetchGitLabRepos(): Promise<{ repos: GitLabRepo[]; configu
 export async function fetchBuildInfo(): Promise<{ buildId: string }> {
   const res = await fetch(`${BASE}/build-info`);
   if (!res.ok) throw new Error("Failed to fetch build info");
+  return res.json();
+}
+
+export async function fetchContainerCodeStatus(id: string): Promise<ContainerCodeStatus> {
+  const res = await fetch(`${BASE}/containers/${id}/code-status`);
+  if (!res.ok) throw new Error("Failed to fetch container code status");
   return res.json();
 }
 

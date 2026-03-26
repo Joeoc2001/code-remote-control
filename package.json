@@ -4,6 +4,8 @@
   "private": true,
   "workspaces": [
     "packages/shared",
+    "packages/container-metadata-types",
+    "packages/container-metadata-server",
     "packages/client",
     "packages/server"
   ],
@@ -11,6 +13,6 @@
     "dev:client": "npm run dev -w packages/client",
     "dev:server": "npm run dev -w packages/server",
     "build": "npm run build -w packages/client && npm run build -w packages/server",
-    "typecheck": "npm run typecheck -w packages/client && npm run typecheck -w packages/server"
+    "typecheck": "npm run typecheck -w packages/container-metadata-types && npm run typecheck -w packages/container-metadata-server && npm run typecheck -w packages/client && npm run typecheck -w packages/server"
   }
 }
