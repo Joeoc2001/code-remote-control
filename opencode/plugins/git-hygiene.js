@@ -56,7 +56,7 @@ export const GitHygienePlugin = async ({ client, $ }) => {
       await client.session.prompt({
         path: { id: event.properties.sessionID },
         body: {
-          noReply: true,
+          noReply: false,
           parts: [{ type: "text", text: reminder }],
         },
       });
