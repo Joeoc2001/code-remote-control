@@ -18,6 +18,7 @@ import type { RepoSource } from "./types.js";
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 
 export const CONTAINER_INTERNAL_PORT = 8080;
+export const CONTAINER_METADATA_INTERNAL_PORT = 8081;
 const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
@@ -220,6 +221,8 @@ export async function createContainer(
     `GITHUB_TOKEN=${GITHUB_TOKEN}`,
     `GITLAB_TOKEN=${GITLAB_TOKEN}`,
     `GITLAB_URL=${gitlabUrl}`,
+    `CRC_REPO_SOURCE=${repoSource}`,
+    `CRC_METADATA_PORT=${CONTAINER_METADATA_INTERNAL_PORT}`,
     `GIT_USER_NAME=${appConfig.git.username}`,
     `GIT_USER_EMAIL=${appConfig.git.email}`,
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),

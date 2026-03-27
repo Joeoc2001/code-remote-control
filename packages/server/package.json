@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@crc/container-metadata-types": "*",
     "@crc/shared": "*",
     "cors": "^2.8.5",
     "dockerode": "^4.0.4",

@@ -37,5 +37,8 @@ fi
 
 cd "/workspace"
 
+echo "Starting container metadata server..."
+tsx /opt/crc/packages/container-metadata-server/src/index.ts &
+
 echo "Starting opencode..."
 exec opencode web --port 8080 --hostname 0.0.0.0
