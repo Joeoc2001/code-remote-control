@@ -51,18 +51,18 @@ export default function ContainerLogs() {
   }, [logs]);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
-      <header className="border-b border-gray-800 bg-gray-900">
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4">
           <Link
             to="/"
-            className="text-gray-400 hover:text-white transition-colors"
+            className="text-slate-400 hover:text-slate-100 transition-colors"
           >
             ← Back
           </Link>
           <h1 className="text-xl font-semibold">Container Logs</h1>
           {!connected && (
-            <span className="ml-auto text-sm text-yellow-400">
+            <span className="ml-auto text-sm text-amber-300">
               {error || "Disconnected"}
             </span>
           )}
@@ -70,15 +70,15 @@ export default function ContainerLogs() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6">
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 font-mono text-sm overflow-auto">
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 font-mono text-sm overflow-auto shadow-[0_18px_45px_-32px_rgba(0,0,0,1)]">
           {logs.length === 0 ? (
-            <div className="text-gray-500 text-center py-8">
+            <div className="text-slate-500 text-center py-8">
               {connected ? "Waiting for logs..." : "No logs available"}
             </div>
           ) : (
             <div className="space-y-1">
               {logs.map((log, idx) => (
-                <div key={idx} className="text-gray-300 whitespace-pre-wrap break-all">
+                <div key={idx} className="text-slate-300 whitespace-pre-wrap break-all">
                   {log}
                 </div>
               ))}

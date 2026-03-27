@@ -1,3 +1,14 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    background:
+      radial-gradient(circle at 15% -10%, rgba(16, 185, 129, 0.14), transparent 40%),
+      radial-gradient(circle at 85% 0%, rgba(245, 158, 11, 0.12), transparent 42%),
+      #020617;
+    color: #e2e8f0;
+  }
+}

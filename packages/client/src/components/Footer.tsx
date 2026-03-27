@@ -15,9 +15,9 @@ export default function Footer() {
   const shortId = buildId.length > 7 ? buildId.substring(0, 7) : buildId;
 
   return (
-    <footer className="fixed bottom-0 left-0 right-0 bg-gray-900/80 backdrop-blur-sm border-t border-gray-800 px-4 py-2 text-center">
-      <p className="text-xs text-gray-500">
-        Build: <span className="text-gray-400 font-mono">{shortId}</span>
+    <footer className="fixed bottom-0 left-0 right-0 bg-slate-950/75 backdrop-blur-sm border-t border-slate-800 px-4 py-2 text-center">
+      <p className="text-xs text-slate-500">
+        Build: <span className="text-slate-400 font-mono">{shortId}</span>
       </p>
     </footer>
   );

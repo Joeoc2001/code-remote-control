@@ -77,12 +77,12 @@ export default function ContainerView() {
   }, [id]);
 
   return (
-    <div className="h-screen flex flex-col bg-gray-950 text-gray-100">
-      <header className="shrink-0 border-b border-gray-800 bg-gray-900">
+    <div className="h-screen flex flex-col bg-slate-950 text-slate-100">
+      <header className="shrink-0 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-4">
           <Link
             to="/"
-            className="text-gray-400 hover:text-white transition-colors"
+            className="text-slate-400 hover:text-slate-100 transition-colors"
           >
             ← Back
           </Link>
@@ -92,42 +92,42 @@ export default function ContainerView() {
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
-          <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full" />
+          <div className="animate-spin h-8 w-8 border-2 border-emerald-500 border-t-transparent rounded-full" />
         </div>
       ) : error || !container ? (
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-red-400 text-lg">{error || "Container not found"}</p>
+          <p className="text-rose-300 text-lg">{error || "Container not found"}</p>
         </div>
       ) : (
         <>
-          <section className="shrink-0 border-b border-gray-800 bg-gray-900/70">
+          <section className="shrink-0 border-b border-slate-800 bg-slate-950/70">
             <div className="max-w-7xl mx-auto px-4 py-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-              <div className="rounded border border-gray-800 bg-gray-900 px-3 py-2">
-                <p className="text-gray-400">Branch</p>
+              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                <p className="text-slate-400">Branch</p>
                 <p className="font-medium truncate">{codeStatus?.branch || "-"}</p>
               </div>
-              <div className="rounded border border-gray-800 bg-gray-900 px-3 py-2">
-                <p className="text-gray-400">Commit</p>
+              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                <p className="text-slate-400">Commit</p>
                 <p className="font-mono text-xs truncate">{codeStatus?.commitSha || "-"}</p>
               </div>
-              <div className="rounded border border-gray-800 bg-gray-900 px-3 py-2">
-                <p className="text-gray-400">PR / MR</p>
+              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                <p className="text-slate-400">PR / MR</p>
                 <p className="font-medium truncate">
                   {codeStatus?.reviewRequest
                     ? `#${codeStatus.reviewRequest.id} ${codeStatus.reviewRequest.state}`
                     : "No active PR/MR"}
                 </p>
               </div>
-              <div className="rounded border border-gray-800 bg-gray-900 px-3 py-2">
-                <p className="text-gray-400">Pipeline</p>
+              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                <p className="text-slate-400">Pipeline</p>
                 <p className="font-medium truncate">{codeStatus?.pipeline?.status || "No pipeline data"}</p>
               </div>
             </div>
-            <div className="max-w-7xl mx-auto px-4 pb-3 text-xs text-gray-400 flex flex-wrap gap-x-4 gap-y-1">
+            <div className="max-w-7xl mx-auto px-4 pb-3 text-xs text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
               <span>Provider: {codeStatus?.provider || "-"}</span>
               {codeStatus?.reviewRequest?.url && (
                 <a
-                  className="text-blue-300 hover:text-blue-200"
+                  className="text-emerald-300 hover:text-emerald-200"
                   href={codeStatus.reviewRequest.url}
                   target="_blank"
                   rel="noreferrer"
@@ -137,7 +137,7 @@ export default function ContainerView() {
               )}
               {codeStatus?.pipeline?.url && (
                 <a
-                  className="text-blue-300 hover:text-blue-200"
+                  className="text-emerald-300 hover:text-emerald-200"
                   href={codeStatus.pipeline.url}
                   target="_blank"
                   rel="noreferrer"

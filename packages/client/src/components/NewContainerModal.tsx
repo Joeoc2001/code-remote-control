@@ -87,17 +87,17 @@ export default function NewContainerModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !spawning) onClose();
       }}
     >
-      <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg mx-4">
-        <div className="flex items-center justify-between p-5 border-b border-gray-800">
-          <h2 className="text-lg font-semibold text-white">New Container</h2>
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg mx-4">
+        <div className="flex items-center justify-between p-5 border-b border-slate-800">
+          <h2 className="text-lg font-semibold text-slate-100">New Container</h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white text-xl leading-none"
+            className="text-slate-400 hover:text-slate-100 text-xl leading-none"
           >
             &times;
           </button>
@@ -106,18 +106,18 @@ export default function NewContainerModal({
         <div className="p-5 space-y-4">
           {loading ? (
             <div className="flex justify-center py-8">
-              <div className="animate-spin h-6 w-6 border-2 border-blue-500 border-t-transparent rounded-full" />
+              <div className="animate-spin h-6 w-6 border-2 border-emerald-500 border-t-transparent rounded-full" />
             </div>
           ) : (
             <>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-slate-300 mb-1">
                   Configuration
                 </label>
                 <select
                   value={selectedConfig}
                   onChange={(e) => setSelectedConfig(e.target.value)}
-                  className="w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
                 >
                   {configs.map((c) => (
                     <option key={c.name} value={c.name}>
@@ -128,7 +128,7 @@ export default function NewContainerModal({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-slate-300 mb-1">
                   Repository
                 </label>
                 <div className="flex gap-2 mb-2">
@@ -137,13 +137,13 @@ export default function NewContainerModal({
                     placeholder="Search repositories..."
                     value={repoSearch}
                     onChange={(e) => setRepoSearch(e.target.value)}
-                    className="flex-1 bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+                    className="flex-1 bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
                   />
                   {gitlabConfigured && (
                     <select
                       value={sourceFilter}
                       onChange={(e) => setSourceFilter(e.target.value as "all" | RepoSource)}
-                      className="bg-gray-800 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm"
+                      className="bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
                     >
                       <option value="all">All</option>
                       <option value="github">GitHub</option>
@@ -151,9 +151,9 @@ export default function NewContainerModal({
                     </select>
                   )}
                 </div>
-                <div className="max-h-48 overflow-y-auto border border-gray-700 rounded-lg">
+                <div className="max-h-48 overflow-y-auto border border-slate-700 rounded-lg">
                   {filteredRepos.length === 0 ? (
-                    <div className="p-3 text-sm text-gray-500">
+                    <div className="p-3 text-sm text-slate-500">
                       No repositories found
                     </div>
                   ) : (
@@ -161,22 +161,22 @@ export default function NewContainerModal({
                       <button
                         key={`${repo.source}:${repo.fullName}`}
                         onClick={() => setSelectedRepo(repo)}
-                        className={`w-full text-left px-3 py-2 text-sm border-b border-gray-800 last:border-0 transition-colors ${selectedRepo?.source === repo.source && selectedRepo?.fullName === repo.fullName
-                          ? "bg-blue-600/20 text-blue-300"
-                          : "text-gray-300 hover:bg-gray-800"
+                        className={`w-full text-left px-3 py-2 text-sm border-b border-slate-800 last:border-0 transition-colors ${selectedRepo?.source === repo.source && selectedRepo?.fullName === repo.fullName
+                          ? "bg-emerald-700/20 text-emerald-200"
+                          : "text-slate-300 hover:bg-slate-800"
                           }`}
                       >
                         <div className="flex items-center gap-2">
                           <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${repo.source === "gitlab"
                               ? "bg-orange-900/40 text-orange-300"
-                              : "bg-gray-700 text-gray-300"
-                            }`}>
+                              : "bg-slate-700 text-slate-300"
+                             }`}>
                             {repo.source === "gitlab" ? "GL" : "GH"}
                           </span>
                           <span className="font-medium">{repo.fullName}</span>
                         </div>
                         {repo.description && (
-                          <div className="text-xs text-gray-500 mt-0.5 truncate ml-8">
+                          <div className="text-xs text-slate-500 mt-0.5 truncate ml-8">
                             {repo.description}
                           </div>
                         )}
@@ -187,7 +187,7 @@ export default function NewContainerModal({
               </div>
 
               {error && (
-                <div className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg p-3">
+                <div className="text-rose-300 text-sm bg-rose-900/20 border border-rose-800 rounded-lg p-3">
                   {error}
                 </div>
               )}
@@ -195,17 +195,17 @@ export default function NewContainerModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-3 p-5 border-t border-gray-800">
+        <div className="flex justify-end gap-3 p-5 border-t border-slate-800">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+            className="px-4 py-2 text-sm text-slate-400 hover:text-slate-100 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleSpawn}
             disabled={!selectedConfig || !selectedRepo || spawning || loading}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-emerald-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {spawning ? "Spawning..." : "Spawn"}
           </button>

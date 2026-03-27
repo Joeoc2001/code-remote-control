@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import type { ManagedContainer } from "../types";
 import { deleteContainer } from "../api";
 import HealthDot from "./HealthDot";
-import StatusBadge from "./StatusBadge";
 
 interface ContainerCardProps {
   container: ManagedContainer;
@@ -32,39 +31,42 @@ export default function ContainerCard({
   };
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-2">
+    <div className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-5 shadow-[0_18px_45px_-28px_rgba(0,0,0,0.9)] backdrop-blur-sm flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-white font-semibold truncate" title={container.name}>
+          <h3 className="text-slate-100 font-semibold truncate" title={container.name}>
             {displayName}
           </h3>
-          <p className="text-gray-400 text-sm mt-1">{container.repoName}</p>
+          <p className="text-slate-400 text-sm mt-1 truncate" title={container.repoName}>
+            {container.repoName}
+          </p>
         </div>
-        <HealthDot health={container.health} />
+        <div className="flex flex-col items-end gap-2">
+          <HealthDot health={container.health} />
+          <Link
+            to={`/logs/${container.id}`}
+            className="inline-flex items-center rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400 hover:border-slate-500 hover:text-slate-100 transition-colors"
+          >
+            Logs
+          </Link>
+        </div>
       </div>
 
-      <div className="flex items-center gap-2 text-sm">
-        <StatusBadge status={container.status} />
-        <span className="text-gray-500">Config: {container.configName}</span>
+      <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-400">
+        Config: <span className="text-slate-200 font-medium">{container.configName}</span>
       </div>
 
-      <div className="mt-auto pt-3 border-t border-gray-800 flex gap-2">
+      <div className="mt-auto pt-4 border-t border-slate-800 flex gap-2">
         <Link
           to={`/view/${container.id}`}
-          className="flex-1 px-3 py-2 text-sm font-medium text-center text-blue-400 hover:text-white hover:bg-blue-600 border border-blue-800 rounded-lg transition-colors"
+          className="flex-1 px-3 py-2 text-sm font-medium text-center text-emerald-300 hover:text-emerald-100 hover:bg-emerald-500/15 border border-emerald-900/80 rounded-lg transition-colors"
         >
           View
-        </Link>
-        <Link
-          to={`/logs/${container.id}`}
-          className="flex-1 px-3 py-2 text-sm font-medium text-center text-gray-300 hover:text-white hover:bg-gray-800 border border-gray-700 rounded-lg transition-colors"
-        >
-          Logs
         </Link>
         <button
           onClick={handleKill}
           disabled={killing}
-          className="flex-1 px-3 py-2 text-sm font-medium text-red-400 hover:text-white hover:bg-red-600 border border-red-800 rounded-lg transition-colors disabled:opacity-50"
+          className="flex-1 px-3 py-2 text-sm font-medium text-rose-300 hover:text-rose-100 hover:bg-rose-500/20 border border-rose-900/80 rounded-lg transition-colors disabled:opacity-50"
         >
           {killing ? "Killing..." : "Kill"}
         </button>
