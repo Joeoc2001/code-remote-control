@@ -193,11 +193,9 @@ export const GitHygienePlugin = async ({ client, $ }) => {
 
       reminderFingerprintBySession.set(event.properties.sessionID, fingerprint);
 
-      const reminder = gitState.hasUncommittedChanges && gitState.hasUnpushedCommits
+      const reminder = gitState.hasUncommittedChanges
         ? "You have unpushed local changes; commit your outstanding workspace changes and push your local commits to remote, then open a PR."
-        : gitState.hasUncommittedChanges
-          ? "You have a dirty workspace; commit your outstanding changes."
-          : "You have unpushed local changes; push your local commits to remote, then open a PR.";
+        : "You have unpushed local changes; push your local commits to remote, then open a PR.";
 
       await client.session.prompt({
         path: { id: event.properties.sessionID },
