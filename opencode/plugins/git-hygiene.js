@@ -94,7 +94,7 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
     ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}).`
     : `PR checks finished with failures for ${pr.url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
 
-  await sendSessionPrompt(client, sessionID, finalMessage, !successful);
+  await sendSessionPrompt(client, sessionID, finalMessage, successful);
   watchedHeadBySession.set(sessionID, headSha);
   return true;
 }
@@ -106,7 +106,7 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
 
   const pipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
   const pipeline = pickGitLabPipeline(tryParseJson(pipelineRaw));
-  if (!pipeline) return false;
+  if (!pipeline || pipeline.sha !== headSha) return false;
 
   await sendSessionPrompt(
     client,
@@ -126,7 +126,7 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
     ? `MR pipeline finished successfully for ${mr.web_url} (status: ${status}).`
     : `MR pipeline finished with status '${status}' for ${mr.web_url}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
 
-  await sendSessionPrompt(client, sessionID, finalMessage, !successful);
+  await sendSessionPrompt(client, sessionID, finalMessage, successful);
   watchedHeadBySession.set(sessionID, headSha);
   return true;
 }
@@ -196,7 +196,7 @@ export const GitHygienePlugin = async ({ client, $ }) => {
             branch: gitState.branch,
             headSha: gitState.headSha,
           })
-            .catch(() => {})
+            .catch(() => { })
             .finally(() => {
               pipelineWatchInFlightBySession.delete(event.properties.sessionID);
             });

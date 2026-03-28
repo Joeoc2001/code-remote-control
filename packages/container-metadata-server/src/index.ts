@@ -194,8 +194,8 @@ async function fetchGitLabStatus(warnings: string[]): Promise<{ reviewRequest: R
     const raw = await runJsonCommand("glab", [
       "mr",
       "view",
-      "--json",
-      "iid,title,web_url,state,draft,source_branch,target_branch,pipeline,head_pipeline",
+      "--output",
+      "json",
     ]) as Record<string, unknown>;
 
     const iid = raw.iid;
