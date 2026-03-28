@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
+import stripAnsi from "strip-ansi";
 
 export default function ContainerLogs() {
   const { id } = useParams<{ id: string }>();
@@ -79,7 +80,7 @@ export default function ContainerLogs() {
             <div className="space-y-1">
               {logs.map((log, idx) => (
                 <div key={idx} className="text-slate-300 whitespace-pre-wrap break-all">
-                  {log}
+                  {stripAnsi(log)}
                 </div>
               ))}
               <div ref={logsEndRef} />
