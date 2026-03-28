@@ -52,7 +52,7 @@ export default function ContainerCard({
           void handleKill();
         }}
         disabled={killing}
-        className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-900/80 text-rose-300 hover:text-rose-100 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+        className="absolute right-3 bottom-3 inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-900/80 text-rose-300 hover:text-rose-100 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
         title={killing ? "Deleting container" : "Delete container"}
         aria-label={killing ? "Deleting container" : "Delete container"}
       >
@@ -64,7 +64,7 @@ export default function ContainerCard({
           <path d="M14 10v6" />
         </svg>
       </button>
-      <div className="flex items-start justify-between gap-3 pr-8">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-slate-100 font-semibold truncate" title={title}>
             {title}
@@ -78,7 +78,7 @@ export default function ContainerCard({
           <Link
             onClick={(event) => event.stopPropagation()}
             to={`/logs/${container.id}`}
-            className="inline-flex items-center rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400 hover:border-slate-500 hover:text-slate-100 transition-colors"
+            className="text-[10px] font-medium uppercase tracking-wide text-slate-500 hover:text-slate-300 transition-colors"
           >
             Logs
           </Link>

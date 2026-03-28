@@ -9,7 +9,7 @@ export default function HealthDot({ health }: HealthDotProps) {
   let label: string | null;
 
   if (health.container === "running" && health.openCode === "healthy") {
-    color = "bg-slate-300";
+    color = "bg-emerald-300";
     label = null;
   } else if (health.container === "running" && health.openCode === "unhealthy") {
     color = "bg-amber-400";

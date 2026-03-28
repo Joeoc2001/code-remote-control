@@ -87,7 +87,17 @@ export default function ContainerView() {
           >
             ← Back
           </Link>
-          <h1 className="text-xl font-semibold">Container View</h1>
+          <h1 className="flex-1 text-xl font-semibold">Container View</h1>
+          {!loading && !error && container && (
+            <button
+              type="button"
+              onClick={() => setMetadataOpen((prev) => !prev)}
+              className="ml-auto inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-300 hover:border-slate-500 hover:text-slate-100 transition-colors"
+            >
+              {metadataOpen ? "Hide metadata" : "Show metadata"}
+              <span>{metadataOpen ? "v" : ">"}</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -102,43 +112,14 @@ export default function ContainerView() {
       ) : (
         <>
           <section className="shrink-0 border-b border-slate-800 bg-slate-950/70">
-            <div className="max-w-7xl mx-auto px-4 py-3">
-              <button
-                type="button"
-                onClick={() => setMetadataOpen((prev) => !prev)}
-                className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-300 hover:border-slate-500 hover:text-slate-100 transition-colors"
-              >
-                {metadataOpen ? "Hide metadata" : "Show metadata"}
-                <span>{metadataOpen ? "v" : ">"}</span>
-              </button>
-            </div>
             {metadataOpen && (
               <>
-                <div className="max-w-7xl mx-auto px-4 pb-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5 text-sm">
-                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                    <p className="text-slate-400">Config</p>
-                    <p className="font-medium truncate">{container.configName || "-"}</p>
-                  </div>
-                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                    <p className="text-slate-400">Branch</p>
-                    <p className="font-medium truncate">{codeStatus?.branch || "-"}</p>
-                  </div>
-                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                    <p className="text-slate-400">Commit</p>
-                    <p className="font-mono text-xs truncate">{codeStatus?.commitSha || "-"}</p>
-                  </div>
-                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                    <p className="text-slate-400">PR / MR</p>
-                    <p className="font-medium truncate">
-                      {codeStatus?.reviewRequest
-                        ? `#${codeStatus.reviewRequest.id} ${codeStatus.reviewRequest.state}`
-                        : "No active PR/MR"}
-                    </p>
-                  </div>
-                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                    <p className="text-slate-400">Pipeline</p>
-                    <p className="font-medium truncate">{codeStatus?.pipeline?.status || "No pipeline data"}</p>
-                  </div>
+                <div className="max-w-7xl mx-auto px-4 pb-2 text-sm flex flex-wrap gap-x-6 gap-y-1">
+                  <span><span className="text-slate-400">Config:</span> {container.configName || "-"}</span>
+                  <span><span className="text-slate-400">Branch:</span> {codeStatus?.branch || "-"}</span>
+                  <span><span className="text-slate-400">Commit:</span> <span className="font-mono text-xs">{codeStatus?.commitSha || "-"}</span></span>
+                  <span><span className="text-slate-400">PR / MR:</span> {codeStatus?.reviewRequest ? `#${codeStatus.reviewRequest.id} ${codeStatus.reviewRequest.state}` : "No active PR/MR"}</span>
+                  <span><span className="text-slate-400">Pipeline:</span> {codeStatus?.pipeline?.status || "No pipeline data"}</span>
                 </div>
                 <div className="max-w-7xl mx-auto px-4 pb-3 text-xs text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
                   <span>Provider: {codeStatus?.provider || "-"}</span>
