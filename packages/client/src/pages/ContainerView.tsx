@@ -116,6 +116,7 @@ export default function ContainerView() {
               <>
                 <div className="max-w-7xl mx-auto px-4 pb-2 text-sm flex flex-wrap gap-x-6 gap-y-1">
                   <span><span className="text-slate-400">Config:</span> {container.configName || "-"}</span>
+                  <span><span className="text-slate-400">Repo:</span> {codeStatus ? (codeStatus.orgName && codeStatus.repoName ? `${codeStatus.orgName}/${codeStatus.repoName}` : codeStatus.repoName || "-") : "-"}</span>
                   <span><span className="text-slate-400">Branch:</span> {codeStatus?.branch || "-"}</span>
                   <span><span className="text-slate-400">Commit:</span> <span className="font-mono text-xs">{codeStatus?.commitSha || "-"}</span></span>
                   <span><span className="text-slate-400">PR / MR:</span> {codeStatus?.reviewRequest ? `#${codeStatus.reviewRequest.id} ${codeStatus.reviewRequest.state}` : "No active PR/MR"}</span>

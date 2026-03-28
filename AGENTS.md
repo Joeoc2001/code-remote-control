@@ -12,7 +12,13 @@ The repo is composed of 2 docker container definitions:
 
 These can both be found in `./docker`.
 
-The remainder of the TS code is in `./packages`.
+The remainder of the TS code is in `./packages`:
+
+- `server` — Express backend; manages Docker containers, proxies traffic to them, and integrates with GitHub/GitLab.
+- `client` — React/Tailwind frontend; the UI for creating and monitoring containers.
+- `shared` — Types shared between `server` and `client` (config schemas, container shapes, SSE events).
+- `container-metadata-server` — Lightweight HTTP server that runs *inside* each `env` container; exposes `/api/code-status` with git branch, commit, PR/MR, and pipeline info.
+- `container-metadata-types` — TypeScript types for the `container-metadata-server` API, consumed by both the metadata server and the main server.
 
 # Repo rules:
 - Do not add superfluous comments. Your code should be self-documenting — ideally your code should contain no comments at all.

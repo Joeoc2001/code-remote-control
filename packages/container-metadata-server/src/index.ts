@@ -41,6 +41,28 @@ async function readCurrentTaskDescription(): Promise<string | null> {
   }
 }
 
+function parseRepoInfo(remoteUrl: string): { orgName: string | null; repoName: string | null } {
+  const sshMatch = remoteUrl.match(/^git@[^:]+:(.+?)(?:\.git)?$/);
+  if (sshMatch) {
+    const parts = sshMatch[1].split("/");
+    if (parts.length >= 2) {
+      return { orgName: parts[parts.length - 2], repoName: parts[parts.length - 1] };
+    }
+  }
+
+  try {
+    const url = new URL(remoteUrl);
+    const parts = url.pathname.replace(/^\//, "").replace(/\.git$/, "").split("/");
+    if (parts.length >= 2) {
+      return { orgName: parts[parts.length - 2], repoName: parts[parts.length - 1] };
+    }
+  } catch {
+    // not a valid URL
+  }
+
+  return { orgName: null, repoName: null };
+}
+
 function resolveProvider(): ForgeProvider {
   if (process.env.CRC_REPO_SOURCE === "github") {
     return "github";
@@ -248,6 +270,15 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
   const commitSha = await runCommand("git", ["rev-parse", "--short", "HEAD"]);
   const currentTaskDescription = await readCurrentTaskDescription();
 
+  let orgName: string | null = null;
+  let repoName: string | null = null;
+  try {
+    const remoteUrl = await runCommand("git", ["remote", "get-url", "origin"]);
+    ({ orgName, repoName } = parseRepoInfo(remoteUrl));
+  } catch (error) {
+    warnings.push(`Could not resolve repo info: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   const provider = resolveProvider();
   let reviewRequest: ReviewRequestStatus | null = null;
   let pipeline: PipelineStatus | null = null;
@@ -267,6 +298,8 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
   return {
     branch,
     commitSha,
+    orgName,
+    repoName,
     provider,
     currentTaskDescription,
     reviewRequest,

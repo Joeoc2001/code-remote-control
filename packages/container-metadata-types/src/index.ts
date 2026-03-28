@@ -18,6 +18,8 @@ export interface PipelineStatus {
 export interface ContainerCodeStatus {
   branch: string;
   commitSha: string;
+  orgName: string | null;
+  repoName: string | null;
   provider: ForgeProvider;
   currentTaskDescription: string | null;
   reviewRequest: ReviewRequestStatus | null;
