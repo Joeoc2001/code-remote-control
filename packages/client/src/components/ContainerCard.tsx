@@ -6,20 +6,22 @@ import HealthDot from "./HealthDot";
 
 interface ContainerCardProps {
   container: ManagedContainer;
+  title: string;
   onRemoved: () => void;
 }
 
 export default function ContainerCard({
   container,
+  title,
   onRemoved,
 }: ContainerCardProps) {
   const [killing, setKilling] = useState(false);
   const navigate = useNavigate();
 
-  const displayName = container.name.replace(/^crc-/, "");
+  const fallbackName = container.name.replace(/^crc-/, "");
 
   const handleKill = async () => {
-    if (!confirm(`Kill and remove container "${displayName}"?`)) return;
+    if (!confirm(`Kill and remove container "${fallbackName}"?`)) return;
     setKilling(true);
     try {
       await deleteContainer(container.id);
@@ -64,8 +66,8 @@ export default function ContainerCard({
       </button>
       <div className="flex items-start justify-between gap-3 pr-8">
         <div className="min-w-0">
-          <h3 className="text-slate-100 font-semibold truncate" title={container.name}>
-            {displayName}
+          <h3 className="text-slate-100 font-semibold truncate" title={title}>
+            {title}
           </h3>
           <p className="text-slate-400 text-sm mt-1 truncate" title={container.repoName}>
             {container.repoName}
