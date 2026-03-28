@@ -138,6 +138,14 @@ async function fetchGitHubStatus(warnings: string[]): Promise<{ reviewRequest: R
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
+    if (message.toLowerCase().includes("no pull requests found for branch")) {
+      return {
+        reviewRequest: null,
+        pipeline: null,
+      };
+    }
+
     warnings.push(`GitHub metadata unavailable: ${message}`);
     return {
       reviewRequest: null,
