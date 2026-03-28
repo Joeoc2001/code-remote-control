@@ -9,20 +9,23 @@ export default function HealthDot({ health }: HealthDotProps) {
   let label: string;
 
   if (health.container === "running" && health.openCode === "healthy") {
-    color = "bg-green-500";
-    label = "Healthy";
+    color = "bg-emerald-400";
+    label = "Running · opencode ready";
+  } else if (health.container === "running" && health.openCode === "unhealthy") {
+    color = "bg-amber-400";
+    label = "Running · opencode unhealthy";
   } else if (health.container === "running") {
-    color = "bg-yellow-500";
-    label = "opencode not detected";
+    color = "bg-amber-400";
+    label = "Running · waiting for opencode";
   } else {
-    color = "bg-red-500";
-    label = "Stopped / Error";
+    color = "bg-rose-400";
+    label = "Container offline";
   }
 
   return (
     <div className="flex items-center gap-1.5" title={label}>
       <span className={`inline-block w-2.5 h-2.5 rounded-full ${color}`} />
-      <span className="text-xs text-gray-400">{label}</span>
+      <span className="text-xs text-slate-300">{label}</span>
     </div>
   );
 }

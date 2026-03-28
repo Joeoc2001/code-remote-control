@@ -65,36 +65,36 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-slate-950 text-slate-100">
       <Header
         onNewContainer={() => setShowModal(true)}
         onSettings={() => setShowSettings(true)}
         onDeleteAll={() => setShowDeleteAllModal(true)}
       />
       {!connected && (
-        <div className="bg-yellow-900/50 border-b border-yellow-700 px-4 py-2 text-center text-yellow-300 text-sm">
+        <div className="bg-amber-900/40 border-b border-amber-700/60 px-4 py-2 text-center text-amber-200 text-sm">
           Connection lost — reconnecting...
         </div>
       )}
       <main className="max-w-7xl mx-auto px-4 py-8">
         {loading ? (
           <div className="flex justify-center py-20">
-            <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full" />
+            <div className="animate-spin h-8 w-8 border-2 border-emerald-500 border-t-transparent rounded-full" />
           </div>
         ) : error ? (
           <div className="text-center py-20">
-            <p className="text-red-400 text-lg">{error}</p>
+            <p className="text-rose-300 text-lg">{error}</p>
             <button
               onClick={loadContainers}
-              className="mt-4 px-4 py-2 text-sm text-gray-300 hover:text-white border border-gray-700 rounded-lg transition-colors"
+              className="mt-4 px-4 py-2 text-sm text-slate-300 hover:text-white border border-slate-700 rounded-lg transition-colors"
             >
               Retry
             </button>
           </div>
         ) : containers.length === 0 ? (
-          <div className="text-center py-20 text-gray-500">
-            <p className="text-lg">No containers running</p>
-            <p className="mt-2">
+          <div className="text-center py-24 rounded-2xl border border-slate-800 bg-slate-900/50 text-slate-400">
+            <p className="text-lg text-slate-200">No containers running</p>
+            <p className="mt-2 text-sm">
               Click "New Container" to spawn a development environment.
             </p>
           </div>

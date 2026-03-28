@@ -11,7 +11,7 @@ export default function ContainerGrid({
   onRefresh,
 }: ContainerGridProps) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
       {containers.map((container) => (
         <ContainerCard
           key={container.id}
