@@ -42,8 +42,29 @@ function getGithubChecksSummary(checks) {
 
 function getGitLabPipelineSummary(pipeline) {
   const status = pipeline?.status || "unknown";
-  const successful = status === "success";
+  const successful = status === "success" || status === "passed";
   return { status, successful };
+}
+
+function pickGitLabPipeline(payload) {
+  if (!payload) return null;
+
+  if (Array.isArray(payload)) {
+    return payload.find((item) => item && typeof item === "object" && typeof item.status === "string") || null;
+  }
+
+  if (typeof payload !== "object") return null;
+  if (typeof payload.status === "string") return payload;
+
+  if (Array.isArray(payload.pipelines)) {
+    return payload.pipelines.find((item) => item && typeof item === "object" && typeof item.status === "string") || null;
+  }
+
+  if (payload.pipeline && typeof payload.pipeline === "object" && typeof payload.pipeline.status === "string") {
+    return payload.pipeline;
+  }
+
+  return null;
 }
 
 async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha }) {
@@ -84,9 +105,8 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   if (!mr || !mr.web_url) return false;
 
   const pipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
-  const pipelineResponse = tryParseJson(pipelineRaw);
-  const pipeline = Array.isArray(pipelineResponse) ? pipelineResponse[0] : pipelineResponse;
-  if (!pipeline || !pipeline.id) return false;
+  const pipeline = pickGitLabPipeline(tryParseJson(pipelineRaw));
+  if (!pipeline) return false;
 
   await sendSessionPrompt(
     client,
@@ -98,8 +118,7 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   await $`glab ci status --branch ${branch} --live`.nothrow();
 
   const finalPipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
-  const finalPipelineResponse = tryParseJson(finalPipelineRaw);
-  const finalPipeline = Array.isArray(finalPipelineResponse) ? finalPipelineResponse[0] : finalPipelineResponse;
+  const finalPipeline = pickGitLabPipeline(tryParseJson(finalPipelineRaw));
   if (!finalPipeline) return false;
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
@@ -193,9 +212,11 @@ export const GitHygienePlugin = async ({ client, $ }) => {
 
       reminderFingerprintBySession.set(event.properties.sessionID, fingerprint);
 
-      const reminder = gitState.hasUncommittedChanges
-        ? "You have unpushed local changes; commit your outstanding workspace changes and push your local commits to remote, then open a PR."
-        : "You have unpushed local changes; push your local commits to remote, then open a PR.";
+      const reminder = gitState.hasUncommittedChanges && gitState.hasUnpushedCommits
+        ? "You have uncommitted and unpushed local changes; commit your outstanding workspace changes, push your local commits to remote, then open a PR or MR."
+        : gitState.hasUncommittedChanges
+          ? "You have uncommitted local changes; commit your outstanding workspace changes, then push to remote and open a PR or MR."
+          : "You have unpushed local commits; push your local commits to remote, then open a PR or MR.";
 
       await client.session.prompt({
         path: { id: event.properties.sessionID },
