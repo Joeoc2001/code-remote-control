@@ -19,6 +19,7 @@ export interface ContainerCodeStatus {
   branch: string;
   commitSha: string;
   provider: ForgeProvider;
+  currentTaskDescription: string | null;
   reviewRequest: ReviewRequestStatus | null;
   pipeline: PipelineStatus | null;
   warnings: string[];

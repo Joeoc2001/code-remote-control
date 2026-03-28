@@ -1,10 +1,12 @@
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ContainerCodeStatus, ForgeProvider, PipelineStatus, ReviewRequestStatus } from "../../container-metadata-types/src/index.js";
 
 const execFileAsync = promisify(execFile);
 const METADATA_PORT = parseInt(process.env.CRC_METADATA_PORT || "8081", 10);
+const TASK_DESCRIPTION_PATH = "/run/opencode-current-task-description";
 
 function respondJson(res: import("node:http").ServerResponse, statusCode: number, body: unknown): void {
   res.statusCode = statusCode;
@@ -24,6 +26,19 @@ async function runCommand(command: string, args: string[]): Promise<string> {
 async function runJsonCommand(command: string, args: string[]): Promise<unknown> {
   const output = await runCommand(command, args);
   return JSON.parse(output);
+}
+
+async function readCurrentTaskDescription(): Promise<string | null> {
+  try {
+    const value = await readFile(TASK_DESCRIPTION_PATH, "utf-8");
+    const taskDescription = value.trim();
+    return taskDescription.length > 0 ? taskDescription : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function resolveProvider(): ForgeProvider {
@@ -223,6 +238,7 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
   const warnings: string[] = [];
   const branch = await runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
   const commitSha = await runCommand("git", ["rev-parse", "--short", "HEAD"]);
+  const currentTaskDescription = await readCurrentTaskDescription();
 
   const provider = resolveProvider();
   let reviewRequest: ReviewRequestStatus | null = null;
@@ -244,6 +260,7 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
     branch,
     commitSha,
     provider,
+    currentTaskDescription,
     reviewRequest,
     pipeline,
     warnings,

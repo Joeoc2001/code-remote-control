@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ManagedContainer } from "../types";
-import { fetchContainers, subscribeToEvents } from "../api";
+import { fetchContainers, fetchContainerCodeStatus, subscribeToEvents } from "../api";
 import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
 import NewContainerModal from "../components/NewContainerModal";
@@ -14,11 +14,58 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
+  const [taskDescriptionByContainerId, setTaskDescriptionByContainerId] = useState<Record<string, string>>({});
+
+  const refreshTaskDescriptions = useCallback(async (containersToRefresh: ManagedContainer[], pruneMissing = false) => {
+    const runningContainers = containersToRefresh.filter((container) => container.status === "running");
+
+    const taskDescriptions = await Promise.all(
+      runningContainers.map(async (container) => {
+        try {
+          const codeStatus = await fetchContainerCodeStatus(container.id);
+          const taskDescription = codeStatus.currentTaskDescription?.trim() || null;
+          return { id: container.id, taskDescription };
+        } catch {
+          return { id: container.id, taskDescription: null };
+        }
+      }),
+    );
+
+    setTaskDescriptionByContainerId((previous) => {
+      const next: Record<string, string> = { ...previous };
+
+      if (pruneMissing) {
+        const activeIds = new Set(containersToRefresh.map((container) => container.id));
+        for (const id of Object.keys(next)) {
+          if (!activeIds.has(id)) {
+            delete next[id];
+          }
+        }
+      }
+
+      for (const container of containersToRefresh) {
+        if (container.status !== "running") {
+          delete next[container.id];
+        }
+      }
+
+      for (const { id, taskDescription } of taskDescriptions) {
+        if (taskDescription) {
+          next[id] = taskDescription;
+        } else {
+          delete next[id];
+        }
+      }
+
+      return next;
+    });
+  }, []);
 
   const loadContainers = useCallback(async () => {
     try {
       const data = await fetchContainers();
       setContainers(data);
+      void refreshTaskDescriptions(data, true);
       setError(null);
     } catch (err) {
       console.error("Failed to load containers:", err);
@@ -26,7 +73,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshTaskDescriptions]);
 
   useEffect(() => {
     loadContainers();
@@ -44,15 +91,50 @@ export default function Home() {
           }
           return [updated, ...prev];
         });
+
+        if (updated.status === "running") {
+          void refreshTaskDescriptions([updated]);
+        } else {
+          setTaskDescriptionByContainerId((prev) => {
+            const next = { ...prev };
+            delete next[updated.id];
+            return next;
+          });
+        }
       },
       (removedId) => {
         setContainers((prev) => prev.filter((c) => c.id !== removedId));
+        setTaskDescriptionByContainerId((prev) => {
+          const next = { ...prev };
+          delete next[removedId];
+          return next;
+        });
       },
       loadContainers,
       setConnected,
     );
     return unsubscribe;
-  }, [loadContainers]);
+  }, [loadContainers, refreshTaskDescriptions]);
+
+  useEffect(() => {
+    if (containers.length === 0) {
+      setTaskDescriptionByContainerId({});
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void refreshTaskDescriptions(containers, true);
+    }, 15000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [containers, refreshTaskDescriptions]);
+
+  const getContainerTitle = useCallback(
+    (container: ManagedContainer): string => taskDescriptionByContainerId[container.id] || container.name.replace(/^crc-/, ""),
+    [taskDescriptionByContainerId],
+  );
 
   const handleContainerCreated = (container: ManagedContainer) => {
     setContainers((prev) => {
@@ -96,7 +178,7 @@ export default function Home() {
             </p>
           </div>
         ) : (
-          <ContainerGrid containers={containers} onRefresh={loadContainers} />
+          <ContainerGrid containers={containers} getContainerTitle={getContainerTitle} onRefresh={loadContainers} />
         )}
       </main>
       {showModal && (
