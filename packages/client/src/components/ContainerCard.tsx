@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import type { ManagedContainer } from "../types";
 import { deleteContainer } from "../api";
 import HealthDot from "./HealthDot";
@@ -14,6 +14,7 @@ export default function ContainerCard({
   onRemoved,
 }: ContainerCardProps) {
   const [killing, setKilling] = useState(false);
+  const navigate = useNavigate();
 
   const displayName = container.name.replace(/^crc-/, "");
 
@@ -31,8 +32,37 @@ export default function ContainerCard({
   };
 
   return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-5 shadow-[0_18px_45px_-28px_rgba(0,0,0,0.9)] backdrop-blur-sm flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-3">
+    <article
+      role="link"
+      tabIndex={0}
+      onClick={() => navigate(`/view/${container.id}`)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          navigate(`/view/${container.id}`);
+        }
+      }}
+      className="relative cursor-pointer rounded-2xl border border-slate-800/80 bg-slate-900/70 p-5 shadow-[0_18px_45px_-28px_rgba(0,0,0,0.9)] backdrop-blur-sm flex flex-col gap-4 transition-colors hover:border-slate-600/80"
+    >
+      <button
+        onClick={(event) => {
+          event.stopPropagation();
+          void handleKill();
+        }}
+        disabled={killing}
+        className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-900/80 text-rose-300 hover:text-rose-100 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+        title={killing ? "Deleting container" : "Delete container"}
+        aria-label={killing ? "Deleting container" : "Delete container"}
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 6h18" />
+          <path d="M8 6V4h8v2" />
+          <path d="M19 6l-1 14H6L5 6" />
+          <path d="M10 10v6" />
+          <path d="M14 10v6" />
+        </svg>
+      </button>
+      <div className="flex items-start justify-between gap-3 pr-8">
         <div className="min-w-0">
           <h3 className="text-slate-100 font-semibold truncate" title={container.name}>
             {displayName}
@@ -44,6 +74,7 @@ export default function ContainerCard({
         <div className="flex flex-col items-end gap-2">
           <HealthDot health={container.health} />
           <Link
+            onClick={(event) => event.stopPropagation()}
             to={`/logs/${container.id}`}
             className="inline-flex items-center rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400 hover:border-slate-500 hover:text-slate-100 transition-colors"
           >
@@ -51,26 +82,6 @@ export default function ContainerCard({
           </Link>
         </div>
       </div>
-
-      <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-400">
-        Config: <span className="text-slate-200 font-medium">{container.configName}</span>
-      </div>
-
-      <div className="mt-auto pt-4 border-t border-slate-800 flex gap-2">
-        <Link
-          to={`/view/${container.id}`}
-          className="flex-1 px-3 py-2 text-sm font-medium text-center text-emerald-300 hover:text-emerald-100 hover:bg-emerald-500/15 border border-emerald-900/80 rounded-lg transition-colors"
-        >
-          View
-        </Link>
-        <button
-          onClick={handleKill}
-          disabled={killing}
-          className="flex-1 px-3 py-2 text-sm font-medium text-rose-300 hover:text-rose-100 hover:bg-rose-500/20 border border-rose-900/80 rounded-lg transition-colors disabled:opacity-50"
-        >
-          {killing ? "Killing..." : "Kill"}
-        </button>
-      </div>
-    </div>
+    </article>
   );
 }
