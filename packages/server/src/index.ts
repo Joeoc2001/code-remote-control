@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { router } from "./routes.js";
 import { runHealthChecks, cleanupAll, pullLatestImage, buildCustomImage } from "./docker.js";
 import { PORT, validateEnvironment, loadConfigurations } from "./config.js";
-import { proxyMiddleware } from "./proxy.js";
+import { proxyMiddleware, wsUpgradeHandler } from "./proxy.js";
 
 validateEnvironment();
 
@@ -59,6 +59,8 @@ const healthInterval = setInterval(() => {
 const server = app.listen(PORT, () => {
   console.log(`Code Remote Control server listening on port ${PORT}`);
 });
+
+server.on("upgrade", wsUpgradeHandler);
 
 function shutdown() {
   console.log("Shutting down...");
