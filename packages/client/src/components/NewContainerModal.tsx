@@ -106,7 +106,7 @@ export default function NewContainerModal({
         <div className="p-5 space-y-4">
           {loading ? (
             <div className="flex justify-center py-8">
-              <div className="animate-spin h-6 w-6 border-2 border-emerald-500 border-t-transparent rounded-full" />
+              <div className="animate-spin h-6 w-6 border-2 border-slate-500 border-t-transparent rounded-full" />
             </div>
           ) : (
             <>
@@ -162,7 +162,7 @@ export default function NewContainerModal({
                         key={`${repo.source}:${repo.fullName}`}
                         onClick={() => setSelectedRepo(repo)}
                         className={`w-full text-left px-3 py-2 text-sm border-b border-slate-800 last:border-0 transition-colors ${selectedRepo?.source === repo.source && selectedRepo?.fullName === repo.fullName
-                          ? "bg-emerald-700/20 text-emerald-200"
+                          ? "bg-slate-700/40 text-slate-100"
                           : "text-slate-300 hover:bg-slate-800"
                           }`}
                       >
@@ -205,7 +205,7 @@ export default function NewContainerModal({
           <button
             onClick={handleSpawn}
             disabled={!selectedConfig || !selectedRepo || spawning || loading}
-            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-emerald-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {spawning ? "Spawning..." : "Spawn"}
           </button>

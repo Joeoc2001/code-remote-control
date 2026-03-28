@@ -10,6 +10,7 @@ export default function ContainerView() {
   const [container, setContainer] = useState<ManagedContainer | null>(null);
   const [rootDomain, setRootDomain] = useState<string | undefined>(undefined);
   const [codeStatus, setCodeStatus] = useState<ContainerCodeStatus | null>(null);
+  const [metadataOpen, setMetadataOpen] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,7 +93,7 @@ export default function ContainerView() {
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
-          <div className="animate-spin h-8 w-8 border-2 border-emerald-500 border-t-transparent rounded-full" />
+          <div className="animate-spin h-8 w-8 border-2 border-slate-500 border-t-transparent rounded-full" />
         </div>
       ) : error || !container ? (
         <div className="flex-1 flex items-center justify-center">
@@ -101,53 +102,71 @@ export default function ContainerView() {
       ) : (
         <>
           <section className="shrink-0 border-b border-slate-800 bg-slate-950/70">
-            <div className="max-w-7xl mx-auto px-4 py-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                <p className="text-slate-400">Branch</p>
-                <p className="font-medium truncate">{codeStatus?.branch || "-"}</p>
-              </div>
-              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                <p className="text-slate-400">Commit</p>
-                <p className="font-mono text-xs truncate">{codeStatus?.commitSha || "-"}</p>
-              </div>
-              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                <p className="text-slate-400">PR / MR</p>
-                <p className="font-medium truncate">
-                  {codeStatus?.reviewRequest
-                    ? `#${codeStatus.reviewRequest.id} ${codeStatus.reviewRequest.state}`
-                    : "No active PR/MR"}
-                </p>
-              </div>
-              <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
-                <p className="text-slate-400">Pipeline</p>
-                <p className="font-medium truncate">{codeStatus?.pipeline?.status || "No pipeline data"}</p>
-              </div>
+            <div className="max-w-7xl mx-auto px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setMetadataOpen((prev) => !prev)}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-300 hover:border-slate-500 hover:text-slate-100 transition-colors"
+              >
+                {metadataOpen ? "Hide metadata" : "Show metadata"}
+                <span>{metadataOpen ? "v" : ">"}</span>
+              </button>
             </div>
-            <div className="max-w-7xl mx-auto px-4 pb-3 text-xs text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
-              <span>Provider: {codeStatus?.provider || "-"}</span>
-              {codeStatus?.reviewRequest?.url && (
-                <a
-                  className="text-emerald-300 hover:text-emerald-200"
-                  href={codeStatus.reviewRequest.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open PR/MR
-                </a>
-              )}
-              {codeStatus?.pipeline?.url && (
-                <a
-                  className="text-emerald-300 hover:text-emerald-200"
-                  href={codeStatus.pipeline.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open Pipeline
-                </a>
-              )}
-              {metadataError && <span className="text-amber-300">{metadataError}</span>}
-              {codeStatus?.warnings[0] && <span className="text-amber-300 truncate">{codeStatus.warnings[0]}</span>}
-            </div>
+            {metadataOpen && (
+              <>
+                <div className="max-w-7xl mx-auto px-4 pb-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                    <p className="text-slate-400">Config</p>
+                    <p className="font-medium truncate">{container.configName || "-"}</p>
+                  </div>
+                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                    <p className="text-slate-400">Branch</p>
+                    <p className="font-medium truncate">{codeStatus?.branch || "-"}</p>
+                  </div>
+                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                    <p className="text-slate-400">Commit</p>
+                    <p className="font-mono text-xs truncate">{codeStatus?.commitSha || "-"}</p>
+                  </div>
+                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                    <p className="text-slate-400">PR / MR</p>
+                    <p className="font-medium truncate">
+                      {codeStatus?.reviewRequest
+                        ? `#${codeStatus.reviewRequest.id} ${codeStatus.reviewRequest.state}`
+                        : "No active PR/MR"}
+                    </p>
+                  </div>
+                  <div className="rounded border border-slate-800 bg-slate-900 px-3 py-2">
+                    <p className="text-slate-400">Pipeline</p>
+                    <p className="font-medium truncate">{codeStatus?.pipeline?.status || "No pipeline data"}</p>
+                  </div>
+                </div>
+                <div className="max-w-7xl mx-auto px-4 pb-3 text-xs text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
+                  <span>Provider: {codeStatus?.provider || "-"}</span>
+                  {codeStatus?.reviewRequest?.url && (
+                    <a
+                      className="text-slate-300 hover:text-slate-100"
+                      href={codeStatus.reviewRequest.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open PR/MR
+                    </a>
+                  )}
+                  {codeStatus?.pipeline?.url && (
+                    <a
+                      className="text-slate-300 hover:text-slate-100"
+                      href={codeStatus.pipeline.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open Pipeline
+                    </a>
+                  )}
+                  {metadataError && <span className="text-amber-300">{metadataError}</span>}
+                  {codeStatus?.warnings[0] && <span className="text-amber-300 truncate">{codeStatus.warnings[0]}</span>}
+                </div>
+              </>
+            )}
           </section>
           <iframe
             src={`https://${container.subdomain}.${rootDomain}/`}

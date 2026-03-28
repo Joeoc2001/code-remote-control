@@ -6,11 +6,11 @@ interface HealthDotProps {
 
 export default function HealthDot({ health }: HealthDotProps) {
   let color: string;
-  let label: string;
+  let label: string | null;
 
   if (health.container === "running" && health.openCode === "healthy") {
-    color = "bg-emerald-400";
-    label = "Running · opencode ready";
+    color = "bg-slate-300";
+    label = null;
   } else if (health.container === "running" && health.openCode === "unhealthy") {
     color = "bg-amber-400";
     label = "Running · opencode unhealthy";
@@ -23,9 +23,9 @@ export default function HealthDot({ health }: HealthDotProps) {
   }
 
   return (
-    <div className="flex items-center gap-1.5" title={label}>
+    <div className="flex items-center gap-1.5" title={label ?? "Running · opencode ready"}>
       <span className={`inline-block w-2.5 h-2.5 rounded-full ${color}`} />
-      <span className="text-xs text-slate-300">{label}</span>
+      {label && <span className="text-xs text-slate-300">{label}</span>}
     </div>
   );
 }
