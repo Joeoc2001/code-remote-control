@@ -7,6 +7,9 @@ import NewContainerModal from "../components/NewContainerModal";
 import DeleteAllModal from "../components/DeleteAllModal";
 import Footer from "../components/Footer";
 
+const TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 15000;
+const EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 2000;
+
 export default function Home() {
   const [containers, setContainers] = useState<ManagedContainer[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -124,12 +127,32 @@ export default function Home() {
 
     const interval = setInterval(() => {
       void refreshTaskDescriptions(containers, true);
-    }, 15000);
+    }, TASK_DESCRIPTION_REFRESH_INTERVAL_MS);
 
     return () => {
       clearInterval(interval);
     };
   }, [containers, refreshTaskDescriptions]);
+
+  useEffect(() => {
+    const pendingContainers = containers.filter(
+      (container) => container.status === "running" && !taskDescriptionByContainerId[container.id],
+    );
+
+    if (pendingContainers.length === 0) {
+      return;
+    }
+
+    void refreshTaskDescriptions(pendingContainers);
+
+    const interval = setInterval(() => {
+      void refreshTaskDescriptions(pendingContainers);
+    }, EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [containers, refreshTaskDescriptions, taskDescriptionByContainerId]);
 
   const getContainerTitle = useCallback(
     (container: ManagedContainer): string => taskDescriptionByContainerId[container.id] || container.name.replace(/^crc-/, ""),
@@ -141,6 +164,9 @@ export default function Home() {
       if (prev.some((c) => c.id === container.id)) return prev;
       return [container, ...prev];
     });
+    if (container.status === "running") {
+      void refreshTaskDescriptions([container]);
+    }
     setShowModal(false);
   };
 
