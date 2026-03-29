@@ -49,6 +49,18 @@ function withReadPermissions(permission: unknown): Record<string, unknown> {
   };
 }
 
+function withReadToolsAllowed(tools: unknown): Record<string, unknown> {
+  const toolsRecord = isRecord(tools) ? tools : {};
+
+  return {
+    ...toolsRecord,
+    read: true,
+    glob: true,
+    grep: true,
+    list: true,
+  };
+}
+
 function withForcedReadPermission(agentOrModeConfig: unknown): unknown {
   if (!isRecord(agentOrModeConfig)) {
     return agentOrModeConfig;
@@ -57,6 +69,7 @@ function withForcedReadPermission(agentOrModeConfig: unknown): unknown {
   return {
     ...agentOrModeConfig,
     permission: withReadPermissions(agentOrModeConfig.permission),
+    tools: withReadToolsAllowed(agentOrModeConfig.tools),
   };
 }
 
