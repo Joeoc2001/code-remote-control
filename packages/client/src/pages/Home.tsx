@@ -8,7 +8,7 @@ import DeleteAllModal from "../components/DeleteAllModal";
 import Footer from "../components/Footer";
 
 const TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 15000;
-const EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 2000;
+const EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 200;
 
 export default function Home() {
   const [containers, setContainers] = useState<ManagedContainer[]>([]);
