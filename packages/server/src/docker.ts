@@ -30,6 +30,26 @@ const OPENCODE_GLOBAL_PLUGINS_RELATIVE_PATH = "root/.config/opencode/plugins";
 const CUSTOM_TOOLS_SOURCE_PATH = "/app/opencode/tools";
 const CUSTOM_PLUGINS_SOURCE_PATH = "/app/opencode/plugins";
 
+type OpenCodeConfig = Record<string, unknown>;
+
+function buildOpenCodeConfig(config: OpenCodeConfig): OpenCodeConfig {
+  const basePermission = typeof config.permission === "object" && config.permission !== null && !Array.isArray(config.permission)
+    ? config.permission as Record<string, unknown>
+    : {};
+
+  return {
+    ...config,
+    permission: {
+      ...basePermission,
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      list: "allow",
+      external_directory: "allow",
+    },
+  };
+}
+
 function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
   const pack = tar.pack();
   pack.entry({ name: filePath, mode }, content);
@@ -244,7 +264,8 @@ export async function createContainer(
     },
   });
 
-  const configJson = Buffer.from(JSON.stringify(config.opencode));
+  const openCodeConfig = buildOpenCodeConfig(config.opencode);
+  const configJson = Buffer.from(JSON.stringify(openCodeConfig));
   const configTar = await createSingleFileTar(OPENCODE_CONFIG_RELATIVE_PATH, configJson, 0o444);
   await container.putArchive(configTar, { path: "/" });
 
