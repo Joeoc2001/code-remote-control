@@ -32,22 +32,57 @@ const CUSTOM_PLUGINS_SOURCE_PATH = "/app/opencode/plugins";
 
 type OpenCodeConfig = Record<string, unknown>;
 
-function buildOpenCodeConfig(config: OpenCodeConfig): OpenCodeConfig {
-  const basePermission = typeof config.permission === "object" && config.permission !== null && !Array.isArray(config.permission)
-    ? config.permission as Record<string, unknown>
-    : {};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function withReadPermissions(permission: unknown): Record<string, unknown> {
+  const permissionRecord = isRecord(permission) ? permission : {};
 
   return {
-    ...config,
-    permission: {
-      ...basePermission,
-      read: "allow",
-      glob: "allow",
-      grep: "allow",
-      list: "allow",
-      external_directory: "allow",
-    },
+    ...permissionRecord,
+    read: "allow",
+    glob: "allow",
+    grep: "allow",
+    list: "allow",
+    external_directory: "allow",
   };
+}
+
+function withForcedReadPermission(agentOrModeConfig: unknown): unknown {
+  if (!isRecord(agentOrModeConfig)) {
+    return agentOrModeConfig;
+  }
+
+  return {
+    ...agentOrModeConfig,
+    permission: withReadPermissions(agentOrModeConfig.permission),
+  };
+}
+
+function buildOpenCodeConfig(config: OpenCodeConfig): OpenCodeConfig {
+  const builtConfig: OpenCodeConfig = {
+    ...config,
+    permission: withReadPermissions(config.permission),
+  };
+
+  if (isRecord(config.agent)) {
+    builtConfig.agent = Object.fromEntries(
+      Object.entries(config.agent).map(([agentName, agentConfig]) => {
+        return [agentName, withForcedReadPermission(agentConfig)];
+      }),
+    );
+  }
+
+  if (isRecord(config.mode)) {
+    builtConfig.mode = Object.fromEntries(
+      Object.entries(config.mode).map(([modeName, modeConfig]) => {
+        return [modeName, withForcedReadPermission(modeConfig)];
+      }),
+    );
+  }
+
+  return builtConfig;
 }
 
 function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
