@@ -1,6 +1,7 @@
 const reminderFingerprintBySession = new Map();
 const pipelineWatchInFlightBySession = new Map();
 const watchedHeadBySession = new Map();
+const reviewTeamExecutedBySession = new Set();
 
 function tryParseJson(text) {
   try {
@@ -18,6 +19,47 @@ async function sendSessionPrompt(client, sessionID, text, noReply) {
       parts: [{ type: "text", text }],
     },
   });
+}
+
+function buildReviewTeamPrompt(platform, reviewUrl, branch, headSha) {
+  return [
+    `CI has passed for ${platform} review ${reviewUrl} on branch ${branch} at commit ${headSha}.`,
+    "Compact the current session immediately before doing anything else.",
+    "This is the first successful CI run in this session, so now run a parallel code-review team and do not modify code.",
+    "Create 10 parallel review agents. Each agent must only read/analyze code and create PR/MR comments for its own specialism.",
+    "Each agent must stay silent if everything looks fine for its specialism.",
+    "Agent specialisms:",
+    "1) Logic Errors - reason through business logic to verify intended behavior.",
+    "2) Documentation - remove superfluous comments, name magic values, ensure identifiers clearly describe purpose.",
+    "3) Type Safety - make invalid state unrepresentable and choose correct/efficient data structures.",
+    "4) Best Practices - enforce community-accepted best practices.",
+    "5) Alternate Approach - evaluate whether a better top-level solution exists.",
+    "6) Not Invented Here - find custom logic better served by established libraries without unnecessary dependencies.",
+    "7) Dependency Bloat - validate new dependencies are necessary and not replaceable by smaller or existing options.",
+    "8) Code Re-use - detect duplicated logic or missed existing helpers.",
+    "9) Hacks - flag fragile/test-fudging/non-rigorous code likely to require near-term rewrite.",
+    "10) Testing - ensure tests cover meaningful new logic where appropriate.",
+    "After all review agents finish, if they left comments on the PR/MR, address those comments.",
+    "You may skip comments you think are duplicates or that you disagree with, but resolve the rest.",
+    "Then close all comments that remain open.",
+    "Do not run this review team more than once in the current session.",
+  ].join("\n");
+}
+
+async function handleSuccessfulPipeline({ client, sessionID, platform, reviewUrl, branch, headSha }) {
+  await sendSessionPrompt(
+    client,
+    sessionID,
+    `CI has passed for ${platform} review ${reviewUrl}. Compact this session now.`,
+    true,
+  );
+
+  if (reviewTeamExecutedBySession.has(sessionID)) {
+    return;
+  }
+
+  reviewTeamExecutedBySession.add(sessionID);
+  await sendSessionPrompt(client, sessionID, buildReviewTeamPrompt(platform, reviewUrl, branch, headSha), false);
 }
 
 function getGithubChecksSummary(checks) {
@@ -90,6 +132,17 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
   if (!Array.isArray(finalChecks) || finalChecks.length === 0) return false;
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
+  if (successful) {
+    await handleSuccessfulPipeline({
+      client,
+      sessionID,
+      platform: "GitHub",
+      reviewUrl: pr.url,
+      branch,
+      headSha,
+    });
+  }
+
   const finalMessage = successful
     ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}).`
     : `PR checks finished with failures for ${pr.url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
@@ -122,6 +175,17 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   if (!finalPipeline) return false;
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
+  if (successful) {
+    await handleSuccessfulPipeline({
+      client,
+      sessionID,
+      platform: "GitLab",
+      reviewUrl: mr.web_url,
+      branch,
+      headSha,
+    });
+  }
+
   const finalMessage = successful
     ? `MR pipeline finished successfully for ${mr.web_url} (status: ${status}).`
     : `MR pipeline finished with status '${status}' for ${mr.web_url}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
