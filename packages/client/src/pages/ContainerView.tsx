@@ -14,7 +14,7 @@ export default function ContainerView() {
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const currentTaskTitle = codeStatus?.currentTaskDescription?.trim() || "Container View";
+  const currentTaskTitle = codeStatus?.currentTaskDescription?.trim() || "No current task";
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +88,7 @@ export default function ContainerView() {
           >
             ← Back
           </Link>
-          <h1 className="flex-1 text-xl font-semibold">{currentTaskTitle}</h1>
+          <h1 className="flex-1 truncate text-xl font-semibold">{currentTaskTitle}</h1>
           {!loading && !error && container && (
             <button
               type="button"
