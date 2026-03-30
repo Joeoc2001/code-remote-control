@@ -1,12 +1,13 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import type { ManagedContainer, ContainerCodeStatus } from "../types";
-import { fetchIframeDomain, fetchContainerCodeStatus } from "../api";
+import { fetchIframeDomain, fetchContainerCodeStatus, deleteContainer } from "../api";
 
 const BASE = "/api";
 
 export default function ContainerView() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [container, setContainer] = useState<ManagedContainer | null>(null);
   const [rootDomain, setRootDomain] = useState<string | undefined>(undefined);
   const [codeStatus, setCodeStatus] = useState<ContainerCodeStatus | null>(null);
@@ -14,7 +15,24 @@ export default function ContainerView() {
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [killing, setKilling] = useState(false);
   const currentTaskTitle = codeStatus?.currentTaskDescription?.trim() || "No current task";
+
+  const handleDelete = async () => {
+    if (!container) return;
+    const fallbackName = container.name.replace(/^crc-/, "");
+    if (!confirm(`Kill and remove container "${fallbackName}"?`)) return;
+
+    setKilling(true);
+    try {
+      await deleteContainer(container.id);
+      navigate("/", { replace: true });
+    } catch (err) {
+      console.error("Failed to kill container:", err);
+    } finally {
+      setKilling(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -90,14 +108,34 @@ export default function ContainerView() {
           </Link>
           <h1 className="flex-1 truncate text-xl font-semibold">{currentTaskTitle}</h1>
           {!loading && !error && container && (
-            <button
-              type="button"
-              onClick={() => setMetadataOpen((prev) => !prev)}
-              className="ml-auto inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-300 hover:border-slate-500 hover:text-slate-100 transition-colors"
-            >
-              {metadataOpen ? "Hide metadata" : "Show metadata"}
-              <span>{metadataOpen ? "v" : ">"}</span>
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void handleDelete();
+                }}
+                disabled={killing}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-900/80 text-rose-300 hover:text-rose-100 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+                title={killing ? "Deleting container" : "Delete container"}
+                aria-label={killing ? "Deleting container" : "Delete container"}
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="M19 6l-1 14H6L5 6" />
+                  <path d="M10 10v6" />
+                  <path d="M14 10v6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMetadataOpen((prev) => !prev)}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-300 hover:border-slate-500 hover:text-slate-100 transition-colors"
+              >
+                {metadataOpen ? "Hide metadata" : "Show metadata"}
+                <span>{metadataOpen ? "v" : ">"}</span>
+              </button>
+            </div>
           )}
         </div>
       </header>
