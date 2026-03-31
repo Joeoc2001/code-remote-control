@@ -1,6 +1,50 @@
 const reminderFingerprintBySession = new Map();
 const pipelineWatchInFlightBySession = new Map();
 const watchedHeadBySession = new Map();
+const reviewTeamExecutedBySession = new Set();
+
+const REVIEW_SPECIALISMS = [
+  {
+    name: "Logic Errors",
+    focus: "Reason through each piece of business logic and verify behavior matches intent.",
+  },
+  {
+    name: "Documentation",
+    focus: "Reject superfluous comments, require named constants for magic values, and enforce clear identifiers.",
+  },
+  {
+    name: "Type Safety",
+    focus: "Make invalid state unrepresentable where practical and validate data-structure choices.",
+  },
+  {
+    name: "Best Practices",
+    focus: "Check for community-accepted implementation patterns and anti-patterns.",
+  },
+  {
+    name: "Alternate Approach",
+    focus: "Evaluate whether a better top-level approach exists for the solved problem.",
+  },
+  {
+    name: "Not Invented Here",
+    focus: "Find custom logic that should be replaced by established libraries without over-adding dependencies.",
+  },
+  {
+    name: "Dependency Bloat",
+    focus: "Validate newly added dependencies are necessary and not replaceable by smaller or existing options.",
+  },
+  {
+    name: "Code Re-use",
+    focus: "Detect duplicated logic and missed opportunities to reuse existing helpers.",
+  },
+  {
+    name: "Hacks",
+    focus: "Flag brittle one-off code, test-fudging behavior, or partial implementations likely needing immediate rewrite.",
+  },
+  {
+    name: "Testing",
+    focus: "Check meaningful new logic has tests where appropriate, excluding intentionally fast-iterating UX/taste-only behavior.",
+  },
+];
 
 function tryParseJson(text) {
   try {
@@ -18,6 +62,184 @@ async function sendSessionPrompt(client, sessionID, text, noReply) {
       parts: [{ type: "text", text }],
     },
   });
+}
+
+async function getLatestSessionModel(client, sessionID) {
+  if (typeof client.session?.messages !== "function") {
+    return null;
+  }
+
+  const calls = [
+    () => client.session.messages({ path: { sessionID }, query: { limit: 20 } }),
+    () => client.session.messages({ path: { id: sessionID }, query: { limit: 20 } }),
+  ];
+
+  for (const call of calls) {
+    try {
+      const result = await call();
+      const messages = result?.data || result;
+      if (!Array.isArray(messages)) {
+        continue;
+      }
+
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const info = messages[i]?.info;
+        const model = info?.model;
+        if (model && typeof model.providerID === "string" && typeof model.modelID === "string") {
+          return model;
+        }
+      }
+    } catch {
+    }
+  }
+
+  return null;
+}
+
+async function compactSession(client, sessionID) {
+  if (typeof client.session?.summarize !== "function") {
+    throw new Error("OpenCode SDK client does not support session.summarize");
+  }
+
+  const model = await getLatestSessionModel(client, sessionID);
+  const calls = [
+    () => model
+      ? client.session.summarize({ path: { sessionID }, body: { providerID: model.providerID, modelID: model.modelID, auto: true } })
+      : Promise.reject(new Error("No model available for summarize")),
+    () => model
+      ? client.session.summarize({ path: { id: sessionID }, body: { providerID: model.providerID, modelID: model.modelID, auto: true } })
+      : Promise.reject(new Error("No model available for summarize")),
+    () => client.session.summarize({ path: { sessionID }, body: { auto: true } }),
+    () => client.session.summarize({ path: { id: sessionID }, body: { auto: true } }),
+    () => client.session.summarize({ path: { sessionID } }),
+    () => client.session.summarize({ path: { id: sessionID } }),
+  ];
+
+  let lastError = null;
+  for (const call of calls) {
+    try {
+      await call();
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Failed to compact session");
+}
+
+function buildSpecialismTaskPrompt({ platform, reviewUrl, branch, headSha, specialismName, focus }) {
+  return [
+    `CI passed for ${platform} review ${reviewUrl} on branch ${branch} at commit ${headSha}.`,
+    `You are the '${specialismName}' reviewer.`,
+    focus,
+    "Review only. Do not modify files, do not run formatters, do not commit, do not push, and do not alter PR/MR metadata except review comments.",
+    "If everything is fine for your specialism, do not leave any comment.",
+    "If you find issues, leave concise actionable PR/MR comments tied to relevant lines when possible.",
+  ].join("\n");
+}
+
+async function promptWithParts(client, sessionID, body) {
+  const calls = [
+    () => client.session.prompt({ path: { sessionID }, body }),
+    () => client.session.prompt({ path: { id: sessionID }, body }),
+  ];
+
+  let lastError = null;
+  for (const call of calls) {
+    try {
+      await call();
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Failed to send session prompt");
+}
+
+async function runReviewTeam({ client, sessionID, platform, reviewUrl, branch, headSha }) {
+  const parts = REVIEW_SPECIALISMS.map((specialism) => ({
+    type: "subtask",
+    description: `${specialism.name} review`,
+    agent: "general",
+    prompt: buildSpecialismTaskPrompt({
+      platform,
+      reviewUrl,
+      branch,
+      headSha,
+      specialismName: specialism.name,
+      focus: specialism.focus,
+    }),
+  }));
+
+  await promptWithParts(client, sessionID, { parts });
+}
+
+function extractGitHubPullNumber(reviewUrl) {
+  const match = reviewUrl.match(/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function extractGitLabMrIid(reviewUrl) {
+  const match = reviewUrl.match(/\/merge_requests\/(\d+)/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+async function hasReviewComments({ $, platform, branch, reviewUrl }) {
+  if (platform === "GitHub") {
+    const prNumber = extractGitHubPullNumber(reviewUrl);
+    if (!prNumber) return false;
+
+    const prRaw = await $`gh pr view ${branch} --json comments,reviews`.nothrow().text();
+    const pr = tryParseJson(prRaw);
+    const issueComments = Array.isArray(pr?.comments) ? pr.comments.length : 0;
+    const reviews = Array.isArray(pr?.reviews) ? pr.reviews.length : 0;
+    return issueComments + reviews > 0;
+  }
+
+  if (platform === "GitLab") {
+    const iid = extractGitLabMrIid(reviewUrl);
+    if (!iid) return false;
+
+    const mrRaw = await $`glab mr view ${branch} -F json`.nothrow().text();
+    const mr = tryParseJson(mrRaw);
+    const notes = typeof mr?.user_notes_count === "number" ? mr.user_notes_count : 0;
+    return notes > 0;
+  }
+
+  return false;
+}
+
+async function handleSuccessfulPipeline({ client, $, sessionID, platform, reviewUrl, branch, headSha }) {
+  await compactSession(client, sessionID);
+
+  if (reviewTeamExecutedBySession.has(sessionID)) {
+    return;
+  }
+
+  reviewTeamExecutedBySession.add(sessionID);
+
+  await runReviewTeam({
+    client,
+    sessionID,
+    platform,
+    reviewUrl,
+    branch,
+    headSha,
+  });
+
+  const hasComments = await hasReviewComments({ $, platform, branch, reviewUrl });
+  if (!hasComments) {
+    return;
+  }
+
+  await sendSessionPrompt(
+    client,
+    sessionID,
+    `There are review comments on ${reviewUrl}. Review them now. You may skip duplicate comments or comments you disagree with, then address the rest and close all comments.`,
+    false,
+  );
 }
 
 function getGithubChecksSummary(checks) {
@@ -90,6 +312,18 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
   if (!Array.isArray(finalChecks) || finalChecks.length === 0) return false;
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
+  if (successful) {
+    await handleSuccessfulPipeline({
+      client,
+      $,
+      sessionID,
+      platform: "GitHub",
+      reviewUrl: pr.url,
+      branch,
+      headSha,
+    });
+  }
+
   const finalMessage = successful
     ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}).`
     : `PR checks finished with failures for ${pr.url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
@@ -122,6 +356,18 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   if (!finalPipeline) return false;
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
+  if (successful) {
+    await handleSuccessfulPipeline({
+      client,
+      $,
+      sessionID,
+      platform: "GitLab",
+      reviewUrl: mr.web_url,
+      branch,
+      headSha,
+    });
+  }
+
   const finalMessage = successful
     ? `MR pipeline finished successfully for ${mr.web_url} (status: ${status}).`
     : `MR pipeline finished with status '${status}' for ${mr.web_url}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
