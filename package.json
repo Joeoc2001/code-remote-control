@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "workspaces": [
+    "opencode",
     "packages/shared",
     "packages/container-metadata-types",
     "packages/container-metadata-server",
@@ -13,7 +14,7 @@
     "dev:client": "npm run dev -w packages/client",
     "dev:server": "npm run dev -w packages/server",
     "build": "npm run build -w packages/client && npm run build -w packages/server",
-    "typecheck": "npm run typecheck -w packages/container-metadata-types && npm run typecheck -w packages/container-metadata-server && npm run typecheck -w packages/client && npm run typecheck -w packages/server",
-    "check:opencode-assets": "node --check opencode/plugins/*.js && node --experimental-strip-types --check opencode/tools/*.ts"
+    "typecheck": "npm run typecheck -w opencode && npm run typecheck -w packages/container-metadata-types && npm run typecheck -w packages/container-metadata-server && npm run typecheck -w packages/client && npm run typecheck -w packages/server",
+    "check:opencode-assets": "node --experimental-strip-types --check opencode/plugins/*.ts && node --experimental-strip-types --check opencode/tools/*.ts"
   }
 }

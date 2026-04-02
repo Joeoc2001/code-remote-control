@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 
 const TASK_DESCRIPTION_PATH = "/run/opencode-current-task-description";
 
-export default tool({
+const updateCurrentTaskDescription: ReturnType<typeof tool> = tool({
   description:
     "Persist the user's current task description for container metadata. Call this immediately when a user assigns a new task, then call it again whenever the task changes.",
   args: {
@@ -25,10 +25,8 @@ export default tool({
       mode: 0o644,
     });
 
-    return {
-      ok: true,
-      taskDescription,
-      path: TASK_DESCRIPTION_PATH,
-    };
+    return `Saved task description to ${TASK_DESCRIPTION_PATH}: ${taskDescription}`;
   },
 });
+
+export default updateCurrentTaskDescription;

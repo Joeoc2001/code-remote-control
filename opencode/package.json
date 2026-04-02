@@ -1,0 +1,19 @@
+{
+  "name": "@crc/opencode-assets",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@gitbeaker/rest": "^43.8.0",
+    "@octokit/rest": "^22.0.1",
+    "@opencode-ai/plugin": "^1.3.13",
+    "simple-git": "^3.33.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.0"
+  }
+}
