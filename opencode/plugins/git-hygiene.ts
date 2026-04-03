@@ -53,7 +53,6 @@ const REVIEW_SPECIALISMS = [
 
 type PluginContext = Parameters<Plugin>[0];
 type PluginClient = PluginContext["client"];
-type PluginShell = PluginContext["$"];
 type SessionPromptInput = Parameters<PluginClient["session"]["prompt"]>[0];
 type SessionPromptBody = SessionPromptInput["body"];
 
@@ -83,12 +82,20 @@ type GitLabReviewInfo = {
   iid: number;
 };
 
-function tryParseJson<T>(text: string): T | null {
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
+type GitHubRepoInfo = {
+  owner: string;
+  repo: string;
+};
+
+type GitLabProjectInfo = {
+  host: string;
+  projectPath: string;
+};
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }
 
 async function sendSessionPrompt(client: PluginClient, sessionID: string, text: string, noReply: boolean): Promise<void> {
@@ -281,6 +288,110 @@ function getGitLabClient(host: string): Gitlab | null {
   return new Gitlab({ host, token });
 }
 
+function normalizeRepoPath(pathname: string): string {
+  const trimmed = pathname.replace(/^\/+/, "").replace(/\.git$/i, "");
+  return trimmed.replace(/\/+$/, "");
+}
+
+function parseRemoteUrl(remoteUrl: string): { host: string; repoPath: string } | null {
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("git@")) {
+    const match = trimmed.match(/^git@([^:]+):(.+)$/);
+    if (!match) {
+      return null;
+    }
+
+    const host = match[1].toLowerCase();
+    const repoPath = normalizeRepoPath(match[2]);
+    if (!repoPath) {
+      return null;
+    }
+
+    return { host, repoPath };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  const host = parsed.host.toLowerCase();
+  const repoPath = normalizeRepoPath(parsed.pathname);
+  if (!repoPath) {
+    return null;
+  }
+
+  return { host, repoPath };
+}
+
+async function getRemoteUrls(): Promise<string[]> {
+  const git = simpleGit();
+  const insideWorktree = await git.checkIsRepo();
+  if (!insideWorktree) {
+    return [];
+  }
+
+  const remotes = await git.getRemotes(true);
+  const urls = remotes
+    .sort((a, b) => {
+      if (a.name === "origin" && b.name !== "origin") {
+        return -1;
+      }
+      if (a.name !== "origin" && b.name === "origin") {
+        return 1;
+      }
+      return 0;
+    })
+    .flatMap((remote) => {
+      const refs = remote.refs ?? {};
+      return [refs.push, refs.fetch].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    });
+
+  return Array.from(new Set(urls));
+}
+
+async function getGitHubRepoInfo(): Promise<GitHubRepoInfo | null> {
+  const remoteUrls = await getRemoteUrls();
+  for (const remoteUrl of remoteUrls) {
+    const parsed = parseRemoteUrl(remoteUrl);
+    if (!parsed || parsed.host !== "github.com") {
+      continue;
+    }
+
+    const parts = parsed.repoPath.split("/").filter(Boolean);
+    if (parts.length !== 2) {
+      continue;
+    }
+
+    return { owner: parts[0], repo: parts[1] };
+  }
+
+  return null;
+}
+
+async function getGitLabProjectInfo(): Promise<GitLabProjectInfo | null> {
+  const remoteUrls = await getRemoteUrls();
+  for (const remoteUrl of remoteUrls) {
+    const parsed = parseRemoteUrl(remoteUrl);
+    if (!parsed || parsed.host === "github.com") {
+      continue;
+    }
+
+    return {
+      host: `https://${parsed.host}`,
+      projectPath: parsed.repoPath,
+    };
+  }
+
+  return null;
+}
+
 async function hasReviewComments({ platform, reviewUrl }: { platform: "GitHub" | "GitLab"; reviewUrl: string }): Promise<boolean> {
   if (platform === "GitHub") {
     const info = extractGitHubReviewInfo(reviewUrl);
@@ -397,82 +508,124 @@ function getGitLabPipelineSummary(pipeline: { status?: string } | null): { statu
   return { status, successful };
 }
 
-function pickGitLabPipeline(payload: unknown): { status: string; sha?: string } | null {
-  if (!payload) {
-    return null;
-  }
-
-  if (Array.isArray(payload)) {
-    return payload.find((item): item is { status: string; sha?: string } => {
-      return typeof item === "object" && item !== null && typeof (item as { status?: unknown }).status === "string";
-    }) ?? null;
-  }
-
-  if (typeof payload !== "object") {
-    return null;
-  }
-
-  const candidate = payload as {
-    status?: unknown;
-    pipelines?: unknown;
-    pipeline?: unknown;
-  };
-
-  if (typeof candidate.status === "string") {
-    return candidate as { status: string; sha?: string };
-  }
-
-  if (Array.isArray(candidate.pipelines)) {
-    return candidate.pipelines.find((item): item is { status: string; sha?: string } => {
-      return typeof item === "object" && item !== null && typeof (item as { status?: unknown }).status === "string";
-    }) ?? null;
-  }
-
-  if (typeof candidate.pipeline === "object" && candidate.pipeline !== null && typeof (candidate.pipeline as { status?: unknown }).status === "string") {
-    return candidate.pipeline as { status: string; sha?: string };
-  }
-
-  return null;
-}
-
 async function maybeWatchGithubPipeline({
   client,
-  $,
   sessionID,
   branch,
   headSha,
 }: {
   client: PluginClient;
-  $: PluginShell;
   sessionID: string;
   branch: string;
   headSha: string;
 }): Promise<boolean> {
-  const prRaw = await $`gh pr view ${branch} --json number,url,title,state`.nothrow().text();
-  const pr = tryParseJson<{ url: string; state: string }>(prRaw);
-  if (!pr || pr.state !== "OPEN") {
+  const github = getGitHubClient();
+  const repoInfo = await getGitHubRepoInfo();
+  if (!github || !repoInfo) {
     return false;
   }
 
-  const checksRaw = await $`gh pr checks ${branch} --json bucket,name,state,link`.nothrow().text();
-  const checks = tryParseJson<Array<{ bucket?: string }>>(checksRaw);
-  if (!Array.isArray(checks) || checks.length === 0) {
+  let pulls = await github.pulls.list({
+    owner: repoInfo.owner,
+    repo: repoInfo.repo,
+    state: "open",
+    head: `${repoInfo.owner}:${branch}`,
+    per_page: 20,
+  });
+
+  if (pulls.data.length === 0) {
+    pulls = await github.pulls.list({
+      owner: repoInfo.owner,
+      repo: repoInfo.repo,
+      state: "open",
+      per_page: 100,
+    });
+  }
+
+  const pr = pulls.data.find((pull) => pull.state === "open" && pull.head?.ref === branch);
+  if (!pr?.html_url) {
+    return false;
+  }
+
+  const toBucket = (state: string, conclusion?: string): string => {
+    if (state !== "completed") {
+      return "pending";
+    }
+    if (conclusion === "skipped") {
+      return "skipping";
+    }
+    if (conclusion === "cancelled") {
+      return "cancel";
+    }
+    if (conclusion === "success" || conclusion === "neutral") {
+      return "pass";
+    }
+    return "fail";
+  };
+
+  const toStatusBucket = (state: string): string => {
+    if (state === "pending") {
+      return "pending";
+    }
+    if (state === "success") {
+      return "pass";
+    }
+    return "fail";
+  };
+
+  const loadChecks = async (): Promise<Array<{ bucket?: string }>> => {
+    const [checkRuns, statuses] = await Promise.all([
+      github.paginate(github.checks.listForRef, {
+        owner: repoInfo.owner,
+        repo: repoInfo.repo,
+        ref: headSha,
+        per_page: 100,
+      }),
+      github.paginate(github.repos.listCommitStatusesForRef, {
+        owner: repoInfo.owner,
+        repo: repoInfo.repo,
+        ref: headSha,
+        per_page: 100,
+      }),
+    ]);
+
+    const checkBuckets = checkRuns.map((checkRun) => ({
+      bucket: toBucket(checkRun.status, checkRun.conclusion ?? undefined),
+    }));
+
+    const statusBuckets = statuses.map((status) => ({
+      bucket: toStatusBucket(status.state),
+    }));
+
+    return [...checkBuckets, ...statusBuckets];
+  };
+
+  const checks = await loadChecks();
+  if (checks.length === 0) {
     return false;
   }
 
   await sendSessionPrompt(
     client,
     sessionID,
-    `All local changes are committed and pushed. Waiting for PR checks to finish for ${pr.url}.`,
+    `All local changes are committed and pushed. Waiting for PR checks to finish for ${pr.html_url}.`,
     true,
   );
 
-  await $`gh pr checks ${branch} --watch --interval 10`.nothrow();
+  let finalChecks = checks;
+  while (true) {
+    const currentChecks = await loadChecks();
+    if (currentChecks.length === 0) {
+      return false;
+    }
 
-  const finalChecksRaw = await $`gh pr checks ${branch} --json bucket,name,state,link`.nothrow().text();
-  const finalChecks = tryParseJson<Array<{ bucket?: string }>>(finalChecksRaw);
-  if (!Array.isArray(finalChecks) || finalChecks.length === 0) {
-    return false;
+    finalChecks = currentChecks;
+    const { summary } = getGithubChecksSummary(currentChecks);
+    if (summary.pending === 0) {
+      break;
+    }
+
+    await sleep(10_000);
   }
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
@@ -481,42 +634,137 @@ async function maybeWatchGithubPipeline({
       client,
       sessionID,
       platform: "GitHub",
-      reviewUrl: pr.url,
+      reviewUrl: pr.html_url,
       branch,
       headSha,
     });
   }
 
   const finalMessage = successful
-    ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}).`
-    : `PR checks finished with failures for ${pr.url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
+    ? `PR checks finished successfully for ${pr.html_url} (pass: ${summary.pass}, skipped: ${summary.skipping}).`
+    : `PR checks finished with failures for ${pr.html_url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
 
   await sendSessionPrompt(client, sessionID, finalMessage, successful);
   watchedHeadBySession.set(sessionID, headSha);
   return true;
 }
 
+function isGitLabPipelineRunning(status: string): boolean {
+  return ["created", "waiting_for_resource", "preparing", "pending", "running", "manual", "scheduled"].includes(status);
+}
+
+async function findOpenGitLabMergeRequest({
+  gitlab,
+  projectPath,
+  branch,
+}: {
+  gitlab: Gitlab;
+  projectPath: string;
+  branch: string;
+}): Promise<{ webUrl: string; iid: number } | null> {
+  const all = await gitlab.MergeRequests.all({
+    projectId: projectPath,
+    state: "opened",
+    sourceBranch: branch,
+    perPage: 20,
+  }) as unknown;
+
+  if (!Array.isArray(all)) {
+    return null;
+  }
+
+  for (const item of all) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+
+    const mergeRequest = item as { web_url?: unknown; iid?: unknown; source_branch?: unknown; state?: unknown };
+    if (mergeRequest.state !== "opened" || mergeRequest.source_branch !== branch) {
+      continue;
+    }
+
+    if (typeof mergeRequest.web_url === "string" && typeof mergeRequest.iid === "number") {
+      return {
+        webUrl: mergeRequest.web_url,
+        iid: mergeRequest.iid,
+      };
+    }
+  }
+
+  return null;
+}
+
+async function getLatestGitLabPipeline({
+  gitlab,
+  projectPath,
+  branch,
+}: {
+  gitlab: Gitlab;
+  projectPath: string;
+  branch: string;
+}): Promise<{ status: string; sha?: string } | null> {
+  const pipelines = await gitlab.Pipelines.all(projectPath, {
+    ref: branch,
+    orderBy: "id",
+    sort: "desc",
+    perPage: 1,
+  }) as unknown;
+
+  if (!Array.isArray(pipelines) || pipelines.length === 0) {
+    return null;
+  }
+
+  const latest = pipelines[0];
+  if (typeof latest !== "object" || latest === null) {
+    return null;
+  }
+
+  const pipeline = latest as { status?: unknown; sha?: unknown };
+  if (typeof pipeline.status !== "string") {
+    return null;
+  }
+
+  return {
+    status: pipeline.status,
+    sha: typeof pipeline.sha === "string" ? pipeline.sha : undefined,
+  };
+}
+
 async function maybeWatchGitLabPipeline({
   client,
-  $,
   sessionID,
   branch,
   headSha,
 }: {
   client: PluginClient;
-  $: PluginShell;
   sessionID: string;
   branch: string;
   headSha: string;
 }): Promise<boolean> {
-  const mrRaw = await $`glab mr view ${branch} -F json`.nothrow().text();
-  const mr = tryParseJson<{ web_url?: string }>(mrRaw);
-  if (!mr || !mr.web_url) {
+  const projectInfo = await getGitLabProjectInfo();
+  if (!projectInfo) {
     return false;
   }
 
-  const pipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
-  const pipeline = pickGitLabPipeline(tryParseJson<unknown>(pipelineRaw));
+  const gitlab = getGitLabClient(projectInfo.host);
+  if (!gitlab) {
+    return false;
+  }
+
+  const mr = await findOpenGitLabMergeRequest({
+    gitlab,
+    projectPath: projectInfo.projectPath,
+    branch,
+  });
+  if (!mr) {
+    return false;
+  }
+
+  const pipeline = await getLatestGitLabPipeline({
+    gitlab,
+    projectPath: projectInfo.projectPath,
+    branch,
+  });
   if (!pipeline || pipeline.sha !== headSha) {
     return false;
   }
@@ -524,16 +772,32 @@ async function maybeWatchGitLabPipeline({
   await sendSessionPrompt(
     client,
     sessionID,
-    `All local changes are committed and pushed. Waiting for MR pipeline to finish for ${mr.web_url}.`,
+    `All local changes are committed and pushed. Waiting for MR pipeline to finish for ${mr.webUrl}.`,
     true,
   );
 
-  await $`glab ci status --branch ${branch} --live`.nothrow();
+  let finalPipeline = pipeline;
+  while (true) {
+    const currentPipeline = await getLatestGitLabPipeline({
+      gitlab,
+      projectPath: projectInfo.projectPath,
+      branch,
+    });
 
-  const finalPipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
-  const finalPipeline = pickGitLabPipeline(tryParseJson<unknown>(finalPipelineRaw));
-  if (!finalPipeline) {
-    return false;
+    if (!currentPipeline) {
+      return false;
+    }
+
+    if (currentPipeline.sha && currentPipeline.sha !== headSha) {
+      return false;
+    }
+
+    finalPipeline = currentPipeline;
+    if (!isGitLabPipelineRunning(currentPipeline.status)) {
+      break;
+    }
+
+    await sleep(10_000);
   }
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
@@ -542,15 +806,15 @@ async function maybeWatchGitLabPipeline({
       client,
       sessionID,
       platform: "GitLab",
-      reviewUrl: mr.web_url,
+      reviewUrl: mr.webUrl,
       branch,
       headSha,
     });
   }
 
   const finalMessage = successful
-    ? `MR pipeline finished successfully for ${mr.web_url} (status: ${status}).`
-    : `MR pipeline finished with status '${status}' for ${mr.web_url}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
+    ? `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}).`
+    : `MR pipeline finished with status '${status}' for ${mr.webUrl}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
 
   await sendSessionPrompt(client, sessionID, finalMessage, successful);
   watchedHeadBySession.set(sessionID, headSha);
@@ -559,13 +823,11 @@ async function maybeWatchGitLabPipeline({
 
 async function watchAssociatedPipeline({
   client,
-  $,
   sessionID,
   branch,
   headSha,
 }: {
   client: PluginClient;
-  $: PluginShell;
   sessionID: string;
   branch: string;
   headSha: string;
@@ -579,12 +841,12 @@ async function watchAssociatedPipeline({
     return;
   }
 
-  const githubWatched = await maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha });
+  const githubWatched = await maybeWatchGithubPipeline({ client, sessionID, branch, headSha });
   if (githubWatched) {
     return;
   }
 
-  await maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha });
+  await maybeWatchGitLabPipeline({ client, sessionID, branch, headSha });
 }
 
 async function getGitState(): Promise<GitState | null> {
@@ -601,11 +863,12 @@ async function getGitState(): Promise<GitState | null> {
 
   let hasUnpushedCommits = aheadCount > 0;
   if (!upstream) {
-    const unpushedAnywhere = await git.raw(["log", "--branches", "--not", "--remotes", "--max-count=1", "--format=%H"]);
-    hasUnpushedCommits = unpushedAnywhere.trim().length > 0;
+    const unpushedAnywhere = await git.log(["--branches", "--not", "--remotes", "--max-count=1"]);
+    hasUnpushedCommits = unpushedAnywhere.total > 0;
   }
 
-  const branch = status.current || (await git.raw(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+  const branchSummary = await git.branchLocal();
+  const branch = status.current || branchSummary.current || "HEAD";
   const headSha = (await git.revparse(["HEAD"])).trim();
 
   return {
@@ -618,7 +881,7 @@ async function getGitState(): Promise<GitState | null> {
   };
 }
 
-export const GitHygienePlugin: Plugin = async ({ client, $ }) => {
+export const GitHygienePlugin: Plugin = async ({ client }) => {
   return {
     event: async ({ event }) => {
       if (event.type !== "session.idle") {
@@ -641,7 +904,6 @@ export const GitHygienePlugin: Plugin = async ({ client, $ }) => {
         if (!pipelineWatchInFlightBySession.has(sessionID)) {
           const watchPromise = watchAssociatedPipeline({
             client,
-            $,
             sessionID,
             branch: gitState.branch,
             headSha: gitState.headSha,
