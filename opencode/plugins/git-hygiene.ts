@@ -1,6 +1,6 @@
 import { Gitlab } from "@gitbeaker/rest";
 import { Octokit } from "@octokit/rest";
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Plugin, PluginModule } from "@opencode-ai/plugin";
 import simpleGit from "simple-git";
 
 const reminderFingerprintBySession = new Map<string, string>();
@@ -943,3 +943,10 @@ export const GitHygienePlugin: Plugin = async ({ client }) => {
     },
   };
 };
+
+const pluginModule: PluginModule = {
+  id: "git-hygiene",
+  server: GitHygienePlugin,
+};
+
+export default pluginModule;
