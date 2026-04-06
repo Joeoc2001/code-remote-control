@@ -24,6 +24,9 @@ export const router = Router();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const CODE_STATUS_CACHE_TTL_MS = 30_000;
+const codeStatusCache = new Map<string, { data: ContainerCodeStatus; expiresAt: number }>();
+
 const REPO_NAME_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
 
 function getBuildId(): string {
@@ -198,6 +201,12 @@ router.get("/api/containers/:id/code-status", async (req, res) => {
       return;
     }
 
+    const cached = codeStatusCache.get(id);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.json(cached.data);
+      return;
+    }
+
     const response = await fetch(
       `http://${container.name}:${CONTAINER_METADATA_INTERNAL_PORT}/api/code-status`,
       { signal: AbortSignal.timeout(3000) },
@@ -209,6 +218,7 @@ router.get("/api/containers/:id/code-status", async (req, res) => {
     }
 
     const payload = await response.json() as ContainerCodeStatus;
+    codeStatusCache.set(id, { data: payload, expiresAt: Date.now() + CODE_STATUS_CACHE_TTL_MS });
     res.json(payload);
   } catch (err) {
     console.error("Error fetching container code status:", err);
