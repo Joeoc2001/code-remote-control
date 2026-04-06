@@ -846,7 +846,12 @@ async function watchAssociatedPipeline({
     return;
   }
 
-  await maybeWatchGitLabPipeline({ client, sessionID, branch, headSha });
+  const gitlabWatched = await maybeWatchGitLabPipeline({ client, sessionID, branch, headSha });
+  if (gitlabWatched) {
+    return;
+  }
+
+  await sendSessionPrompt(client, sessionID, "Failed to watch MR state", true);
 }
 
 async function getGitState(): Promise<GitState | null> {
@@ -895,6 +900,7 @@ export const GitHygienePlugin: Plugin = async ({ client }) => {
 
       const gitState = await getGitState();
       if (!gitState) {
+        await sendSessionPrompt(client, sessionID, "Failed to grab git state", true);
         return;
       }
 
@@ -933,13 +939,7 @@ export const GitHygienePlugin: Plugin = async ({ client }) => {
           ? "You have uncommitted local changes; commit your outstanding workspace changes, then push to remote and open a PR or MR."
           : "You have unpushed local commits; push your local commits to remote, then open a PR or MR.";
 
-      await client.session.prompt({
-        path: { id: sessionID },
-        body: {
-          noReply: false,
-          parts: [{ type: "text", text: reminder }],
-        },
-      });
+      await sendSessionPrompt(client, sessionID, reminder, false);
     },
   };
 };
