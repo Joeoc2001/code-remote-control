@@ -98,6 +98,10 @@ function sleep(milliseconds: number): Promise<void> {
   });
 }
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function sendSessionPrompt(client: PluginClient, sessionID: string, text: string, noReply: boolean): Promise<void> {
   await client.session.prompt({
     path: { id: sessionID },
@@ -132,7 +136,10 @@ async function getLatestSessionModel(client: PluginClient, sessionID: string): P
           return { providerID: model.providerID, modelID: model.modelID };
         }
       }
-    } catch {
+    } catch (error: unknown) {
+      console.warn(
+        `[git-hygiene] failed to load session messages for ${sessionID}: ${formatErrorMessage(error)}`,
+      );
     }
   }
 
@@ -238,7 +245,8 @@ function extractGitLabReviewInfo(reviewUrl: string): GitLabReviewInfo | null {
   let parsed: URL;
   try {
     parsed = new URL(reviewUrl);
-  } catch {
+  } catch (error: unknown) {
+    console.warn(`[git-hygiene] invalid GitLab review URL '${reviewUrl}': ${formatErrorMessage(error)}`);
     return null;
   }
 
@@ -317,7 +325,8 @@ function parseRemoteUrl(remoteUrl: string): { host: string; repoPath: string } |
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
-  } catch {
+  } catch (error: unknown) {
+    console.warn(`[git-hygiene] invalid remote URL '${remoteUrl}': ${formatErrorMessage(error)}`);
     return null;
   }
 
@@ -914,7 +923,15 @@ export const GitHygienePlugin: Plugin = async ({ client }) => {
             branch: gitState.branch,
             headSha: gitState.headSha,
           })
-            .catch(() => {
+            .catch(async (error: unknown) => {
+              const message = formatErrorMessage(error);
+              console.error(`[git-hygiene] pipeline watch failed for session ${sessionID}: ${message}`);
+              await sendSessionPrompt(
+                client,
+                sessionID,
+                `Failed to watch PR/MR pipeline state: ${message}`,
+                true,
+              );
             })
             .finally(() => {
               pipelineWatchInFlightBySession.delete(sessionID);

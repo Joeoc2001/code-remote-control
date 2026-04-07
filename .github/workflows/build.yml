@@ -34,8 +34,10 @@ jobs:
           echo "APP_IMAGE=ghcr.io/${REPO}" >> $GITHUB_ENV
           echo "ENV_IMAGE=ghcr.io/${REPO}-env" >> $GITHUB_ENV
 
-      - name: Get latest opencode-ai version
-        run: echo "OPENCODE_VERSION=$(npm view opencode-ai version)" >> $GITHUB_ENV
+      - name: Resolve opencode-ai version from plugin package
+        run: |
+          OPENCODE_VERSION=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('opencode/package.json', 'utf8')); const version = pkg.dependencies?.['@opencode-ai/plugin']; if (typeof version !== 'string' || version.trim().length === 0) { throw new Error('Missing @opencode-ai/plugin dependency version'); } process.stdout.write(version.replace(/^[^0-9]*/, ''));")
+          echo "OPENCODE_VERSION=${OPENCODE_VERSION}" >> $GITHUB_ENV
 
       - name: Build and push environment image
         uses: docker/build-push-action@v6
