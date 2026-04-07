@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { router } from "./routes.js";
-import { runHealthChecks, cleanupAll, pullLatestImage, buildCustomImage } from "./docker.js";
+import { runHealthChecks, cleanupAll, pullLatestImage } from "./docker.js";
 import { PORT, validateEnvironment, loadConfigurations } from "./config.js";
 import { proxyMiddleware, wsUpgradeHandler } from "./proxy.js";
 
@@ -38,11 +38,7 @@ if (existsSync(clientDistPath) && indexHtml) {
   });
 }
 
-loadConfigurations().then((config) =>
-  config.env_dockerfile
-    ? buildCustomImage(config.env_dockerfile)
-    : pullLatestImage()
-).catch((err) => {
+loadConfigurations().then(() => pullLatestImage()).catch((err) => {
   console.error("Failed to set up env image:", err);
 });
 

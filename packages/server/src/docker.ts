@@ -2,7 +2,7 @@ import Dockerode from "dockerode";
 import crypto from "node:crypto";
 import { PassThrough } from "node:stream";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, basename, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import tar from "tar-stream";
 import type {
   ManagedContainer,
@@ -501,29 +501,6 @@ export async function pullLatestImage(): Promise<void> {
         reject(err);
       } else {
         console.log("Image pull complete");
-        resolve();
-      }
-    });
-  });
-}
-
-export async function buildCustomImage(dockerfilePath: string): Promise<void> {
-  console.log(`Building image from: ${dockerfilePath}`);
-
-  const contextDir = dirname(dockerfilePath);
-  const dockerfileName = basename(dockerfilePath);
-  const stream = await docker.buildImage(
-    { context: contextDir, src: readdirSync(contextDir) },
-    { t: CRC_ENV_IMAGE, pull: true, dockerfile: dockerfileName },
-  );
-
-  await new Promise<void>((resolve, reject) => {
-    docker.modem.followProgress(stream, (err: Error | null) => {
-      if (err) {
-        console.error("Failed to build image:", err);
-        reject(err);
-      } else {
-        console.log("Image build complete");
         resolve();
       }
     });
