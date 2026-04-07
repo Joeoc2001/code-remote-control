@@ -1,7 +1,7 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
 import { PassThrough } from "node:stream";
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import tar from "tar-stream";
 import type {
