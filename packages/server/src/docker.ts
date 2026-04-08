@@ -1,8 +1,6 @@
 import Dockerode from "dockerode";
 import crypto from "node:crypto";
 import { PassThrough } from "node:stream";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
 import tar from "tar-stream";
 import type {
   ManagedContainer,
@@ -25,10 +23,6 @@ const LABEL_REPO_NAME = "crc.repo-name";
 const LABEL_SUBDOMAIN = "crc.subdomain";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const OPENCODE_CONFIG_RELATIVE_PATH = "root/.config/opencode/opencode.json";
-const OPENCODE_GLOBAL_TOOLS_RELATIVE_PATH = "root/.config/opencode/tools";
-const OPENCODE_GLOBAL_PLUGINS_RELATIVE_PATH = "root/.config/opencode/plugins";
-const CUSTOM_TOOLS_SOURCE_PATH = "/app/opencode/tools";
-const CUSTOM_PLUGINS_SOURCE_PATH = "/app/opencode/plugins";
 
 type OpenCodeConfig = Record<string, unknown>;
 
@@ -101,50 +95,6 @@ function buildOpenCodeConfig(config: OpenCodeConfig): OpenCodeConfig {
 function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
   const pack = tar.pack();
   pack.entry({ name: filePath, mode }, content);
-  pack.finalize();
-
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    pack.on("data", (chunk: Buffer) => chunks.push(chunk));
-    pack.on("end", () => resolve(Buffer.concat(chunks)));
-    pack.on("error", reject);
-  });
-}
-
-function assertDirectory(path: string): void {
-  const stats = statSync(path, { throwIfNoEntry: false });
-  if (!stats || !stats.isDirectory()) {
-    throw new Error(`Required directory is missing: ${path}`);
-  }
-}
-
-function createDirectoryTar(sourcePath: string, targetRootPath: string): Promise<Buffer> {
-  assertDirectory(sourcePath);
-  const pack = tar.pack();
-  const files = readdirSync(sourcePath, { recursive: true, withFileTypes: true });
-
-  for (const entry of files) {
-    const absolutePath = join(entry.parentPath, entry.name);
-    const relativePath = relative(sourcePath, absolutePath).replaceAll("\\", "/");
-
-    if (entry.isSymbolicLink()) {
-      throw new Error(`Symbolic links are not supported in custom opencode assets: ${absolutePath}`);
-    }
-
-    if (entry.isDirectory()) {
-      continue;
-    }
-
-    if (!entry.isFile()) {
-      throw new Error(`Unsupported filesystem entry in custom opencode assets: ${absolutePath}`);
-    }
-
-    const targetPath = `${targetRootPath}/${relativePath}`;
-    const mode = statSync(absolutePath).mode & 0o777;
-    const content = readFileSync(absolutePath);
-    pack.entry({ name: targetPath, mode }, content);
-  }
-
   pack.finalize();
 
   return new Promise((resolve, reject) => {
@@ -316,12 +266,6 @@ export async function createContainer(
   const configJson = Buffer.from(JSON.stringify(openCodeConfig));
   const configTar = await createSingleFileTar(OPENCODE_CONFIG_RELATIVE_PATH, configJson, 0o444);
   await container.putArchive(configTar, { path: "/" });
-
-  const toolsTar = await createDirectoryTar(CUSTOM_TOOLS_SOURCE_PATH, OPENCODE_GLOBAL_TOOLS_RELATIVE_PATH);
-  await container.putArchive(toolsTar, { path: "/" });
-
-  const pluginsTar = await createDirectoryTar(CUSTOM_PLUGINS_SOURCE_PATH, OPENCODE_GLOBAL_PLUGINS_RELATIVE_PATH);
-  await container.putArchive(pluginsTar, { path: "/" });
 
   for (const networkName of appConfig.docker_networks || []) {
     const network = docker.getNetwork(networkName);
