@@ -224,6 +224,8 @@ export async function createContainer(
   repoFullName: string,
   repoSource: RepoSource = "github"
 ): Promise<ManagedContainer> {
+  await pullLatestImage();
+
   const gitlabUrl = appConfig.gitlab_url || "https://gitlab.com";
 
   const repoShortName = slugify(repoFullName.split("/").pop() || "repo");
