@@ -25,14 +25,10 @@ export default function ContainerView() {
     if (!confirm(`Kill and remove container "${fallbackName}"?`)) return;
 
     setKilling(true);
-    try {
-      await deleteContainer(container.id);
-      navigate("/", { replace: true });
-    } catch (err) {
+    navigate("/", { replace: true });
+    void deleteContainer(container.id).catch((err) => {
       console.error("Failed to kill container:", err);
-    } finally {
-      setKilling(false);
-    }
+    });
   };
 
   useEffect(() => {
