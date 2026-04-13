@@ -102,6 +102,57 @@ function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+type PluginLogLevel = "debug" | "info" | "warn" | "error";
+
+async function logPlugin(
+  client: PluginClient,
+  level: PluginLogLevel,
+  message: string,
+  extra?: Record<string, unknown>,
+): Promise<void> {
+  const appClient = client as unknown as {
+    app?: {
+      log?: (input: {
+        body: {
+          service: string;
+          level: PluginLogLevel;
+          message: string;
+          extra?: Record<string, unknown>;
+        };
+      }) => Promise<unknown>;
+    };
+  };
+
+  try {
+    if (typeof appClient.app?.log === "function") {
+      await appClient.app.log({
+        body: {
+          service: "git-hygiene",
+          level,
+          message,
+          extra,
+        },
+      });
+      return;
+    }
+  } catch (error: unknown) {
+    console.error(`[git-hygiene] failed to write app log: ${formatErrorMessage(error)}`);
+  }
+
+  const line = extra ? `${message} ${JSON.stringify(extra)}` : message;
+  if (level === "error") {
+    console.error(`[git-hygiene] ${line}`);
+    return;
+  }
+
+  if (level === "warn") {
+    console.warn(`[git-hygiene] ${line}`);
+    return;
+  }
+
+  console.log(`[git-hygiene] ${line}`);
+}
+
 async function sendSessionPrompt(client: PluginClient, sessionID: string, text: string, noReply: boolean): Promise<void> {
   await client.session.prompt({
     path: { id: sessionID },
@@ -907,56 +958,71 @@ export const GitHygienePlugin: Plugin = async ({ client }) => {
         return;
       }
 
-      const gitState = await getGitState();
-      if (!gitState) {
-        await sendSessionPrompt(client, sessionID, "Failed to grab git state", true);
-        return;
-      }
+      await logPlugin(client, "debug", "session.idle hook triggered", { sessionID });
 
-      if (!gitState.hasUncommittedChanges && !gitState.hasUnpushedCommits) {
-        reminderFingerprintBySession.delete(sessionID);
-
-        if (!pipelineWatchInFlightBySession.has(sessionID)) {
-          const watchPromise = watchAssociatedPipeline({
-            client,
-            sessionID,
-            branch: gitState.branch,
-            headSha: gitState.headSha,
-          })
-            .catch(async (error: unknown) => {
-              const message = formatErrorMessage(error);
-              console.error(`[git-hygiene] pipeline watch failed for session ${sessionID}: ${message}`);
-              await sendSessionPrompt(
-                client,
-                sessionID,
-                `Failed to watch PR/MR pipeline state: ${message}`,
-                true,
-              );
-            })
-            .finally(() => {
-              pipelineWatchInFlightBySession.delete(sessionID);
-            });
-
-          pipelineWatchInFlightBySession.set(sessionID, watchPromise);
+      try {
+        const gitState = await getGitState();
+        if (!gitState) {
+          await sendSessionPrompt(client, sessionID, "Failed to grab git state", true);
+          return;
         }
 
-        return;
+        if (!gitState.hasUncommittedChanges && !gitState.hasUnpushedCommits) {
+          reminderFingerprintBySession.delete(sessionID);
+
+          if (!pipelineWatchInFlightBySession.has(sessionID)) {
+            const watchPromise = watchAssociatedPipeline({
+              client,
+              sessionID,
+              branch: gitState.branch,
+              headSha: gitState.headSha,
+            })
+              .catch(async (error: unknown) => {
+                const message = formatErrorMessage(error);
+                await logPlugin(client, "error", "pipeline watch failed", {
+                  sessionID,
+                  message,
+                });
+                await sendSessionPrompt(
+                  client,
+                  sessionID,
+                  `Failed to watch PR/MR pipeline state: ${message}`,
+                  true,
+                );
+              })
+              .finally(() => {
+                pipelineWatchInFlightBySession.delete(sessionID);
+              });
+
+            pipelineWatchInFlightBySession.set(sessionID, watchPromise);
+          }
+
+          return;
+        }
+
+        const fingerprint = `${gitState.hasUncommittedChanges}:${gitState.hasUnpushedCommits}:${gitState.upstream}:${gitState.aheadCount}`;
+        if (reminderFingerprintBySession.get(sessionID) === fingerprint) {
+          return;
+        }
+
+        reminderFingerprintBySession.set(sessionID, fingerprint);
+
+        const reminder = gitState.hasUncommittedChanges && gitState.hasUnpushedCommits
+          ? "You have uncommitted and unpushed local changes; commit your outstanding workspace changes, push your local commits to remote, then open a PR or MR."
+          : gitState.hasUncommittedChanges
+            ? "You have uncommitted local changes; commit your outstanding workspace changes, then push to remote and open a PR or MR."
+            : "You have unpushed local commits; push your local commits to remote, then open a PR or MR.";
+
+        await sendSessionPrompt(client, sessionID, reminder, false);
+      } catch (error: unknown) {
+        const message = formatErrorMessage(error);
+        await logPlugin(client, "error", "session.idle hook failed", {
+          sessionID,
+          message,
+        });
+        await sendSessionPrompt(client, sessionID, `git-hygiene hook failed: ${message}`, true);
+        throw error;
       }
-
-      const fingerprint = `${gitState.hasUncommittedChanges}:${gitState.hasUnpushedCommits}:${gitState.upstream}:${gitState.aheadCount}`;
-      if (reminderFingerprintBySession.get(sessionID) === fingerprint) {
-        return;
-      }
-
-      reminderFingerprintBySession.set(sessionID, fingerprint);
-
-      const reminder = gitState.hasUncommittedChanges && gitState.hasUnpushedCommits
-        ? "You have uncommitted and unpushed local changes; commit your outstanding workspace changes, push your local commits to remote, then open a PR or MR."
-        : gitState.hasUncommittedChanges
-          ? "You have uncommitted local changes; commit your outstanding workspace changes, then push to remote and open a PR or MR."
-          : "You have unpushed local commits; push your local commits to remote, then open a PR or MR.";
-
-      await sendSessionPrompt(client, sessionID, reminder, false);
     },
   };
 };
