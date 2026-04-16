@@ -1,6 +1,7 @@
 const reminderFingerprintBySession = new Map();
 const pipelineWatchInFlightBySession = new Map();
 const watchedHeadBySession = new Map();
+const messageCounterBySession = new Map();
 
 function tryParseJson(text) {
   try {
@@ -18,6 +19,22 @@ async function sendSessionPrompt(client, sessionID, text, noReply) {
       parts: [{ type: "text", text }],
     },
   });
+}
+
+function getEventSessionID(event) {
+  const properties = event?.properties;
+  if (!properties || typeof properties !== "object") return null;
+  if (typeof properties.sessionID === "string" && properties.sessionID.length > 0) return properties.sessionID;
+  if (typeof properties.sessionId === "string" && properties.sessionId.length > 0) return properties.sessionId;
+  return null;
+}
+
+function getMessageCounter(sessionID) {
+  return messageCounterBySession.get(sessionID) || 0;
+}
+
+function bumpMessageCounter(sessionID) {
+  messageCounterBySession.set(sessionID, getMessageCounter(sessionID) + 1);
 }
 
 function getGithubChecksSummary(checks) {
@@ -83,6 +100,8 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
     true,
   );
 
+  const messageCounterAtWatchStart = getMessageCounter(sessionID);
+
   await $`gh pr checks ${branch} --watch --interval 10`.nothrow();
 
   const finalChecksRaw = await $`gh pr checks ${branch} --json bucket,name,state,link`.nothrow().text();
@@ -90,8 +109,20 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
   if (!Array.isArray(finalChecks) || finalChecks.length === 0) return false;
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
+
+  let compacted = false;
+  if (successful && getMessageCounter(sessionID) === messageCounterAtWatchStart) {
+    await client.session.summarize({
+      path: { id: sessionID },
+      body: {},
+    });
+    compacted = true;
+  }
+
   const finalMessage = successful
-    ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}).`
+    ? compacted
+      ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Session compacted because no new messages were sent while CI was running.`
+      : `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Skipped compaction because new messages were sent while CI was running.`
     : `PR checks finished with failures for ${pr.url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
 
   await sendSessionPrompt(client, sessionID, finalMessage, successful);
@@ -115,6 +146,8 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
     true,
   );
 
+  const messageCounterAtWatchStart = getMessageCounter(sessionID);
+
   await $`glab ci status --branch ${branch} --live`.nothrow();
 
   const finalPipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
@@ -122,8 +155,20 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   if (!finalPipeline) return false;
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
+
+  let compacted = false;
+  if (successful && getMessageCounter(sessionID) === messageCounterAtWatchStart) {
+    await client.session.summarize({
+      path: { id: sessionID },
+      body: {},
+    });
+    compacted = true;
+  }
+
   const finalMessage = successful
-    ? `MR pipeline finished successfully for ${mr.web_url} (status: ${status}).`
+    ? compacted
+      ? `MR pipeline finished successfully for ${mr.web_url} (status: ${status}). Session compacted because no new messages were sent while CI was running.`
+      : `MR pipeline finished successfully for ${mr.web_url} (status: ${status}). Skipped compaction because new messages were sent while CI was running.`
     : `MR pipeline finished with status '${status}' for ${mr.web_url}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
 
   await sendSessionPrompt(client, sessionID, finalMessage, successful);
@@ -180,37 +225,43 @@ async function getGitState($) {
 export const GitHygienePlugin = async ({ client, $ }) => {
   return {
     event: async ({ event }) => {
+      const sessionID = getEventSessionID(event);
+      if (sessionID && event.type.startsWith("message.")) {
+        bumpMessageCounter(sessionID);
+      }
+
       if (event.type !== "session.idle") return;
+      if (!sessionID) return;
 
       const gitState = await getGitState($);
       if (!gitState) return;
 
       if (!gitState.hasUncommittedChanges && !gitState.hasUnpushedCommits) {
-        reminderFingerprintBySession.delete(event.properties.sessionID);
+        reminderFingerprintBySession.delete(sessionID);
 
-        if (!pipelineWatchInFlightBySession.has(event.properties.sessionID)) {
+        if (!pipelineWatchInFlightBySession.has(sessionID)) {
           const watchPromise = watchAssociatedPipeline({
             client,
             $,
-            sessionID: event.properties.sessionID,
+            sessionID,
             branch: gitState.branch,
             headSha: gitState.headSha,
           })
             .catch(() => { })
             .finally(() => {
-              pipelineWatchInFlightBySession.delete(event.properties.sessionID);
+              pipelineWatchInFlightBySession.delete(sessionID);
             });
 
-          pipelineWatchInFlightBySession.set(event.properties.sessionID, watchPromise);
+          pipelineWatchInFlightBySession.set(sessionID, watchPromise);
         }
 
         return;
       }
 
       const fingerprint = `${gitState.hasUncommittedChanges}:${gitState.hasUnpushedCommits}:${gitState.upstream}:${gitState.aheadCount}`;
-      if (reminderFingerprintBySession.get(event.properties.sessionID) === fingerprint) return;
+      if (reminderFingerprintBySession.get(sessionID) === fingerprint) return;
 
-      reminderFingerprintBySession.set(event.properties.sessionID, fingerprint);
+      reminderFingerprintBySession.set(sessionID, fingerprint);
 
       const reminder = gitState.hasUncommittedChanges && gitState.hasUnpushedCommits
         ? "You have uncommitted and unpushed local changes; commit your outstanding workspace changes, push your local commits to remote, then open a PR or MR."
@@ -219,7 +270,7 @@ export const GitHygienePlugin = async ({ client, $ }) => {
           : "You have unpushed local commits; push your local commits to remote, then open a PR or MR.";
 
       await client.session.prompt({
-        path: { id: event.properties.sessionID },
+        path: { id: sessionID },
         body: {
           noReply: false,
           parts: [{ type: "text", text: reminder }],
