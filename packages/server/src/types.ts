@@ -1,5 +1,6 @@
 export type {
   EnvironmentConfig,
+  DockerConfig,
   ConfigFile,
   ContainerHealth,
   ManagedContainer,

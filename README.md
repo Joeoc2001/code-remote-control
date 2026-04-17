@@ -19,12 +19,28 @@ Create your environment configuration file to specify the modes a container can 
         "email": "joeoc2625.ai@gmail.com"
     },
     "gitlab_url": "https://gitlab.example.com",
-    "docker_networks": ["runner-network"],
     "configurations": [
         {
             "name": "gpt-5.3-codex",
             "env": {
                 "OPENAI_API_KEY": "sk-..."
+            },
+            "docker": {
+                "network_mode": "bridge",
+                "networks": ["runner-network"],
+                "shm_size": 2147483648,
+                "nano_cpus": 4000000000,
+                "memory": 8589934592,
+                "binds": [
+                    "/srv/cache/opencode:/workspace/.cache"
+                ],
+                "device_requests": [
+                    {
+                        "driver": "nvidia",
+                        "count": -1,
+                        "capabilities": [["gpu"]]
+                    }
+                ]
             },
             "opencode": {
                 "$schema": "https://opencode.ai/config.json",
@@ -49,6 +65,10 @@ Create your environment configuration file to specify the modes a container can 
     ]
 }
 ```
+
+The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
+
+For GPU passthrough, set `device_requests` with NVIDIA capabilities as shown above.
 
 Launch web server docker container:
 ```
