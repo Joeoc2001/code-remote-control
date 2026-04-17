@@ -53,7 +53,7 @@ function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConf
     DnsSearch: dockerConfig?.dns_search,
     Devices: dockerConfig?.devices?.map((device: DockerDevice) => ({
       PathOnHost: device.path_on_host,
-      PathInContainer: device.path_in_container,
+      PathInContainer: device.path_in_container ?? device.path_on_host,
       CgroupPermissions: device.cgroup_permissions,
     })),
     DeviceCgroupRules: dockerConfig?.device_cgroup_rules,

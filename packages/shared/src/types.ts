@@ -7,7 +7,7 @@ export const gitConfigSchema = z.object({
 
 const dockerDeviceSchema = z.object({
   path_on_host: z.string().min(1),
-  path_in_container: z.string().min(1),
+  path_in_container: z.string().min(1).optional(),
   cgroup_permissions: z.string().optional(),
 });
 
