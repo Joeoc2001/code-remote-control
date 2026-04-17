@@ -7,6 +7,7 @@ import type {
   ContainerHealth,
   EnvironmentConfig,
   ConfigFile,
+  DockerConfig,
 } from "./types.js";
 import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
 
@@ -25,6 +26,70 @@ const HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const OPENCODE_CONFIG_RELATIVE_PATH = "root/.config/opencode/opencode.json";
 
 type OpenCodeConfig = Record<string, unknown>;
+type DockerHostConfig = NonNullable<Dockerode.ContainerCreateOptions["HostConfig"]>;
+type DockerDevice = NonNullable<DockerConfig["devices"]>[number];
+type DockerDeviceRequest = NonNullable<DockerConfig["device_requests"]>[number];
+type DockerUlimit = NonNullable<DockerConfig["ulimits"]>[number];
+
+function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConfig {
+  return {
+    AutoRemove: dockerConfig?.auto_remove ?? false,
+    NetworkMode: dockerConfig?.network_mode,
+    Binds: dockerConfig?.binds,
+    Tmpfs: dockerConfig?.tmpfs,
+    ShmSize: dockerConfig?.shm_size,
+    Memory: dockerConfig?.memory,
+    MemorySwap: dockerConfig?.memory_swap,
+    NanoCpus: dockerConfig?.nano_cpus,
+    CpuShares: dockerConfig?.cpu_shares,
+    CpusetCpus: dockerConfig?.cpuset_cpus,
+    CapAdd: dockerConfig?.cap_add,
+    CapDrop: dockerConfig?.cap_drop,
+    SecurityOpt: dockerConfig?.security_opt,
+    Privileged: dockerConfig?.privileged,
+    ReadonlyRootfs: dockerConfig?.readonly_rootfs,
+    ExtraHosts: dockerConfig?.extra_hosts,
+    Dns: dockerConfig?.dns,
+    DnsSearch: dockerConfig?.dns_search,
+    Devices: dockerConfig?.devices?.map((device: DockerDevice) => ({
+      PathOnHost: device.path_on_host,
+      PathInContainer: device.path_in_container,
+      CgroupPermissions: device.cgroup_permissions,
+    })),
+    DeviceCgroupRules: dockerConfig?.device_cgroup_rules,
+    DeviceRequests: dockerConfig?.device_requests?.map((request: DockerDeviceRequest) => ({
+      Driver: request.driver,
+      Count: request.count,
+      DeviceIDs: request.device_ids,
+      Capabilities: request.capabilities,
+      Options: request.options,
+    })),
+    Runtime: dockerConfig?.runtime,
+    RestartPolicy: dockerConfig?.restart_policy
+      ? {
+        Name: dockerConfig.restart_policy.name,
+        MaximumRetryCount: dockerConfig.restart_policy.maximum_retry_count,
+      }
+      : undefined,
+    Ulimits: dockerConfig?.ulimits?.map((ulimit: DockerUlimit) => ({
+      Name: ulimit.name,
+      Soft: ulimit.soft,
+      Hard: ulimit.hard,
+    })),
+  };
+}
+
+function buildEndpointConfig(
+  dockerConfig: DockerConfig | undefined,
+): { Aliases?: string[] } | undefined {
+  if (!dockerConfig?.network_aliases || dockerConfig.network_aliases.length === 0) {
+    return undefined;
+  }
+
+  return {
+    Aliases: dockerConfig.network_aliases,
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -249,6 +314,7 @@ export async function createContainer(
   ];
 
   const image = CRC_ENV_IMAGE;
+  const hostConfig = buildHostConfig(config.docker);
 
   const container = await docker.createContainer({
     Image: image,
@@ -259,9 +325,7 @@ export async function createContainer(
       [LABEL_REPO_NAME]: repoFullName,
       [LABEL_SUBDOMAIN]: subdomain,
     },
-    HostConfig: {
-      AutoRemove: false,
-    },
+    HostConfig: hostConfig,
   });
 
   const openCodeConfig = buildOpenCodeConfig(config.opencode);
@@ -269,9 +333,14 @@ export async function createContainer(
   const configTar = await createSingleFileTar(OPENCODE_CONFIG_RELATIVE_PATH, configJson, 0o444);
   await container.putArchive(configTar, { path: "/" });
 
-  for (const networkName of appConfig.docker_networks || []) {
+  const endpointConfig = buildEndpointConfig(config.docker);
+  const networkNames = config.docker?.networks || appConfig.docker_networks || [];
+  for (const networkName of networkNames) {
     const network = docker.getNetwork(networkName);
-    await network.connect({ Container: container.id });
+    await network.connect({
+      Container: container.id,
+      EndpointConfig: endpointConfig,
+    });
   }
 
   await container.start();
