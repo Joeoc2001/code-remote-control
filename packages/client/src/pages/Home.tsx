@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { ManagedContainer } from "../types";
+import type { ManagedContainer, ReviewRequestStatus } from "../types";
 import { fetchContainers, fetchContainerCodeStatus, subscribeToEvents } from "../api";
 import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
@@ -10,6 +10,11 @@ import Footer from "../components/Footer";
 const TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 15000;
 const EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 3000;
 
+interface ContainerTileMetadata {
+  taskDescription: string | null;
+  reviewRequest: ReviewRequestStatus | null;
+}
+
 export default function Home() {
   const [containers, setContainers] = useState<ManagedContainer[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -17,25 +22,37 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
-  const [taskDescriptionByContainerId, setTaskDescriptionByContainerId] = useState<Record<string, string>>({});
+  const [metadataByContainerId, setMetadataByContainerId] = useState<Record<string, ContainerTileMetadata>>({});
 
-  const refreshTaskDescriptions = useCallback(async (containersToRefresh: ManagedContainer[], pruneMissing = false) => {
+  const refreshContainerMetadata = useCallback(async (containersToRefresh: ManagedContainer[], pruneMissing = false) => {
     const runningContainers = containersToRefresh.filter((container) => container.status === "running");
 
-    const taskDescriptions = await Promise.all(
+    const metadataEntries = await Promise.all(
       runningContainers.map(async (container) => {
         try {
           const codeStatus = await fetchContainerCodeStatus(container.id);
           const taskDescription = codeStatus.currentTaskDescription?.trim() || null;
-          return { id: container.id, taskDescription };
+          return {
+            id: container.id,
+            metadata: {
+              taskDescription,
+              reviewRequest: codeStatus.reviewRequest,
+            },
+          };
         } catch {
-          return { id: container.id, taskDescription: null };
+          return {
+            id: container.id,
+            metadata: {
+              taskDescription: null,
+              reviewRequest: null,
+            },
+          };
         }
       }),
     );
 
-    setTaskDescriptionByContainerId((previous) => {
-      const next: Record<string, string> = { ...previous };
+    setMetadataByContainerId((previous) => {
+      const next: Record<string, ContainerTileMetadata> = { ...previous };
 
       if (pruneMissing) {
         const activeIds = new Set(containersToRefresh.map((container) => container.id));
@@ -52,9 +69,9 @@ export default function Home() {
         }
       }
 
-      for (const { id, taskDescription } of taskDescriptions) {
-        if (taskDescription) {
-          next[id] = taskDescription;
+      for (const { id, metadata } of metadataEntries) {
+        if (metadata.taskDescription || metadata.reviewRequest) {
+          next[id] = metadata;
         } else {
           delete next[id];
         }
@@ -68,7 +85,7 @@ export default function Home() {
     try {
       const data = await fetchContainers();
       setContainers(data);
-      void refreshTaskDescriptions(data, true);
+      void refreshContainerMetadata(data, true);
       setError(null);
     } catch (err) {
       console.error("Failed to load containers:", err);
@@ -76,7 +93,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [refreshTaskDescriptions]);
+  }, [refreshContainerMetadata]);
 
   useEffect(() => {
     loadContainers();
@@ -96,9 +113,9 @@ export default function Home() {
         });
 
         if (updated.status === "running") {
-          void refreshTaskDescriptions([updated]);
+          void refreshContainerMetadata([updated]);
         } else {
-          setTaskDescriptionByContainerId((prev) => {
+          setMetadataByContainerId((prev) => {
             const next = { ...prev };
             delete next[updated.id];
             return next;
@@ -107,7 +124,7 @@ export default function Home() {
       },
       (removedId) => {
         setContainers((prev) => prev.filter((c) => c.id !== removedId));
-        setTaskDescriptionByContainerId((prev) => {
+        setMetadataByContainerId((prev) => {
           const next = { ...prev };
           delete next[removedId];
           return next;
@@ -117,46 +134,46 @@ export default function Home() {
       setConnected,
     );
     return unsubscribe;
-  }, [loadContainers, refreshTaskDescriptions]);
+  }, [loadContainers, refreshContainerMetadata]);
 
   useEffect(() => {
     if (containers.length === 0) {
-      setTaskDescriptionByContainerId({});
+      setMetadataByContainerId({});
       return;
     }
 
     const interval = setInterval(() => {
-      void refreshTaskDescriptions(containers, true);
+      void refreshContainerMetadata(containers, true);
     }, TASK_DESCRIPTION_REFRESH_INTERVAL_MS);
 
     return () => {
       clearInterval(interval);
     };
-  }, [containers, refreshTaskDescriptions]);
+  }, [containers, refreshContainerMetadata]);
 
   useEffect(() => {
     const pendingContainers = containers.filter(
-      (container) => container.status === "running" && !taskDescriptionByContainerId[container.id],
+      (container) => container.status === "running" && !metadataByContainerId[container.id]?.taskDescription,
     );
 
     if (pendingContainers.length === 0) {
       return;
     }
 
-    void refreshTaskDescriptions(pendingContainers);
+    void refreshContainerMetadata(pendingContainers);
 
     const interval = setInterval(() => {
-      void refreshTaskDescriptions(pendingContainers);
+      void refreshContainerMetadata(pendingContainers);
     }, EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS);
 
     return () => {
       clearInterval(interval);
     };
-  }, [containers, refreshTaskDescriptions, taskDescriptionByContainerId]);
+  }, [containers, refreshContainerMetadata, metadataByContainerId]);
 
   const getContainerTitle = useCallback(
-    (container: ManagedContainer): string => taskDescriptionByContainerId[container.id] || container.name.replace(/^crc-/, ""),
-    [taskDescriptionByContainerId],
+    (container: ManagedContainer): string => metadataByContainerId[container.id]?.taskDescription || container.name.replace(/^crc-/, ""),
+    [metadataByContainerId],
   );
 
   const handleContainerCreated = (container: ManagedContainer) => {
@@ -165,7 +182,7 @@ export default function Home() {
       return [container, ...prev];
     });
     if (container.status === "running") {
-      void refreshTaskDescriptions([container]);
+      void refreshContainerMetadata([container]);
     }
     setShowModal(false);
   };
@@ -204,7 +221,12 @@ export default function Home() {
             </p>
           </div>
         ) : (
-          <ContainerGrid containers={containers} getContainerTitle={getContainerTitle} onRefresh={loadContainers} />
+          <ContainerGrid
+            containers={containers}
+            getContainerTitle={getContainerTitle}
+            getContainerReviewRequest={(container) => metadataByContainerId[container.id]?.reviewRequest || null}
+            onRefresh={loadContainers}
+          />
         )}
       </main>
       {showModal && (
