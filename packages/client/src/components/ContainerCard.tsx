@@ -1,18 +1,64 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { ManagedContainer } from "../types";
+import type { ManagedContainer, ReviewRequestStatus } from "../types";
 import { deleteContainer } from "../api";
 import HealthDot from "./HealthDot";
 
 interface ContainerCardProps {
   container: ManagedContainer;
   title: string;
+  reviewRequest: ReviewRequestStatus | null;
   onRemoved: () => void;
+}
+
+function normalizeReviewRequestState(state: string): "open" | "closed" | "merged" {
+  const normalized = state.trim().toLowerCase();
+
+  if (normalized.includes("merge")) {
+    return "merged";
+  }
+
+  if (normalized.includes("close")) {
+    return "closed";
+  }
+
+  return "open";
+}
+
+function ReviewRequestStatusIcon({ state }: { state: string }) {
+  const normalizedState = normalizeReviewRequestState(state);
+
+  if (normalizedState === "merged") {
+    return (
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-emerald-300" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" />
+        <path d="M5.2 8.2 7.2 10l3.6-3.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (normalizedState === "closed") {
+    return (
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-rose-300" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+        <circle cx="8" cy="8" r="6" />
+        <path d="M5.5 5.5 10.5 10.5" strokeLinecap="round" />
+        <path d="M10.5 5.5 5.5 10.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-sky-300" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" />
+      <circle cx="8" cy="8" r="1.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
 }
 
 export default function ContainerCard({
   container,
   title,
+  reviewRequest,
   onRemoved,
 }: ContainerCardProps) {
   const [killing, setKilling] = useState(false);
@@ -72,6 +118,20 @@ export default function ContainerCard({
           <p className="text-slate-400 text-sm mt-1 truncate" title={container.repoName}>
             {container.repoName}
           </p>
+          {reviewRequest?.url && (
+            <a
+              href={reviewRequest.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              title={`PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
+              aria-label={`Open PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
+              className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
+            >
+              <ReviewRequestStatusIcon state={reviewRequest.state} />
+              <span className="truncate">PR/MR #{reviewRequest.id}</span>
+            </a>
+          )}
         </div>
         <div className="flex flex-col items-end gap-2">
           <HealthDot health={container.health} />
