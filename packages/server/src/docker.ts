@@ -334,7 +334,7 @@ export async function createContainer(
   await container.putArchive(configTar, { path: "/" });
 
   const endpointConfig = buildEndpointConfig(config.docker);
-  const networkNames = config.docker?.networks || appConfig.docker_networks || [];
+  const networkNames = config.docker?.networks || [];
   for (const networkName of networkNames) {
     const network = docker.getNetwork(networkName);
     await network.connect({

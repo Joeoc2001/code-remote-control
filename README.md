@@ -19,7 +19,6 @@ Create your environment configuration file to specify the modes a container can 
         "email": "joeoc2625.ai@gmail.com"
     },
     "gitlab_url": "https://gitlab.example.com",
-    "docker_networks": ["runner-network"],
     "configurations": [
         {
             "name": "gpt-5.3-codex",
@@ -67,7 +66,7 @@ Create your environment configuration file to specify the modes a container can 
 }
 ```
 
-The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`).
+The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
 
 For GPU passthrough, set `device_requests` with NVIDIA capabilities as shown above.
 

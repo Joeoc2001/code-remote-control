@@ -70,7 +70,6 @@ export const configFileSchema = z.object({
   root_domain: z.string(),
   git: gitConfigSchema,
   gitlab_url: z.string().optional(),
-  docker_networks: z.array(z.string()).optional(),
   configurations: z.array(environmentConfigSchema),
 });
 
