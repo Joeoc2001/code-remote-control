@@ -3,12 +3,212 @@ const pipelineWatchInFlightBySession = new Map();
 const watchedHeadBySession = new Map();
 const messageCounterBySession = new Map();
 
+const githubCheckBuckets = new Set(["pass", "fail", "pending", "cancel", "skipping"]);
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseString(value) {
+  return typeof value === "string" ? value : null;
+}
+
+function parseNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function tryParseJson(text) {
   try {
     return JSON.parse(text);
   } catch {
     return null;
   }
+}
+
+function parseGithubPrView(payload) {
+  if (!isRecord(payload)) return null;
+
+  const number = parseNumber(payload.number);
+  const url = parseString(payload.url);
+  const title = parseString(payload.title);
+  const state = parseString(payload.state);
+  if (number === null || !url || !title || !state) return null;
+
+  return {
+    number,
+    url,
+    title,
+    state,
+  };
+}
+
+function parseGithubPrCheck(payload) {
+  if (!isRecord(payload)) return null;
+
+  const bucket = parseString(payload.bucket);
+  const name = parseString(payload.name);
+  const state = parseString(payload.state);
+  const link = parseString(payload.link);
+  if (!bucket || !githubCheckBuckets.has(bucket) || !name || !state || !link) return null;
+
+  return {
+    bucket,
+    name,
+    state,
+    link,
+  };
+}
+
+function parseGithubPrChecks(payload) {
+  if (!Array.isArray(payload)) return null;
+
+  const checks = [];
+  for (const item of payload) {
+    const parsed = parseGithubPrCheck(item);
+    if (!parsed) return null;
+    checks.push(parsed);
+  }
+
+  return checks;
+}
+
+function parseGitLabMergeRequest(payload) {
+  if (!isRecord(payload)) return null;
+
+  const webUrl = parseString(payload.web_url);
+  if (!webUrl) return null;
+
+  return {
+    webUrl,
+  };
+}
+
+function parseGitLabPipeline(payload) {
+  if (!isRecord(payload)) return null;
+
+  const status = parseString(payload.status);
+  const sha = parseString(payload.sha);
+  if (!status || !sha) return null;
+
+  return {
+    status,
+    sha,
+  };
+}
+
+function parseGitWorktreeFlag(output) {
+  const value = output.trim();
+  if (value === "true") return { isInsideWorkTree: true };
+  if (value === "false") return { isInsideWorkTree: false };
+  return null;
+}
+
+function parseGitUpstream(output) {
+  const value = output.trim();
+  return {
+    upstream: value.length > 0 ? value : null,
+  };
+}
+
+function parseGitCount(output) {
+  const value = Number.parseInt(output.trim(), 10);
+  if (!Number.isFinite(value) || value < 0) return null;
+
+  return {
+    count: value,
+  };
+}
+
+function parseGitRef(output) {
+  const value = output.trim();
+  if (value.length === 0) return null;
+
+  return {
+    value,
+  };
+}
+
+async function runGithubPrView($, branch) {
+  const raw = await $`gh pr view ${branch} --json number,url,title,state`.nothrow().text();
+  return parseGithubPrView(tryParseJson(raw));
+}
+
+async function runGithubPrChecks($, branch) {
+  const raw = await $`gh pr checks ${branch} --json bucket,name,state,link`.nothrow().text();
+  return parseGithubPrChecks(tryParseJson(raw));
+}
+
+async function runGithubPrChecksWatch($, branch, intervalSeconds) {
+  await $`gh pr checks ${branch} --watch --interval ${intervalSeconds}`.nothrow();
+  return {
+    done: true,
+  };
+}
+
+async function runGitLabMrView($, branch) {
+  const raw = await $`glab mr view ${branch} -F json`.nothrow().text();
+  return parseGitLabMergeRequest(tryParseJson(raw));
+}
+
+async function runGitLabCiStatus($, branch) {
+  const raw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
+  return parseGitLabPipelinePayload(tryParseJson(raw));
+}
+
+async function runGitLabCiStatusWatch($, branch) {
+  await $`glab ci status --branch ${branch} --live`.nothrow();
+  return {
+    done: true,
+  };
+}
+
+async function runGitRevParseInsideWorktree($) {
+  const raw = await $`git rev-parse --is-inside-work-tree`.nothrow().text();
+  return parseGitWorktreeFlag(raw);
+}
+
+async function runGitStatusPorcelain($) {
+  const raw = await $`git status --porcelain`.text();
+  return {
+    hasUncommittedChanges: raw.trim().length > 0,
+  };
+}
+
+async function runGitUpstreamRef($) {
+  const raw = await $`git rev-parse --abbrev-ref --symbolic-full-name @{upstream}`.nothrow().text();
+  return parseGitUpstream(raw);
+}
+
+async function runGitAheadCount($, upstream) {
+  const raw = await $`git rev-list --count ${upstream}..HEAD`.text();
+  return parseGitCount(raw);
+}
+
+async function runGitUnpushedAnyRemote($) {
+  const raw = await $`git log --branches --not --remotes --max-count=1 --format=%H`.nothrow().text();
+  return {
+    hasUnpushedCommits: raw.trim().length > 0,
+  };
+}
+
+async function runGitCurrentBranch($) {
+  const raw = await $`git rev-parse --abbrev-ref HEAD`.text();
+  const parsed = parseGitRef(raw);
+  if (!parsed) return null;
+
+  return {
+    branch: parsed.value,
+  };
+}
+
+async function runGitHeadSha($) {
+  const raw = await $`git rev-parse HEAD`.text();
+  const parsed = parseGitRef(raw);
+  if (!parsed) return null;
+
+  return {
+    headSha: parsed.value,
+  };
 }
 
 async function sendSessionPrompt(client, sessionID, text, noReply) {
@@ -67,31 +267,43 @@ function pickGitLabPipeline(payload) {
   if (!payload) return null;
 
   if (Array.isArray(payload)) {
-    return payload.find((item) => item && typeof item === "object" && typeof item.status === "string") || null;
+    for (const item of payload) {
+      const pipeline = parseGitLabPipeline(item);
+      if (pipeline) return pipeline;
+    }
+    return null;
   }
 
-  if (typeof payload !== "object") return null;
-  if (typeof payload.status === "string") return payload;
+  if (!isRecord(payload)) return null;
+
+  const direct = parseGitLabPipeline(payload);
+  if (direct) return direct;
 
   if (Array.isArray(payload.pipelines)) {
-    return payload.pipelines.find((item) => item && typeof item === "object" && typeof item.status === "string") || null;
+    for (const item of payload.pipelines) {
+      const pipeline = parseGitLabPipeline(item);
+      if (pipeline) return pipeline;
+    }
+    return null;
   }
 
-  if (payload.pipeline && typeof payload.pipeline === "object" && typeof payload.pipeline.status === "string") {
-    return payload.pipeline;
+  if (payload.pipeline) {
+    return parseGitLabPipeline(payload.pipeline);
   }
 
   return null;
 }
 
+function parseGitLabPipelinePayload(payload) {
+  return pickGitLabPipeline(payload);
+}
+
 async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha }) {
-  const prRaw = await $`gh pr view ${branch} --json number,url,title,state`.nothrow().text();
-  const pr = tryParseJson(prRaw);
+  const pr = await runGithubPrView($, branch);
   if (!pr || pr.state !== "OPEN") return false;
 
-  const checksRaw = await $`gh pr checks ${branch} --json bucket,name,state,link`.nothrow().text();
-  const checks = tryParseJson(checksRaw);
-  if (!Array.isArray(checks) || checks.length === 0) return false;
+  const checks = await runGithubPrChecks($, branch);
+  if (!checks || checks.length === 0) return false;
 
   await sendSessionPrompt(
     client,
@@ -102,11 +314,10 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
 
   const messageCounterAtWatchStart = getMessageCounter(sessionID);
 
-  await $`gh pr checks ${branch} --watch --interval 10`.nothrow();
+  await runGithubPrChecksWatch($, branch, 10);
 
-  const finalChecksRaw = await $`gh pr checks ${branch} --json bucket,name,state,link`.nothrow().text();
-  const finalChecks = tryParseJson(finalChecksRaw);
-  if (!Array.isArray(finalChecks) || finalChecks.length === 0) return false;
+  const finalChecks = await runGithubPrChecks($, branch);
+  if (!finalChecks || finalChecks.length === 0) return false;
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
 
@@ -131,27 +342,24 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
 }
 
 async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha }) {
-  const mrRaw = await $`glab mr view ${branch} -F json`.nothrow().text();
-  const mr = tryParseJson(mrRaw);
-  if (!mr || !mr.web_url) return false;
+  const mr = await runGitLabMrView($, branch);
+  if (!mr) return false;
 
-  const pipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
-  const pipeline = pickGitLabPipeline(tryParseJson(pipelineRaw));
+  const pipeline = await runGitLabCiStatus($, branch);
   if (!pipeline || pipeline.sha !== headSha) return false;
 
   await sendSessionPrompt(
     client,
     sessionID,
-    `All local changes are committed and pushed. Waiting for MR pipeline to finish for ${mr.web_url}.`,
+    `All local changes are committed and pushed. Waiting for MR pipeline to finish for ${mr.webUrl}.`,
     true,
   );
 
   const messageCounterAtWatchStart = getMessageCounter(sessionID);
 
-  await $`glab ci status --branch ${branch} --live`.nothrow();
+  await runGitLabCiStatusWatch($, branch);
 
-  const finalPipelineRaw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
-  const finalPipeline = pickGitLabPipeline(tryParseJson(finalPipelineRaw));
+  const finalPipeline = await runGitLabCiStatus($, branch);
   if (!finalPipeline) return false;
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
@@ -167,9 +375,9 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
 
   const finalMessage = successful
     ? compacted
-      ? `MR pipeline finished successfully for ${mr.web_url} (status: ${status}). Session compacted because no new messages were sent while CI was running.`
-      : `MR pipeline finished successfully for ${mr.web_url} (status: ${status}). Skipped compaction because new messages were sent while CI was running.`
-    : `MR pipeline finished with status '${status}' for ${mr.web_url}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
+      ? `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Session compacted because no new messages were sent while CI was running.`
+      : `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Skipped compaction because new messages were sent while CI was running.`
+    : `MR pipeline finished with status '${status}' for ${mr.webUrl}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
 
   await sendSessionPrompt(client, sessionID, finalMessage, successful);
   watchedHeadBySession.set(sessionID, headSha);
@@ -189,36 +397,38 @@ async function watchAssociatedPipeline({ client, $, sessionID, branch, headSha }
 }
 
 async function getGitState($) {
-  const insideWorktree = (await $`git rev-parse --is-inside-work-tree`.nothrow().text()).trim();
-  if (insideWorktree !== "true") return null;
+  const worktree = await runGitRevParseInsideWorktree($);
+  if (!worktree || !worktree.isInsideWorkTree) return null;
 
-  const uncommittedOutput = await $`git status --porcelain`.text();
-  const hasUncommittedChanges = uncommittedOutput.trim().length > 0;
+  const uncommitted = await runGitStatusPorcelain($);
+  const hasUncommittedChanges = uncommitted.hasUncommittedChanges;
 
-  const upstreamOutput = await $`git rev-parse --abbrev-ref --symbolic-full-name @{upstream}`.nothrow().text();
-  const upstream = upstreamOutput.trim();
+  const upstreamRef = await runGitUpstreamRef($);
+  const upstream = upstreamRef.upstream || "";
   let hasUnpushedCommits = false;
   let aheadCount = 0;
 
   if (upstream.length > 0) {
-    const aheadOutput = await $`git rev-list --count ${upstream}..HEAD`.text();
-    aheadCount = Number.parseInt(aheadOutput.trim(), 10) || 0;
+    const ahead = await runGitAheadCount($, upstream);
+    if (!ahead) return null;
+    aheadCount = ahead.count;
     hasUnpushedCommits = aheadCount > 0;
   } else {
-    const unpushedAnywhere = await $`git log --branches --not --remotes --max-count=1 --format=%H`.nothrow().text();
-    hasUnpushedCommits = unpushedAnywhere.trim().length > 0;
+    const unpushed = await runGitUnpushedAnyRemote($);
+    hasUnpushedCommits = unpushed.hasUnpushedCommits;
   }
 
-  const branch = (await $`git rev-parse --abbrev-ref HEAD`.text()).trim();
-  const headSha = (await $`git rev-parse HEAD`.text()).trim();
+  const branchRef = await runGitCurrentBranch($);
+  const head = await runGitHeadSha($);
+  if (!branchRef || !head) return null;
 
   return {
     hasUncommittedChanges,
     hasUnpushedCommits,
     upstream,
     aheadCount,
-    branch,
-    headSha,
+    branch: branchRef.branch,
+    headSha: head.headSha,
   };
 }
 
