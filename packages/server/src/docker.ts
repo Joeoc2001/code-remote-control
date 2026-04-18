@@ -65,12 +65,10 @@ function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConf
       Options: request.options,
     })),
     Runtime: dockerConfig?.runtime,
-    RestartPolicy: dockerConfig?.restart_policy
-      ? {
-        Name: dockerConfig.restart_policy.name,
-        MaximumRetryCount: dockerConfig.restart_policy.maximum_retry_count,
-      }
-      : undefined,
+    RestartPolicy: {
+      Name: dockerConfig?.restart_policy?.name ?? "unless-stopped",
+      MaximumRetryCount: dockerConfig?.restart_policy?.maximum_retry_count,
+    },
     Ulimits: dockerConfig?.ulimits?.map((ulimit: DockerUlimit) => ({
       Name: ulimit.name,
       Soft: ulimit.soft,
