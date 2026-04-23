@@ -88,12 +88,26 @@ function parseGitLabPipeline(payload) {
 
   const status = parseString(payload.status);
   const sha = parseString(payload.sha);
+  const webUrl = parseString(payload.web_url);
   if (!status || !sha) return null;
 
   return {
     status,
     sha,
+    webUrl,
   };
+}
+
+function parseGitLabMergeRequestPayload(payload) {
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const mr = parseGitLabMergeRequest(item);
+      if (mr) return mr;
+    }
+    return null;
+  }
+
+  return parseGitLabMergeRequest(payload);
 }
 
 function parseGitWorktreeFlag(output) {
@@ -146,12 +160,15 @@ async function runGithubPrChecksWatch($, branch, intervalSeconds) {
 }
 
 async function runGitLabMrView($, branch) {
-  const raw = await $`glab mr view ${branch} -F json`.nothrow().text();
-  return parseGitLabMergeRequest(tryParseJson(raw));
+  const encodedBranch = encodeURIComponent(branch);
+  const raw = await $`glab api projects/:id/merge_requests?state=opened&source_branch=${encodedBranch}&per_page=1`.nothrow().text();
+  return parseGitLabMergeRequestPayload(tryParseJson(raw));
 }
 
-async function runGitLabCiStatus($, branch) {
-  const raw = await $`glab ci status --branch ${branch} -F json`.nothrow().text();
+async function runGitLabCiStatus($, branch, headSha) {
+  const encodedBranch = encodeURIComponent(branch);
+  const encodedSha = encodeURIComponent(headSha);
+  const raw = await $`glab api projects/:id/pipelines?ref=${encodedBranch}&sha=${encodedSha}&per_page=1`.nothrow().text();
   return parseGitLabPipelinePayload(tryParseJson(raw));
 }
 
@@ -184,15 +201,15 @@ async function runGitAheadCount($, upstream) {
   return parseGitCount(raw);
 }
 
-async function runGitUnpushedAnyRemote($) {
-  const raw = await $`git log --branches --not --remotes --max-count=1 --format=%H`.nothrow().text();
+async function runGitUnpushedFromHead($) {
+  const raw = await $`git log --not --remotes --max-count=1 --format=%H HEAD`.nothrow().text();
   return {
     hasUnpushedCommits: raw.trim().length > 0,
   };
 }
 
 async function runGitCurrentBranch($) {
-  const raw = await $`git rev-parse --abbrev-ref HEAD`.text();
+  const raw = await $`git rev-parse --abbrev-ref HEAD`.nothrow().text();
   const parsed = parseGitRef(raw);
   if (!parsed) return null;
 
@@ -202,7 +219,7 @@ async function runGitCurrentBranch($) {
 }
 
 async function runGitHeadSha($) {
-  const raw = await $`git rev-parse HEAD`.text();
+  const raw = await $`git rev-parse HEAD`.nothrow().text();
   const parsed = parseGitRef(raw);
   if (!parsed) return null;
 
@@ -345,7 +362,7 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   const mr = await runGitLabMrView($, branch);
   if (!mr) return false;
 
-  const pipeline = await runGitLabCiStatus($, branch);
+  const pipeline = await runGitLabCiStatus($, branch, headSha);
   if (!pipeline || pipeline.sha !== headSha) return false;
 
   await sendSessionPrompt(
@@ -359,7 +376,7 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
 
   await runGitLabCiStatusWatch($, branch);
 
-  const finalPipeline = await runGitLabCiStatus($, branch);
+  const finalPipeline = await runGitLabCiStatus($, branch, headSha);
   if (!finalPipeline) return false;
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
@@ -414,7 +431,7 @@ async function getGitState($) {
     aheadCount = ahead.count;
     hasUnpushedCommits = aheadCount > 0;
   } else {
-    const unpushed = await runGitUnpushedAnyRemote($);
+    const unpushed = await runGitUnpushedFromHead($);
     hasUnpushedCommits = unpushed.hasUnpushedCommits;
   }
 
