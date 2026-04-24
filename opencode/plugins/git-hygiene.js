@@ -506,3 +506,19 @@ export const GitHygienePlugin = async ({ client, $ }) => {
     },
   };
 };
+
+export const GitHygieneCliWrappers = Object.freeze({
+  runGithubPrView,
+  runGithubPrChecks,
+  runGithubPrChecksWatch,
+  runGitLabMrView,
+  runGitLabCiStatus,
+  runGitLabCiStatusWatch,
+  runGitRevParseInsideWorktree,
+  runGitStatusPorcelain,
+  runGitUpstreamRef,
+  runGitAheadCount,
+  runGitUnpushedFromHead,
+  runGitCurrentBranch,
+  runGitHeadSha,
+});

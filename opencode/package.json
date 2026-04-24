@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test plugins/git-hygiene.test.js"
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.3.17"
