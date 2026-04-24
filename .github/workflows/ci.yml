@@ -15,6 +15,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install glab CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glab
+
       - run: npm ci
 
       - run: npm run check:opencode-assets
