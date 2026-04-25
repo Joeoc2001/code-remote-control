@@ -161,14 +161,16 @@ async function runGithubPrChecksWatch($, branch, intervalSeconds) {
 
 async function runGitLabMrView($, branch) {
   const encodedBranch = encodeURIComponent(branch);
-  const raw = await $`glab api projects/:id/merge_requests?state=opened&source_branch=${encodedBranch}&per_page=1`.nothrow().text();
+  const mergeRequestsPath = `projects/:id/merge_requests?state=opened&source_branch=${encodedBranch}&per_page=1`;
+  const raw = await $`glab api ${mergeRequestsPath}`.nothrow().text();
   return parseGitLabMergeRequestPayload(tryParseJson(raw));
 }
 
 async function runGitLabCiStatus($, branch, headSha) {
   const encodedBranch = encodeURIComponent(branch);
   const encodedSha = encodeURIComponent(headSha);
-  const raw = await $`glab api projects/:id/pipelines?ref=${encodedBranch}&sha=${encodedSha}&per_page=1`.nothrow().text();
+  const pipelinesPath = `projects/:id/pipelines?ref=${encodedBranch}&sha=${encodedSha}&per_page=1`;
+  const raw = await $`glab api ${pipelinesPath}`.nothrow().text();
   return parseGitLabPipelinePayload(tryParseJson(raw));
 }
 
@@ -185,7 +187,7 @@ async function runGitRevParseInsideWorktree($) {
 }
 
 async function runGitStatusPorcelain($) {
-  const raw = await $`git status --porcelain`.text();
+  const raw = await $`git status --porcelain`.nothrow().text();
   return {
     hasUncommittedChanges: raw.trim().length > 0,
   };
@@ -197,7 +199,8 @@ async function runGitUpstreamRef($) {
 }
 
 async function runGitAheadCount($, upstream) {
-  const raw = await $`git rev-list --count ${upstream}..HEAD`.text();
+  const revisionRange = `${upstream}..HEAD`;
+  const raw = await $`git rev-list --count ${revisionRange}`.nothrow().text();
   return parseGitCount(raw);
 }
 
@@ -252,6 +255,30 @@ function getMessageCounter(sessionID) {
 
 function bumpMessageCounter(sessionID) {
   messageCounterBySession.set(sessionID, getMessageCounter(sessionID) + 1);
+}
+
+function isUserMessageEvent(event) {
+  if (!event || typeof event !== "object") return false;
+  if (event.type === "message.user") return true;
+  if (typeof event.type !== "string" || !event.type.startsWith("message.")) return false;
+
+  const properties = event.properties;
+  if (!isRecord(properties)) return false;
+
+  const role = parseString(properties.role)
+    || parseString(properties.messageRole)
+    || parseString(properties.authorRole)
+    || parseString(properties.senderRole)
+    || parseString(properties.actorRole);
+  if (role) return role.toLowerCase() === "user";
+
+  const source = parseString(properties.source)
+    || parseString(properties.sender)
+    || parseString(properties.origin)
+    || parseString(properties.actor);
+  if (source) return source.toLowerCase() === "user";
+
+  return false;
 }
 
 function getGithubChecksSummary(checks) {
@@ -334,7 +361,15 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
   await runGithubPrChecksWatch($, branch, 10);
 
   const finalChecks = await runGithubPrChecks($, branch);
-  if (!finalChecks || finalChecks.length === 0) return false;
+  if (!finalChecks || finalChecks.length === 0) {
+    await sendSessionPrompt(
+      client,
+      sessionID,
+      `I couldn't fetch final PR check results for ${pr.url} after waiting. Please run gh pr checks ${branch} manually and re-run after auth/connectivity is healthy.`,
+      false,
+    );
+    return true;
+  }
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
 
@@ -377,7 +412,15 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   await runGitLabCiStatusWatch($, branch);
 
   const finalPipeline = await runGitLabCiStatus($, branch, headSha);
-  if (!finalPipeline) return false;
+  if (!finalPipeline) {
+    await sendSessionPrompt(
+      client,
+      sessionID,
+      `I couldn't fetch the final MR pipeline status for ${mr.webUrl} after waiting. Please run glab ci status --branch ${branch} and re-run after auth/connectivity is healthy.`,
+      false,
+    );
+    return true;
+  }
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
 
@@ -453,7 +496,7 @@ export const GitHygienePlugin = async ({ client, $ }) => {
   return {
     event: async ({ event }) => {
       const sessionID = getEventSessionID(event);
-      if (sessionID && event.type.startsWith("message.")) {
+      if (sessionID && isUserMessageEvent(event)) {
         bumpMessageCounter(sessionID);
       }
 
