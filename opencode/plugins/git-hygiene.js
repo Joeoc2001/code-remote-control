@@ -3,6 +3,8 @@ const pipelineWatchInFlightBySession = new Map();
 const watchedHeadBySession = new Map();
 const messageCounterBySession = new Map();
 
+const pipelinePollIntervalMs = 10_000;
+
 const githubCheckBuckets = new Set(["pass", "fail", "pending", "cancel", "skipping"]);
 
 function isRecord(value) {
@@ -152,13 +154,6 @@ async function runGithubPrChecks($, branch) {
   return parseGithubPrChecks(tryParseJson(raw));
 }
 
-async function runGithubPrChecksWatch($, branch, intervalSeconds) {
-  await $`gh pr checks ${branch} --watch --interval ${intervalSeconds}`.nothrow();
-  return {
-    done: true,
-  };
-}
-
 async function runGitLabMrView($, branch) {
   const encodedBranch = encodeURIComponent(branch);
   const mergeRequestsPath = `projects/:id/merge_requests?state=opened&source_branch=${encodedBranch}&per_page=1`;
@@ -172,13 +167,6 @@ async function runGitLabCiStatus($, branch, headSha) {
   const pipelinesPath = `projects/:id/pipelines?ref=${encodedBranch}&sha=${encodedSha}&per_page=1`;
   const raw = await $`glab api ${pipelinesPath}`.nothrow().text();
   return parseGitLabPipelinePayload(tryParseJson(raw));
-}
-
-async function runGitLabCiStatusWatch($, branch) {
-  await $`glab ci status --branch ${branch} --live`.nothrow();
-  return {
-    done: true,
-  };
 }
 
 async function runGitRevParseInsideWorktree($) {
@@ -257,6 +245,41 @@ function bumpMessageCounter(sessionID) {
   messageCounterBySession.set(sessionID, getMessageCounter(sessionID) + 1);
 }
 
+function createPipelineWatchState(headSha) {
+  let resolveCancelled;
+  const cancelledPromise = new Promise((resolve) => {
+    resolveCancelled = resolve;
+  });
+
+  let cancelled = false;
+
+  return {
+    headSha,
+    cancelledPromise,
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      resolveCancelled();
+    },
+    isCancelled() {
+      return cancelled;
+    },
+  };
+}
+
+async function waitForNextPoll(state, intervalMs = pipelinePollIntervalMs) {
+  if (state.isCancelled()) return false;
+
+  await Promise.race([
+    new Promise((resolve) => {
+      setTimeout(resolve, intervalMs);
+    }),
+    state.cancelledPromise,
+  ]);
+
+  return !state.isCancelled();
+}
+
 function isUserMessageEvent(event) {
   if (!event || typeof event !== "object") return false;
   if (event.type === "message.user") return true;
@@ -307,6 +330,16 @@ function getGitLabPipelineSummary(pipeline) {
   return { status, successful };
 }
 
+function isGitLabPipelineTerminalStatus(status) {
+  return status === "success"
+    || status === "passed"
+    || status === "failed"
+    || status === "canceled"
+    || status === "cancelled"
+    || status === "skipped"
+    || status === "manual";
+}
+
 function pickGitLabPipeline(payload) {
   if (!payload) return null;
 
@@ -342,7 +375,9 @@ function parseGitLabPipelinePayload(payload) {
   return pickGitLabPipeline(payload);
 }
 
-async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha }) {
+async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha, watchState }) {
+  if (watchState.isCancelled()) return true;
+
   const pr = await runGithubPrView($, branch);
   if (!pr || pr.state !== "OPEN") return false;
 
@@ -358,9 +393,23 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
 
   const messageCounterAtWatchStart = getMessageCounter(sessionID);
 
-  await runGithubPrChecksWatch($, branch, 10);
+  let finalChecks = checks;
+  while (true) {
+    if (watchState.isCancelled()) return true;
 
-  const finalChecks = await runGithubPrChecks($, branch);
+    const latestChecks = await runGithubPrChecks($, branch);
+    if (latestChecks && latestChecks.length > 0) {
+      finalChecks = latestChecks;
+      const { summary } = getGithubChecksSummary(latestChecks);
+      if (summary.pending === 0) break;
+    }
+
+    const shouldContinue = await waitForNextPoll(watchState);
+    if (!shouldContinue) return true;
+  }
+
+  if (watchState.isCancelled()) return true;
+
   if (!finalChecks || finalChecks.length === 0) {
     await sendSessionPrompt(
       client,
@@ -393,7 +442,9 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha 
   return true;
 }
 
-async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha }) {
+async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha, watchState }) {
+  if (watchState.isCancelled()) return true;
+
   const mr = await runGitLabMrView($, branch);
   if (!mr) return false;
 
@@ -409,9 +460,23 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
 
   const messageCounterAtWatchStart = getMessageCounter(sessionID);
 
-  await runGitLabCiStatusWatch($, branch);
+  let finalPipeline = pipeline;
+  while (true) {
+    if (watchState.isCancelled()) return true;
 
-  const finalPipeline = await runGitLabCiStatus($, branch, headSha);
+    const latestPipeline = await runGitLabCiStatus($, branch, headSha);
+    if (latestPipeline && latestPipeline.sha === headSha) {
+      finalPipeline = latestPipeline;
+      const { status } = getGitLabPipelineSummary(latestPipeline);
+      if (isGitLabPipelineTerminalStatus(status)) break;
+    }
+
+    const shouldContinue = await waitForNextPoll(watchState);
+    if (!shouldContinue) return true;
+  }
+
+  if (watchState.isCancelled()) return true;
+
   if (!finalPipeline) {
     await sendSessionPrompt(
       client,
@@ -444,16 +509,31 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha 
   return true;
 }
 
-async function watchAssociatedPipeline({ client, $, sessionID, branch, headSha }) {
+async function watchAssociatedPipeline({ client, $, sessionID, branch, headSha, watchState }) {
+  if (watchState.isCancelled()) return;
   if (branch === "HEAD") return;
 
   const watchedHead = watchedHeadBySession.get(sessionID);
   if (watchedHead === headSha) return;
 
-  const githubWatched = await maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha });
+  const githubWatched = await maybeWatchGithubPipeline({
+    client,
+    $,
+    sessionID,
+    branch,
+    headSha,
+    watchState,
+  });
   if (githubWatched) return;
 
-  await maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha });
+  await maybeWatchGitLabPipeline({
+    client,
+    $,
+    sessionID,
+    branch,
+    headSha,
+    watchState,
+  });
 }
 
 async function getGitState($) {
@@ -509,23 +589,41 @@ export const GitHygienePlugin = async ({ client, $ }) => {
       if (!gitState.hasUncommittedChanges && !gitState.hasUnpushedCommits) {
         reminderFingerprintBySession.delete(sessionID);
 
-        if (!pipelineWatchInFlightBySession.has(sessionID)) {
-          const watchPromise = watchAssociatedPipeline({
+        const existingWatch = pipelineWatchInFlightBySession.get(sessionID);
+        if (existingWatch && existingWatch.headSha === gitState.headSha) {
+          return;
+        }
+
+        if (existingWatch) {
+          existingWatch.cancel();
+        }
+
+        const watchState = createPipelineWatchState(gitState.headSha);
+        const watchPromise = watchAssociatedPipeline({
             client,
             $,
             sessionID,
             branch: gitState.branch,
             headSha: gitState.headSha,
+            watchState,
           })
             .catch(() => { })
             .finally(() => {
-              pipelineWatchInFlightBySession.delete(sessionID);
+              const currentWatch = pipelineWatchInFlightBySession.get(sessionID);
+              if (currentWatch === watchState) {
+                pipelineWatchInFlightBySession.delete(sessionID);
+              }
             });
 
-          pipelineWatchInFlightBySession.set(sessionID, watchPromise);
-        }
+        pipelineWatchInFlightBySession.set(sessionID, watchState);
 
         return;
+      }
+
+      const existingWatch = pipelineWatchInFlightBySession.get(sessionID);
+      if (existingWatch) {
+        existingWatch.cancel();
+        pipelineWatchInFlightBySession.delete(sessionID);
       }
 
       const fingerprint = `${gitState.hasUncommittedChanges}:${gitState.hasUnpushedCommits}:${gitState.upstream}:${gitState.aheadCount}`;
