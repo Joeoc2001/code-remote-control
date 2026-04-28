@@ -4,6 +4,19 @@ const watchedHeadBySession = new Map();
 const messageCounterBySession = new Map();
 
 const pipelinePollIntervalMs = 10_000;
+const stopMrPipelineCommandNames = new Set([
+  "stop-mr-pipelines",
+  "stop-mr-pipeline",
+  "stop-pipelines",
+]);
+
+const gitLabCancellablePipelineStatuses = new Set([
+  "running",
+  "pending",
+  "created",
+  "preparing",
+  "waiting_for_resource",
+]);
 
 const githubCheckBuckets = new Set(["pass", "fail", "pending", "cancel", "skipping"]);
 
@@ -78,10 +91,12 @@ function parseGitLabMergeRequest(payload) {
   if (!isRecord(payload)) return null;
 
   const webUrl = parseString(payload.web_url);
-  if (!webUrl) return null;
+  const iid = parseNumber(payload.iid);
+  if (!webUrl || iid === null) return null;
 
   return {
     webUrl,
+    iid,
   };
 }
 
@@ -96,6 +111,21 @@ function parseGitLabPipeline(payload) {
   return {
     status,
     sha,
+    webUrl,
+  };
+}
+
+function parseGitLabPipelineRef(payload) {
+  if (!isRecord(payload)) return null;
+
+  const id = parseNumber(payload.id);
+  const status = parseString(payload.status);
+  const webUrl = parseString(payload.web_url);
+  if (id === null || !status) return null;
+
+  return {
+    id,
+    status,
     webUrl,
   };
 }
@@ -167,6 +197,18 @@ async function runGitLabCiStatus($, branch, headSha) {
   const pipelinesPath = `projects/:id/pipelines?ref=${encodedBranch}&sha=${encodedSha}&per_page=1`;
   const raw = await $`glab api ${pipelinesPath}`.nothrow().text();
   return parseGitLabPipelinePayload(tryParseJson(raw));
+}
+
+async function runGitLabMrPipelines($, mrIid) {
+  const pipelinesPath = `projects/:id/merge_requests/${mrIid}/pipelines?per_page=100`;
+  const raw = await $`glab api ${pipelinesPath}`.nothrow().text();
+  return parseGitLabPipelineListPayload(tryParseJson(raw));
+}
+
+async function runGitLabCancelPipeline($, pipelineID) {
+  const cancelPath = `projects/:id/pipelines/${pipelineID}/cancel`;
+  const raw = await $`glab api -X POST ${cancelPath}`.nothrow().text();
+  return parseGitLabPipelineRef(tryParseJson(raw));
 }
 
 async function runGitRevParseInsideWorktree($) {
@@ -375,6 +417,39 @@ function parseGitLabPipelinePayload(payload) {
   return pickGitLabPipeline(payload);
 }
 
+function parseGitLabPipelineListPayload(payload) {
+  if (!Array.isArray(payload)) return null;
+
+  const pipelines = [];
+  for (const item of payload) {
+    const pipeline = parseGitLabPipelineRef(item);
+    if (!pipeline) return null;
+    pipelines.push(pipeline);
+  }
+
+  return pipelines;
+}
+
+function normalizeCommandName(value) {
+  const text = parseString(value);
+  if (!text) return null;
+
+  const normalized = text.trim().toLowerCase();
+  if (normalized.length === 0) return null;
+
+  if (normalized[0] === "/" || normalized[0] === "\\") {
+    return normalized.slice(1);
+  }
+
+  return normalized;
+}
+
+function isStopMrPipelineCommandName(value) {
+  const normalized = normalizeCommandName(value);
+  if (!normalized) return false;
+  return stopMrPipelineCommandNames.has(normalized);
+}
+
 async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha, watchState }) {
   if (watchState.isCancelled()) return true;
 
@@ -572,10 +647,93 @@ async function getGitState($) {
   };
 }
 
+async function stopRunningMrPipelines({ client, $, sessionID }) {
+  const existingWatch = pipelineWatchInFlightBySession.get(sessionID);
+  if (existingWatch) {
+    existingWatch.cancel();
+    pipelineWatchInFlightBySession.delete(sessionID);
+  }
+
+  const branchRef = await runGitCurrentBranch($);
+  if (!branchRef || branchRef.branch === "HEAD") {
+    await sendSessionPrompt(
+      client,
+      sessionID,
+      "I tried to stop running MR pipelines, but I could not determine a named local branch.",
+      true,
+    );
+    return;
+  }
+
+  const mr = await runGitLabMrView($, branchRef.branch);
+  if (!mr) {
+    await sendSessionPrompt(
+      client,
+      sessionID,
+      `I tried to stop running MR pipelines, but no open MR was found for branch ${branchRef.branch}.`,
+      true,
+    );
+    return;
+  }
+
+  const pipelines = await runGitLabMrPipelines($, mr.iid);
+  if (!pipelines) {
+    await sendSessionPrompt(
+      client,
+      sessionID,
+      `I tried to stop running MR pipelines for ${mr.webUrl}, but I could not fetch MR pipeline data from GitLab.`,
+      true,
+    );
+    return;
+  }
+
+  const runningPipelines = pipelines.filter((pipeline) => gitLabCancellablePipelineStatuses.has(pipeline.status));
+  if (runningPipelines.length === 0) {
+    await sendSessionPrompt(
+      client,
+      sessionID,
+      `I checked ${mr.webUrl} and there were no running pipelines to stop.`,
+      true,
+    );
+    return;
+  }
+
+  const stoppedPipelineIDs = [];
+  const failedPipelineIDs = [];
+
+  for (const pipeline of runningPipelines) {
+    const cancelledPipeline = await runGitLabCancelPipeline($, pipeline.id);
+    if (cancelledPipeline) {
+      stoppedPipelineIDs.push(pipeline.id);
+    } else {
+      failedPipelineIDs.push(pipeline.id);
+    }
+  }
+
+  const stoppedCount = stoppedPipelineIDs.length;
+  const failedCount = failedPipelineIDs.length;
+
+  const message = failedCount === 0
+    ? `I stopped all running MR pipelines for ${mr.webUrl} (${stoppedCount} cancelled) so I can correct the branch. Do not respond to this message.`
+    : `I tried to stop all running MR pipelines for ${mr.webUrl}; cancelled ${stoppedCount} and failed to cancel ${failedCount} (${failedPipelineIDs.join(", ")}). Do not respond to this message.`;
+
+  await sendSessionPrompt(client, sessionID, message, true);
+}
+
 export const GitHygienePlugin = async ({ client, $ }) => {
   return {
     event: async ({ event }) => {
       const sessionID = getEventSessionID(event);
+
+      if (event.type === "command.executed" && sessionID && isStopMrPipelineCommandName(event.properties?.name)) {
+        await stopRunningMrPipelines({
+          client,
+          $,
+          sessionID,
+        });
+        return;
+      }
+
       if (sessionID && isUserMessageEvent(event)) {
         bumpMessageCounter(sessionID);
       }
