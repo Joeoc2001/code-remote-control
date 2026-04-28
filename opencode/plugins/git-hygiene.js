@@ -144,6 +144,79 @@ function parseGitRef(output) {
   };
 }
 
+function parseModelSpecifier(value) {
+  if (!value) return null;
+
+  const delimiterIndex = value.indexOf("/");
+  if (delimiterIndex <= 0 || delimiterIndex >= value.length - 1) return null;
+
+  return {
+    providerID: value.slice(0, delimiterIndex),
+    modelID: value.slice(delimiterIndex + 1),
+  };
+}
+
+function unwrapClientData(payload) {
+  if (!isRecord(payload)) return payload;
+  if (!("data" in payload)) return payload;
+  return payload.data;
+}
+
+function parseBooleanResult(payload) {
+  if (typeof payload === "boolean") return payload;
+  if (!isRecord(payload)) return false;
+  if (typeof payload.data === "boolean") return payload.data;
+  return false;
+}
+
+async function resolveCompactionModel(client) {
+  const configRaw = await client.config.get();
+  const config = unwrapClientData(configRaw);
+
+  if (isRecord(config)) {
+    const modelSpecifier = parseString(config.model);
+    const parsedSpecifier = parseModelSpecifier(modelSpecifier);
+    if (parsedSpecifier) return parsedSpecifier;
+
+    const providerID = parseString(config.providerID) || parseString(config.providerId);
+    const modelID = parseString(config.modelID) || parseString(config.modelId);
+    if (providerID && modelID) {
+      return {
+        providerID,
+        modelID,
+      };
+    }
+  }
+
+  const providersRaw = await client.config.providers();
+  const providers = unwrapClientData(providersRaw);
+  if (!isRecord(providers) || !isRecord(providers.default)) return null;
+
+  for (const [providerID, modelIDValue] of Object.entries(providers.default)) {
+    const modelID = parseString(modelIDValue);
+    if (providerID.length > 0 && modelID) {
+      return {
+        providerID,
+        modelID,
+      };
+    }
+  }
+
+  return null;
+}
+
+async function compactSession(client, sessionID) {
+  const compactionModel = await resolveCompactionModel(client);
+  if (!compactionModel) return false;
+
+  const summarizeResult = await client.session.summarize({
+    path: { id: sessionID },
+    body: compactionModel,
+  });
+
+  return parseBooleanResult(summarizeResult);
+}
+
 async function runGithubPrView($, branch) {
   const raw = await $`gh pr view ${branch} --json number,url,title,state`.nothrow().text();
   return parseGithubPrView(tryParseJson(raw));
@@ -422,18 +495,16 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha,
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
 
-  let compacted = false;
-  if (successful && getMessageCounter(sessionID) === messageCounterAtWatchStart) {
-    await client.session.summarize({
-      path: { id: sessionID },
-      body: {},
-    });
-    compacted = true;
-  }
+  const shouldCompact = successful && getMessageCounter(sessionID) === messageCounterAtWatchStart;
+  const compacted = shouldCompact
+    ? await compactSession(client, sessionID)
+    : false;
 
   const finalMessage = successful
-    ? compacted
-      ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Session compacted because no new messages were sent while CI was running.`
+    ? shouldCompact
+      ? compacted
+        ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Session compacted because no new messages were sent while CI was running.`
+        : `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Tried to compact the session, but it did not complete; run /compact manually.`
       : `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Skipped compaction because new messages were sent while CI was running.`
     : `PR checks finished with failures for ${pr.url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
 
@@ -489,18 +560,16 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha,
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
 
-  let compacted = false;
-  if (successful && getMessageCounter(sessionID) === messageCounterAtWatchStart) {
-    await client.session.summarize({
-      path: { id: sessionID },
-      body: {},
-    });
-    compacted = true;
-  }
+  const shouldCompact = successful && getMessageCounter(sessionID) === messageCounterAtWatchStart;
+  const compacted = shouldCompact
+    ? await compactSession(client, sessionID)
+    : false;
 
   const finalMessage = successful
-    ? compacted
-      ? `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Session compacted because no new messages were sent while CI was running.`
+    ? shouldCompact
+      ? compacted
+        ? `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Session compacted because no new messages were sent while CI was running.`
+        : `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Tried to compact the session, but it did not complete; run /compact manually.`
       : `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Skipped compaction because new messages were sent while CI was running.`
     : `MR pipeline finished with status '${status}' for ${mr.webUrl}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
 
