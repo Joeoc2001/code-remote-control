@@ -4,6 +4,7 @@ const watchedHeadBySession = new Map();
 const messageCounterBySession = new Map();
 
 const pipelinePollIntervalMs = 10_000;
+const autoCompactionEnabled = process.env.OPENCODE_GIT_HYGIENE_AUTO_COMPACT === "1";
 
 const githubCheckBuckets = new Set(["pass", "fail", "pending", "cancel", "skipping"]);
 
@@ -495,7 +496,8 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha,
 
   const { summary, successful } = getGithubChecksSummary(finalChecks);
 
-  const shouldCompact = successful && getMessageCounter(sessionID) === messageCounterAtWatchStart;
+  const noNewMessages = getMessageCounter(sessionID) === messageCounterAtWatchStart;
+  const shouldCompact = successful && autoCompactionEnabled && noNewMessages;
   const compacted = shouldCompact
     ? await compactSession(client, sessionID)
     : false;
@@ -505,7 +507,9 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha,
       ? compacted
         ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Session compacted because no new messages were sent while CI was running.`
         : `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Tried to compact the session, but it did not complete; run /compact manually.`
-      : `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Skipped compaction because new messages were sent while CI was running.`
+      : autoCompactionEnabled
+        ? `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Skipped compaction because new messages were sent while CI was running.`
+        : `PR checks finished successfully for ${pr.url} (pass: ${summary.pass}, skipped: ${summary.skipping}). Auto-compaction is disabled; run /compact manually if you want to compact the session.`
     : `PR checks finished with failures for ${pr.url} (fail: ${summary.fail}, cancel: ${summary.cancel}, pending: ${summary.pending}). Please investigate the failing checks, fix the issues, then commit and push the changes.`;
 
   await sendSessionPrompt(client, sessionID, finalMessage, successful);
@@ -560,7 +564,8 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha,
 
   const { status, successful } = getGitLabPipelineSummary(finalPipeline);
 
-  const shouldCompact = successful && getMessageCounter(sessionID) === messageCounterAtWatchStart;
+  const noNewMessages = getMessageCounter(sessionID) === messageCounterAtWatchStart;
+  const shouldCompact = successful && autoCompactionEnabled && noNewMessages;
   const compacted = shouldCompact
     ? await compactSession(client, sessionID)
     : false;
@@ -570,7 +575,9 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha,
       ? compacted
         ? `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Session compacted because no new messages were sent while CI was running.`
         : `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Tried to compact the session, but it did not complete; run /compact manually.`
-      : `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Skipped compaction because new messages were sent while CI was running.`
+      : autoCompactionEnabled
+        ? `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Skipped compaction because new messages were sent while CI was running.`
+        : `MR pipeline finished successfully for ${mr.webUrl} (status: ${status}). Auto-compaction is disabled; run /compact manually if you want to compact the session.`
     : `MR pipeline finished with status '${status}' for ${mr.webUrl}. Please investigate the pipeline failure, fix the issues, then commit and push the changes.`;
 
   await sendSessionPrompt(client, sessionID, finalMessage, successful);
