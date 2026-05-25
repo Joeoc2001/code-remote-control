@@ -28,8 +28,12 @@ fi
 chmod 600 /tmp/.git-credentials
 
 if [ -n "$REPO_URL" ]; then
-  echo "Cloning $REPO_URL into /workspace..."
-  git clone "$REPO_URL" /workspace
+  if [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
+    echo "Cloning $REPO_URL into /workspace..."
+    git clone "$REPO_URL" /workspace
+  else
+    echo "Directory /workspace already exists and is not empty -- skipping cloning $REPO_URL"
+  fi
 else
   echo "Error: REPO_URL not set"
   exit -1
