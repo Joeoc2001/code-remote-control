@@ -344,16 +344,19 @@ function areGithubChecksEqual(left, right) {
 
 function getGitLabPipelineSummary(pipeline) {
   const status = pipeline?.status || "unknown";
-  const successful = status === "success" || status === "passed";
+  const successful = status === "success" || status === "passed" || isGitLabCancelledStatus(status);
   return { status, successful };
+}
+
+function isGitLabCancelledStatus(status) {
+  return status === "canceled" || status === "cancelled";
 }
 
 function isGitLabPipelineTerminalStatus(status) {
   return status === "success"
     || status === "passed"
     || status === "failed"
-    || status === "canceled"
-    || status === "cancelled"
+    || isGitLabCancelledStatus(status)
     || status === "skipped"
     || status === "manual";
 }
@@ -505,7 +508,23 @@ async function maybeWatchGitLabPipeline({ client, $, sessionID, branch, headSha,
     if (latestPipeline && latestPipeline.sha === headSha) {
       finalPipeline = latestPipeline;
       const { status } = getGitLabPipelineSummary(latestPipeline);
-      if (isGitLabPipelineTerminalStatus(status)) break;
+      if (isGitLabPipelineTerminalStatus(status)) {
+        if (isGitLabCancelledStatus(status)) {
+          const shouldContinue = await waitForNextPoll(watchState, cancelledJobReplacementWaitMs);
+          if (!shouldContinue) return true;
+
+          const replacementPipeline = await runGitLabCiStatus($, branch, headSha);
+          if (replacementPipeline && replacementPipeline.sha === headSha) {
+            finalPipeline = replacementPipeline;
+            const { status: replacementStatus } = getGitLabPipelineSummary(replacementPipeline);
+            if (!isGitLabPipelineTerminalStatus(replacementStatus)) {
+              continue;
+            }
+          }
+        }
+
+        break;
+      }
     }
 
     const shouldContinue = await waitForNextPoll(watchState);
