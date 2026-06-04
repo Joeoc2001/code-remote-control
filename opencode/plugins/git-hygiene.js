@@ -4,6 +4,7 @@ const watchedHeadBySession = new Map();
 const messageCounterBySession = new Map();
 
 const pipelinePollIntervalMs = 10_000;
+const cancelledJobReplacementWaitMs = 10_000;
 
 const githubCheckBuckets = new Set(["pass", "fail", "pending", "cancel", "skipping"]);
 
@@ -320,8 +321,25 @@ function getGithubChecksSummary(checks) {
     }
   }
 
-  const successful = summary.fail === 0 && summary.cancel === 0 && summary.pending === 0;
+  const successful = summary.fail === 0 && summary.pending === 0;
   return { summary, successful };
+}
+
+function areGithubChecksEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+
+  for (let i = 0; i < left.length; i += 1) {
+    const leftCheck = left[i];
+    const rightCheck = right[i];
+    if (!leftCheck || !rightCheck) return false;
+    if (leftCheck.bucket !== rightCheck.bucket) return false;
+    if (leftCheck.name !== rightCheck.name) return false;
+    if (leftCheck.state !== rightCheck.state) return false;
+    if (leftCheck.link !== rightCheck.link) return false;
+  }
+
+  return true;
 }
 
 function getGitLabPipelineSummary(pipeline) {
@@ -401,7 +419,26 @@ async function maybeWatchGithubPipeline({ client, $, sessionID, branch, headSha,
     if (latestChecks && latestChecks.length > 0) {
       finalChecks = latestChecks;
       const { summary } = getGithubChecksSummary(latestChecks);
-      if (summary.pending === 0) break;
+      if (summary.pending === 0) {
+        if (summary.cancel > 0) {
+          const shouldContinue = await waitForNextPoll(watchState, cancelledJobReplacementWaitMs);
+          if (!shouldContinue) return true;
+
+          const replacementChecks = await runGithubPrChecks($, branch);
+          if (replacementChecks && replacementChecks.length > 0) {
+            finalChecks = replacementChecks;
+            const { summary: replacementSummary } = getGithubChecksSummary(replacementChecks);
+            if (replacementSummary.pending > 0) {
+              continue;
+            }
+            if (!areGithubChecksEqual(latestChecks, replacementChecks)) {
+              continue;
+            }
+          }
+        }
+
+        break;
+      }
     }
 
     const shouldContinue = await waitForNextPoll(watchState);
