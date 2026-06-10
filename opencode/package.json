@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "1.14.28"
+    "@opencode-ai/plugin": "1.17.3"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
