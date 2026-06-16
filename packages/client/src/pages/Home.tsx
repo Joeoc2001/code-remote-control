@@ -176,15 +176,17 @@ export default function Home() {
     [metadataByContainerId],
   );
 
-  const handleContainerCreated = (container: ManagedContainer) => {
+  const handleContainersCreated = (createdContainers: ManagedContainer[]) => {
     setContainers((prev) => {
-      if (prev.some((c) => c.id === container.id)) return prev;
-      return [container, ...prev];
+      const existingIds = new Set(prev.map((container) => container.id));
+      const newContainers = createdContainers.filter((container) => !existingIds.has(container.id));
+      if (newContainers.length === 0) return prev;
+      return [...newContainers, ...prev];
     });
-    if (container.status === "running") {
-      void refreshContainerMetadata([container]);
+    const runningContainers = createdContainers.filter((container) => container.status === "running");
+    if (runningContainers.length > 0) {
+      void refreshContainerMetadata(runningContainers);
     }
-    setShowModal(false);
   };
 
   return (
@@ -232,7 +234,7 @@ export default function Home() {
       {showModal && (
         <NewContainerModal
           onClose={() => setShowModal(false)}
-          onCreated={handleContainerCreated}
+          onCreated={handleContainersCreated}
         />
       )}
       {showDeleteAllModal && (

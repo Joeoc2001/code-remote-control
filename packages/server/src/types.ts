@@ -6,8 +6,11 @@ export type {
   ManagedContainer,
   CreateContainerRequest,
   CreateContainerRequestV2,
+  CreateContainersRequest,
+  CreateContainersResponse,
   GitHubRepo,
   GitLabRepo,
+  RepoWorkItem,
   RepoSource,
   SSEEvent,
 } from "@crc/shared";

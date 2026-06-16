@@ -45,4 +45,17 @@ echo "Starting container metadata server..."
 tsx /opt/crc/packages/container-metadata-server/src/index.ts &
 
 echo "Starting opencode..."
-exec opencode web --port 8080 --hostname 0.0.0.0
+opencode web --port 8080 --hostname 0.0.0.0 &
+OPENCODE_PID=$!
+trap 'kill "$OPENCODE_PID" 2>/dev/null || true' TERM INT
+
+if [ -n "$CRC_INITIAL_PROMPT" ]; then
+  (
+    until curl -fsS http://127.0.0.1:8080/global/health >/dev/null; do
+      sleep 1
+    done
+    opencode run --attach http://127.0.0.1:8080 --dir /workspace "$CRC_INITIAL_PROMPT"
+  ) &
+fi
+
+wait "$OPENCODE_PID"

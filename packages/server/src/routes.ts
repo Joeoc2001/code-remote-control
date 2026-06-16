@@ -14,10 +14,11 @@ import {
   addSSEClient,
   removeSSEClient,
   broadcastRemoval,
+  pullLatestImage,
 } from "./docker.js";
-import { fetchRepos as fetchGitHubRepos } from "./github.js";
-import { fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
-import type { CreateContainerRequestV2, RepoSource } from "./types.js";
+import { fetchOpenIssues as fetchGitHubOpenIssues, fetchRepos as fetchGitHubRepos } from "./github.js";
+import { fetchOpenIssuesAndWorkItems as fetchGitLabOpenIssuesAndWorkItems, fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
+import type { CreateContainerRequestV2, CreateContainersRequest, ManagedContainer, RepoSource } from "./types.js";
 import type { ContainerCodeStatus } from "@crc/container-metadata-types";
 
 export const router = Router();
@@ -27,7 +28,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CODE_STATUS_CACHE_TTL_MS = 30_000;
 const codeStatusCache = new Map<string, { data: ContainerCodeStatus; expiresAt: number }>();
 
-const REPO_NAME_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+const REPO_NAME_RE = /^[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)+$/;
+const VALID_REPO_SOURCES: RepoSource[] = ["github", "gitlab"];
 
 function getBuildId(): string {
   try {
@@ -41,6 +43,10 @@ function getBuildId(): string {
 
 function isValidContainerId(id: string): boolean {
   return /^[a-f0-9]+$/.test(id) && id.length >= 12 && id.length <= 64;
+}
+
+function isValidRepoSource(value: unknown): value is RepoSource {
+  return typeof value === "string" && VALID_REPO_SOURCES.includes(value as RepoSource);
 }
 
 router.get("/api/containers", async (_req, res) => {
@@ -74,7 +80,7 @@ router.get("/api/containers/:id", async (req, res) => {
 
 router.post("/api/containers", async (req, res) => {
   try {
-    const { configName, repoFullName, repoSource = "github" } = req.body as CreateContainerRequestV2;
+    const { configName, repoFullName, repoSource = "github", initialPrompt } = req.body as CreateContainerRequestV2;
 
     if (!configName || !repoFullName) {
       res.status(400).json({ error: "configName and repoFullName are required" });
@@ -82,13 +88,17 @@ router.post("/api/containers", async (req, res) => {
     }
 
     if (!REPO_NAME_RE.test(repoFullName)) {
-      res.status(400).json({ error: "repoFullName must be in owner/repo format" });
+      res.status(400).json({ error: "repoFullName must be in namespace/repo format" });
       return;
     }
 
-    const validSources: RepoSource[] = ["github", "gitlab"];
-    if (!validSources.includes(repoSource)) {
+    if (!isValidRepoSource(repoSource)) {
       res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+      return;
+    }
+
+    if (initialPrompt !== undefined && typeof initialPrompt !== "string") {
+      res.status(400).json({ error: "initialPrompt must be a string" });
       return;
     }
 
@@ -99,11 +109,65 @@ router.post("/api/containers", async (req, res) => {
       return;
     }
 
-    const container = await createContainer(configs, config, repoFullName, repoSource);
+    const container = await createContainer(configs, config, repoFullName, repoSource, { initialPrompt });
     res.status(201).json(container);
   } catch (err) {
     console.error("Error creating container:", err);
     res.status(500).json({ error: "Failed to create container" });
+  }
+});
+
+router.post("/api/containers/many", async (req, res) => {
+  try {
+    const { configName, repoFullName, repoSource = "github", prompts } = req.body as CreateContainersRequest;
+
+    if (!configName || !repoFullName || !Array.isArray(prompts)) {
+      res.status(400).json({ error: "configName, repoFullName, and prompts are required" });
+      return;
+    }
+
+    if (!REPO_NAME_RE.test(repoFullName)) {
+      res.status(400).json({ error: "repoFullName must be in namespace/repo format" });
+      return;
+    }
+
+    if (!isValidRepoSource(repoSource)) {
+      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+      return;
+    }
+
+    if (prompts.length === 0 || prompts.some((prompt) => typeof prompt !== "string" || prompt.trim().length === 0)) {
+      res.status(400).json({ error: "prompts must contain at least one non-empty string" });
+      return;
+    }
+
+    const configs = await loadConfigurations();
+    const config = configs.configurations.find((c) => c.name === configName);
+    if (!config) {
+      res.status(400).json({ error: `Configuration '${configName}' not found` });
+      return;
+    }
+
+    await pullLatestImage();
+
+    const containers: ManagedContainer[] = [];
+    const errors: Array<{ prompt: string; error: string }> = [];
+    for (const prompt of prompts) {
+      try {
+        const container = await createContainer(configs, config, repoFullName, repoSource, {
+          initialPrompt: prompt,
+          pullImage: false,
+        });
+        containers.push(container);
+      } catch (err) {
+        errors.push({ prompt, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    res.status(errors.length > 0 ? 207 : 201).json({ containers, errors });
+  } catch (err) {
+    console.error("Error creating containers:", err);
+    res.status(500).json({ error: "Failed to create containers" });
   }
 });
 
@@ -266,6 +330,37 @@ router.get("/api/gitlab/repos", async (_req, res) => {
   } catch (err) {
     console.error("Error fetching GitLab repos:", err);
     res.status(500).json({ error: "Failed to fetch GitLab repositories" });
+  }
+});
+
+router.get("/api/repo-work-items", async (req, res) => {
+  try {
+    const repoFullName = typeof req.query.repoFullName === "string" ? req.query.repoFullName : "";
+    const repoSource = typeof req.query.repoSource === "string" ? req.query.repoSource : "github";
+
+    if (!repoFullName) {
+      res.status(400).json({ error: "repoFullName is required" });
+      return;
+    }
+
+    if (!REPO_NAME_RE.test(repoFullName)) {
+      res.status(400).json({ error: "repoFullName must be in namespace/repo format" });
+      return;
+    }
+
+    if (!isValidRepoSource(repoSource)) {
+      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+      return;
+    }
+
+    const items = repoSource === "github"
+      ? await fetchGitHubOpenIssues(repoFullName)
+      : await fetchGitLabOpenIssuesAndWorkItems(repoFullName);
+
+    res.json({ items });
+  } catch (err) {
+    console.error("Error fetching repo work items:", err);
+    res.status(500).json({ error: "Failed to fetch repository work items" });
   }
 });
 

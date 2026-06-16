@@ -31,6 +31,11 @@ type DockerDevice = NonNullable<DockerConfig["devices"]>[number];
 type DockerDeviceRequest = NonNullable<DockerConfig["device_requests"]>[number];
 type DockerUlimit = NonNullable<DockerConfig["ulimits"]>[number];
 
+interface CreateContainerOptions {
+  initialPrompt?: string;
+  pullImage?: boolean;
+}
+
 function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConfig {
   return {
     AutoRemove: dockerConfig?.auto_remove ?? false,
@@ -285,9 +290,12 @@ export async function createContainer(
   appConfig: ConfigFile,
   config: EnvironmentConfig,
   repoFullName: string,
-  repoSource: RepoSource = "github"
+  repoSource: RepoSource = "github",
+  options: CreateContainerOptions = {},
 ): Promise<ManagedContainer> {
-  await pullLatestImage();
+  if (options.pullImage !== false) {
+    await pullLatestImage();
+  }
 
   const gitlabUrl = appConfig.gitlab_url || "https://gitlab.com";
 
@@ -308,6 +316,7 @@ export async function createContainer(
     `CRC_METADATA_PORT=${CONTAINER_METADATA_INTERNAL_PORT}`,
     `GIT_USER_NAME=${appConfig.git.username}`,
     `GIT_USER_EMAIL=${appConfig.git.email}`,
+    ...(options.initialPrompt ? [`CRC_INITIAL_PROMPT=${options.initialPrompt}`] : []),
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
 
