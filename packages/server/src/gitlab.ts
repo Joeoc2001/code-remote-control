@@ -122,10 +122,14 @@ async function fetchGitLabItems(
 
 export async function fetchOpenIssuesAndWorkItems(repoFullName: string): Promise<RepoWorkItem[]> {
   if (!isGitLabConfigured()) return [];
-  const [issues, workItems] = await Promise.all([
-    fetchGitLabItems(repoFullName, "issues"),
-    fetchGitLabItems(repoFullName, "work_items"),
-  ]);
+  const issues = await fetchGitLabItems(repoFullName, "issues");
+  let workItems: RepoWorkItem[] = [];
+
+  try {
+    workItems = await fetchGitLabItems(repoFullName, "work_items");
+  } catch (err) {
+    console.warn("GitLab work items unavailable:", err);
+  }
 
   const seenUrls = new Set<string>();
   return [...issues, ...workItems].filter((item) => {

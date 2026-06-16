@@ -28,8 +28,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CODE_STATUS_CACHE_TTL_MS = 30_000;
 const codeStatusCache = new Map<string, { data: ContainerCodeStatus; expiresAt: number }>();
 
-const REPO_NAME_RE = /^[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)+$/;
 const VALID_REPO_SOURCES: RepoSource[] = ["github", "gitlab"];
+const GITHUB_REPO_NAME_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+const GITLAB_REPO_NAME_RE = /^[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)+$/;
+const MAX_BULK_PROMPTS = 25;
 
 function getBuildId(): string {
   try {
@@ -47,6 +49,14 @@ function isValidContainerId(id: string): boolean {
 
 function isValidRepoSource(value: unknown): value is RepoSource {
   return typeof value === "string" && VALID_REPO_SOURCES.includes(value as RepoSource);
+}
+
+function getRepoNameError(repoFullName: string, repoSource: RepoSource): string | null {
+  if (repoSource === "github") {
+    return GITHUB_REPO_NAME_RE.test(repoFullName) ? null : "GitHub repoFullName must be in owner/repo format";
+  }
+
+  return GITLAB_REPO_NAME_RE.test(repoFullName) ? null : "GitLab repoFullName must be in namespace/repo format";
 }
 
 router.get("/api/containers", async (_req, res) => {
@@ -87,13 +97,14 @@ router.post("/api/containers", async (req, res) => {
       return;
     }
 
-    if (!REPO_NAME_RE.test(repoFullName)) {
-      res.status(400).json({ error: "repoFullName must be in namespace/repo format" });
+    if (!isValidRepoSource(repoSource)) {
+      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
       return;
     }
 
-    if (!isValidRepoSource(repoSource)) {
-      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+    const repoNameError = getRepoNameError(repoFullName, repoSource);
+    if (repoNameError) {
+      res.status(400).json({ error: repoNameError });
       return;
     }
 
@@ -126,18 +137,24 @@ router.post("/api/containers/many", async (req, res) => {
       return;
     }
 
-    if (!REPO_NAME_RE.test(repoFullName)) {
-      res.status(400).json({ error: "repoFullName must be in namespace/repo format" });
-      return;
-    }
-
     if (!isValidRepoSource(repoSource)) {
       res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
       return;
     }
 
+    const repoNameError = getRepoNameError(repoFullName, repoSource);
+    if (repoNameError) {
+      res.status(400).json({ error: repoNameError });
+      return;
+    }
+
     if (prompts.length === 0 || prompts.some((prompt) => typeof prompt !== "string" || prompt.trim().length === 0)) {
       res.status(400).json({ error: "prompts must contain at least one non-empty string" });
+      return;
+    }
+
+    if (prompts.length > MAX_BULK_PROMPTS) {
+      res.status(400).json({ error: `Cannot create more than ${MAX_BULK_PROMPTS} containers at once` });
       return;
     }
 
@@ -343,13 +360,14 @@ router.get("/api/repo-work-items", async (req, res) => {
       return;
     }
 
-    if (!REPO_NAME_RE.test(repoFullName)) {
-      res.status(400).json({ error: "repoFullName must be in namespace/repo format" });
+    if (!isValidRepoSource(repoSource)) {
+      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
       return;
     }
 
-    if (!isValidRepoSource(repoSource)) {
-      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+    const repoNameError = getRepoNameError(repoFullName, repoSource);
+    if (repoNameError) {
+      res.status(400).json({ error: repoNameError });
       return;
     }
 
