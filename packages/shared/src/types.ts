@@ -143,6 +143,15 @@ export interface RepoWorkItem {
   kind: "issue" | "work_item";
 }
 
+export interface RepoReviewRequest {
+  id: string;
+  reference: string;
+  title: string;
+  url: string;
+  body: string | null;
+  kind: "pull_request" | "merge_request";
+}
+
 export type SSEEvent =
   | { type: "container-updated"; data: ManagedContainer }
   | { type: "container-removed"; data: { id: string } };

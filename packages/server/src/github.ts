@@ -1,4 +1,4 @@
-import type { GitHubRepo, RepoWorkItem } from "./types.js";
+import type { GitHubRepo, RepoReviewRequest, RepoWorkItem } from "./types.js";
 import { GITHUB_TOKEN } from "./config.js";
 
 const MAX_PAGES = 10;
@@ -95,6 +95,53 @@ export async function fetchOpenIssues(repoFullName: string): Promise<RepoWorkIte
         url: issue.html_url,
         body: issue.body,
         kind: "issue",
+      });
+    }
+
+    if (data.length < perPage) break;
+    page++;
+  }
+
+  return items;
+}
+
+export async function fetchOpenPullRequests(repoFullName: string): Promise<RepoReviewRequest[]> {
+  const items: RepoReviewRequest[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  while (page <= MAX_PAGES) {
+    const response = await fetch(
+      `https://api.github.com/repos/${repoFullName}/pulls?state=open&per_page=${perPage}&page=${page}`,
+      {
+        headers: {
+          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as Array<{
+      number: number;
+      title: string;
+      html_url: string;
+      body: string | null;
+    }>;
+
+    if (data.length === 0) break;
+
+    for (const pullRequest of data) {
+      items.push({
+        id: String(pullRequest.number),
+        reference: `#${pullRequest.number}`,
+        title: pullRequest.title,
+        url: pullRequest.html_url,
+        body: pullRequest.body,
+        kind: "pull_request",
       });
     }
 

@@ -6,6 +6,7 @@ export type {
   GitLabRepo,
   CreateContainersResponse,
   RepoWorkItem,
+  RepoReviewRequest,
   RepoSource,
 } from "@crc/shared";
 

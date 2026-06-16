@@ -1,4 +1,4 @@
-import type { GitLabRepo, RepoWorkItem } from "./types.js";
+import type { GitLabRepo, RepoReviewRequest, RepoWorkItem } from "./types.js";
 import { GITLAB_TOKEN, loadConfigurations } from "./config.js";
 
 const MAX_PAGES = 10;
@@ -137,4 +137,57 @@ export async function fetchOpenIssuesAndWorkItems(repoFullName: string): Promise
     seenUrls.add(item.url);
     return true;
   });
+}
+
+export async function fetchOpenMergeRequests(repoFullName: string): Promise<RepoReviewRequest[]> {
+  if (!isGitLabConfigured()) return [];
+
+  const config = await loadConfigurations();
+  const gitlabUrl = config.gitlab_url || "https://gitlab.com";
+  const apiBase = gitlabUrl.replace(/\/+$/, "");
+  const encodedProject = encodeURIComponent(repoFullName);
+  const items: RepoReviewRequest[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  while (page <= MAX_PAGES) {
+    const response = await fetch(
+      `${apiBase}/api/v4/projects/${encodedProject}/merge_requests?state=opened&per_page=${perPage}&page=${page}`,
+      {
+        headers: {
+          "PRIVATE-TOKEN": GITLAB_TOKEN,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`GitLab API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as Array<{
+      id: number;
+      iid: number;
+      title: string;
+      web_url: string;
+      description: string | null;
+    }>;
+
+    if (data.length === 0) break;
+
+    for (const mergeRequest of data) {
+      items.push({
+        id: String(mergeRequest.id),
+        reference: `!${mergeRequest.iid}`,
+        title: mergeRequest.title,
+        url: mergeRequest.web_url,
+        body: mergeRequest.description,
+        kind: "merge_request",
+      });
+    }
+
+    if (data.length < perPage) break;
+    page++;
+  }
+
+  return items;
 }

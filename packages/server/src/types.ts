@@ -11,6 +11,7 @@ export type {
   GitHubRepo,
   GitLabRepo,
   RepoWorkItem,
+  RepoReviewRequest,
   RepoSource,
   SSEEvent,
 } from "@crc/shared";

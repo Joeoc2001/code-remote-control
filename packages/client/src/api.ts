@@ -5,6 +5,7 @@ import type {
   GitLabRepo,
   RepoSource,
   CreateContainersResponse,
+  RepoReviewRequest,
   RepoWorkItem,
   ContainerCodeStatus,
 } from "./types";
@@ -88,6 +89,14 @@ export async function fetchRepoWorkItems(repoFullName: string, repoSource: RepoS
   const params = new URLSearchParams({ repoFullName, repoSource });
   const res = await fetch(`${BASE}/repo-work-items?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch repository work items");
+  const data = await res.json();
+  return data.items;
+}
+
+export async function fetchRepoReviewRequests(repoFullName: string, repoSource: RepoSource): Promise<RepoReviewRequest[]> {
+  const params = new URLSearchParams({ repoFullName, repoSource });
+  const res = await fetch(`${BASE}/repo-review-requests?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch repository review requests");
   const data = await res.json();
   return data.items;
 }

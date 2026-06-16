@@ -16,8 +16,8 @@ import {
   broadcastRemoval,
   pullLatestImage,
 } from "./docker.js";
-import { fetchOpenIssues as fetchGitHubOpenIssues, fetchRepos as fetchGitHubRepos } from "./github.js";
-import { fetchOpenIssuesAndWorkItems as fetchGitLabOpenIssuesAndWorkItems, fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
+import { fetchOpenIssues as fetchGitHubOpenIssues, fetchOpenPullRequests as fetchGitHubOpenPullRequests, fetchRepos as fetchGitHubRepos } from "./github.js";
+import { fetchOpenIssuesAndWorkItems as fetchGitLabOpenIssuesAndWorkItems, fetchOpenMergeRequests as fetchGitLabOpenMergeRequests, fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
 import type { CreateContainerRequestV2, CreateContainersRequest, ManagedContainer, RepoSource } from "./types.js";
 import type { ContainerCodeStatus } from "@crc/container-metadata-types";
 
@@ -379,6 +379,38 @@ router.get("/api/repo-work-items", async (req, res) => {
   } catch (err) {
     console.error("Error fetching repo work items:", err);
     res.status(500).json({ error: "Failed to fetch repository work items" });
+  }
+});
+
+router.get("/api/repo-review-requests", async (req, res) => {
+  try {
+    const repoFullName = typeof req.query.repoFullName === "string" ? req.query.repoFullName : "";
+    const repoSource = typeof req.query.repoSource === "string" ? req.query.repoSource : "github";
+
+    if (!repoFullName) {
+      res.status(400).json({ error: "repoFullName is required" });
+      return;
+    }
+
+    if (!isValidRepoSource(repoSource)) {
+      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+      return;
+    }
+
+    const repoNameError = getRepoNameError(repoFullName, repoSource);
+    if (repoNameError) {
+      res.status(400).json({ error: repoNameError });
+      return;
+    }
+
+    const items = repoSource === "github"
+      ? await fetchGitHubOpenPullRequests(repoFullName)
+      : await fetchGitLabOpenMergeRequests(repoFullName);
+
+    res.json({ items });
+  } catch (err) {
+    console.error("Error fetching repo review requests:", err);
+    res.status(500).json({ error: "Failed to fetch repository review requests" });
   }
 });
 
