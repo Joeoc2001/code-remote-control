@@ -4,6 +4,9 @@ export type {
   EnvironmentConfig,
   GitHubRepo,
   GitLabRepo,
+  CreateContainersResponse,
+  RepoWorkItem,
+  RepoReviewRequest,
   RepoSource,
 } from "@crc/shared";
 

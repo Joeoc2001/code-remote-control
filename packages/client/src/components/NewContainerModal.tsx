@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import type { EnvironmentConfig, ManagedContainer, RepoSource } from "../types";
-import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, createContainer } from "../api";
+import type { EnvironmentConfig, ManagedContainer, RepoReviewRequest, RepoSource, RepoWorkItem } from "../types";
+import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, createContainer, createContainers, fetchRepoReviewRequests, fetchRepoWorkItems } from "../api";
 
 interface NewContainerModalProps {
   onClose: () => void;
-  onCreated: (container: ManagedContainer) => void;
+  onCreated: (containers: ManagedContainer[]) => void;
 }
 
 type RepoEntry = {
@@ -12,6 +12,22 @@ type RepoEntry = {
   description: string | null;
   source: RepoSource;
 };
+
+const ISSUE_PROMPT_SUFFIX = "Ensure your implementation is thoroughly tested and is clearly correct from the test output. If you struggle to complete this in its entirety for any reason, including the task being too large, comment your findings and then stop.";
+
+type SpawnManyMode = "issues" | "reviewRequests" | "reviewComments" | "text";
+
+function buildIssuePrompt(item: RepoWorkItem): string {
+  return `Address issue ${item.reference} at ${item.url}. ${ISSUE_PROMPT_SUFFIX}`;
+}
+
+function buildReviewRequestPrompt(item: RepoReviewRequest): string {
+  return `Review ${item.kind === "merge_request" ? "merge request" : "pull request"} ${item.reference} at ${item.url}, leaving comments with suggestions and recommendations.`;
+}
+
+function buildReviewCommentsPrompt(item: RepoReviewRequest): string {
+  return `Address all open comments on ${item.kind === "merge_request" ? "merge request" : "pull request"} ${item.reference} at ${item.url}, closing comments as they are resolved.`;
+}
 
 export default function NewContainerModal({
   onClose,
@@ -27,6 +43,9 @@ export default function NewContainerModal({
   const [loading, setLoading] = useState(true);
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSpawnMany, setShowSpawnMany] = useState(false);
+  const [spawnManyMode, setSpawnManyMode] = useState<SpawnManyMode>("issues");
+  const [pastedText, setPastedText] = useState("");
 
   useEffect(() => {
     Promise.all([fetchConfigs(), fetchGitHubRepos(), fetchGitLabRepos()])
@@ -77,12 +96,82 @@ export default function NewContainerModal({
     setError(null);
     try {
       const container = await createContainer(selectedConfig, selectedRepo.fullName, selectedRepo.source);
-      onCreated(container);
+      onCreated([container]);
+      onClose();
     } catch (err) {
       setError("Failed to spawn container: " + String(err));
     } finally {
       setSpawning(false);
     }
+  };
+
+  const handleSpawnMany = async () => {
+    if (!selectedConfig || !selectedRepo) return;
+    setSpawning(true);
+    setError(null);
+
+    try {
+      const prompts = await buildSpawnManyPrompts(selectedRepo);
+
+      if (prompts.length === 0) {
+        setError(getEmptySpawnManyError(selectedRepo));
+        return;
+      }
+
+      if (!window.confirm(`Spawn ${prompts.length} containers?`)) return;
+
+      const result = await createContainers(selectedConfig, selectedRepo.fullName, selectedRepo.source, prompts);
+      if (result.containers.length > 0) {
+        onCreated(result.containers);
+      }
+
+      if (result.errors.length > 0) {
+        setError(`Spawned ${result.containers.length} containers, ${result.errors.length} failed.`);
+        return;
+      }
+
+      onClose();
+    } catch (err) {
+      setError("Failed to spawn containers: " + String(err));
+    } finally {
+      setSpawning(false);
+    }
+  };
+
+  const buildSpawnManyPrompts = async (repo: RepoEntry): Promise<string[]> => {
+    if (spawnManyMode === "issues") {
+      return (await fetchRepoWorkItems(repo.fullName, repo.source)).map(buildIssuePrompt);
+    }
+
+    if (spawnManyMode === "reviewRequests") {
+      return (await fetchRepoReviewRequests(repo.fullName, repo.source)).map(buildReviewRequestPrompt);
+    }
+
+    if (spawnManyMode === "reviewComments") {
+      return (await fetchRepoReviewRequests(repo.fullName, repo.source)).map(buildReviewCommentsPrompt);
+    }
+
+    return pastedText.split("\n").map((line) => line.trim()).filter(Boolean);
+  };
+
+  const getEmptySpawnManyError = (repo: RepoEntry): string => {
+    if (spawnManyMode === "issues") {
+      return "No open issues or work items found";
+    }
+
+    if (spawnManyMode === "reviewRequests" || spawnManyMode === "reviewComments") {
+      return `No open ${repo.source === "gitlab" ? "merge requests" : "pull requests"} found`;
+    }
+
+    return "Paste at least one non-empty line";
+  };
+
+  const getSpawnManyButtonLabel = (): string => {
+    if (spawning) return "Spawning...";
+    if (spawnManyMode === "issues") return "Spawn Issue Containers";
+    if (spawnManyMode === "reviewRequests") return "Spawn Review Containers";
+    if (spawnManyMode === "reviewComments") return "Spawn Comment Fix Containers";
+    return "Spawn Pasted Containers";
   };
 
   return (
@@ -92,7 +181,7 @@ export default function NewContainerModal({
         if (e.target === e.currentTarget && !spawning) onClose();
       }}
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg mx-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-2xl mx-4">
         <div className="flex items-center justify-between p-5 border-b border-slate-800">
           <h2 className="text-lg font-semibold text-slate-100">New Container</h2>
           <button
@@ -186,6 +275,78 @@ export default function NewContainerModal({
                 </div>
               </div>
 
+              {showSpawnMany && (
+                <div className="border border-slate-700 rounded-xl bg-slate-950/40 p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-100">Spawn Many</h3>
+                      <p className="text-xs text-slate-500 mt-0.5">Creates one container per selected input using the repository above.</p>
+                    </div>
+                    <div className="grid grid-cols-2 rounded-lg border border-slate-700 overflow-hidden sm:flex">
+                      <button
+                        type="button"
+                        onClick={() => setSpawnManyMode("issues")}
+                        className={`px-3 py-1.5 text-xs ${spawnManyMode === "issues" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
+                      >
+                        Issues
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpawnManyMode("reviewRequests")}
+                        className={`px-3 py-1.5 text-xs border-l border-slate-700 ${spawnManyMode === "reviewRequests" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
+                      >
+                        Review PR/MRs
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpawnManyMode("reviewComments")}
+                        className={`px-3 py-1.5 text-xs border-t border-slate-700 sm:border-t-0 sm:border-l ${spawnManyMode === "reviewComments" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
+                      >
+                        Fix Comments
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpawnManyMode("text")}
+                        className={`px-3 py-1.5 text-xs border-l border-t border-slate-700 sm:border-t-0 ${spawnManyMode === "text" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
+                      >
+                        Pasted Text
+                      </button>
+                    </div>
+                  </div>
+
+                  {spawnManyMode === "issues" ? (
+                    <p className="text-sm text-slate-400">
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "issue and work item" : "issue"} on the selected repository.
+                    </p>
+                  ) : spawnManyMode === "reviewRequests" ? (
+                    <p className="text-sm text-slate-400">
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} to review it and leave comments with suggestions and recommendations.
+                    </p>
+                  ) : spawnManyMode === "reviewComments" ? (
+                    <p className="text-sm text-slate-400">
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} to address all open comments and close them as they are resolved.
+                    </p>
+                  ) : (
+                    <textarea
+                      value={pastedText}
+                      onChange={(e) => setPastedText(e.target.value)}
+                      placeholder="One prompt per line..."
+                      rows={6}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm resize-y"
+                    />
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleSpawnMany}
+                    disabled={!selectedConfig || !selectedRepo || spawning || loading}
+                    className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {getSpawnManyButtonLabel()}
+                  </button>
+                </div>
+              )}
+
               {error && (
                 <div className="text-rose-300 text-sm bg-rose-900/20 border border-rose-800 rounded-lg p-3">
                   {error}
@@ -201,6 +362,13 @@ export default function NewContainerModal({
             className="px-4 py-2 text-sm text-slate-400 hover:text-slate-100 transition-colors"
           >
             Cancel
+          </button>
+          <button
+            onClick={() => setShowSpawnMany((value) => !value)}
+            disabled={!selectedConfig || !selectedRepo || spawning || loading}
+            className="px-4 py-2 text-sm text-slate-300 hover:text-slate-100 border border-slate-700 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Spawn Many
           </button>
           <button
             onClick={handleSpawn}

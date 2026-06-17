@@ -4,6 +4,9 @@ import type {
   GitHubRepo,
   GitLabRepo,
   RepoSource,
+  CreateContainersResponse,
+  RepoReviewRequest,
+  RepoWorkItem,
   ContainerCodeStatus,
 } from "./types";
 
@@ -18,14 +21,30 @@ export async function fetchContainers(): Promise<ManagedContainer[]> {
 export async function createContainer(
   configName: string,
   repoFullName: string,
-  repoSource: RepoSource = "github"
+  repoSource: RepoSource = "github",
+  initialPrompt?: string,
 ): Promise<ManagedContainer> {
   const res = await fetch(`${BASE}/containers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ configName, repoFullName, repoSource }),
+    body: JSON.stringify({ configName, repoFullName, repoSource, initialPrompt }),
   });
   if (!res.ok) throw new Error("Failed to create container");
+  return res.json();
+}
+
+export async function createContainers(
+  configName: string,
+  repoFullName: string,
+  repoSource: RepoSource,
+  prompts: string[],
+): Promise<CreateContainersResponse> {
+  const res = await fetch(`${BASE}/containers/many`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ configName, repoFullName, repoSource, prompts }),
+  });
+  if (!res.ok && res.status !== 207) throw new Error("Failed to create containers");
   return res.json();
 }
 
@@ -64,6 +83,22 @@ export async function fetchGitLabRepos(): Promise<{ repos: GitLabRepo[]; configu
   const res = await fetch(`${BASE}/gitlab/repos`);
   if (!res.ok) throw new Error("Failed to fetch GitLab repos");
   return res.json();
+}
+
+export async function fetchRepoWorkItems(repoFullName: string, repoSource: RepoSource): Promise<RepoWorkItem[]> {
+  const params = new URLSearchParams({ repoFullName, repoSource });
+  const res = await fetch(`${BASE}/repo-work-items?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch repository work items");
+  const data = await res.json();
+  return data.items;
+}
+
+export async function fetchRepoReviewRequests(repoFullName: string, repoSource: RepoSource): Promise<RepoReviewRequest[]> {
+  const params = new URLSearchParams({ repoFullName, repoSource });
+  const res = await fetch(`${BASE}/repo-review-requests?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch repository review requests");
+  const data = await res.json();
+  return data.items;
 }
 
 export async function fetchBuildInfo(): Promise<{ buildId: string }> {

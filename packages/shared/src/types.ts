@@ -119,6 +119,37 @@ export interface CreateContainerRequestV2 {
   configName: string;
   repoFullName: string;
   repoSource: RepoSource;
+  initialPrompt?: string;
+}
+
+export interface CreateContainersRequest {
+  configName: string;
+  repoFullName: string;
+  repoSource: RepoSource;
+  prompts: string[];
+}
+
+export interface CreateContainersResponse {
+  containers: ManagedContainer[];
+  errors: Array<{ prompt: string; error: string }>;
+}
+
+export interface RepoWorkItem {
+  id: string;
+  reference: string;
+  title: string;
+  url: string;
+  body: string | null;
+  kind: "issue" | "work_item";
+}
+
+export interface RepoReviewRequest {
+  id: string;
+  reference: string;
+  title: string;
+  url: string;
+  body: string | null;
+  kind: "pull_request" | "merge_request";
 }
 
 export type SSEEvent =
