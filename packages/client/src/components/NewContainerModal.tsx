@@ -46,6 +46,7 @@ export default function NewContainerModal({
   const [showSpawnMany, setShowSpawnMany] = useState(false);
   const [spawnManyMode, setSpawnManyMode] = useState<SpawnManyMode>("issues");
   const [pastedText, setPastedText] = useState("");
+  const [spawnItems, setSpawnItems] = useState<{ prompt: string; selected: boolean }[] | null>(null);
 
   useEffect(() => {
     Promise.all([fetchConfigs(), fetchGitHubRepos(), fetchGitLabRepos()])
@@ -84,6 +85,10 @@ export default function NewContainerModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
+  useEffect(() => {
+    setSpawnItems(null);
+  }, [spawnManyMode, selectedRepo, pastedText, showSpawnMany]);
+
   const filteredRepos = repos.filter((r) => {
     const matchesSearch = r.fullName.toLowerCase().includes(repoSearch.toLowerCase());
     const matchesSource = sourceFilter === "all" || r.source === sourceFilter;
@@ -105,7 +110,7 @@ export default function NewContainerModal({
     }
   };
 
-  const handleSpawnMany = async () => {
+  const handlePrepareSpawnMany = async () => {
     if (!selectedConfig || !selectedRepo) return;
     setSpawning(true);
     setError(null);
@@ -118,8 +123,27 @@ export default function NewContainerModal({
         return;
       }
 
-      if (!window.confirm(`Spawn ${prompts.length} containers?`)) return;
+      setSpawnItems(prompts.map((prompt) => ({ prompt, selected: true })));
+    } catch (err) {
+      setError("Failed to load items: " + String(err));
+    } finally {
+      setSpawning(false);
+    }
+  };
 
+  const handleSpawnMany = async () => {
+    if (!selectedConfig || !selectedRepo || !spawnItems) return;
+    const prompts = spawnItems.filter((item) => item.selected).map((item) => item.prompt);
+
+    if (prompts.length === 0) {
+      setError("Select at least one item to spawn");
+      return;
+    }
+
+    setSpawning(true);
+    setError(null);
+
+    try {
       const result = await createContainers(selectedConfig, selectedRepo.fullName, selectedRepo.source, prompts);
       if (result.containers.length > 0) {
         onCreated(result.containers);
@@ -136,6 +160,16 @@ export default function NewContainerModal({
     } finally {
       setSpawning(false);
     }
+  };
+
+  const toggleSpawnItem = (index: number) => {
+    setSpawnItems((items) =>
+      items ? items.map((item, i) => (i === index ? { ...item, selected: !item.selected } : item)) : items,
+    );
+  };
+
+  const setAllSpawnItems = (selected: boolean) => {
+    setSpawnItems((items) => (items ? items.map((item) => ({ ...item, selected })) : items));
   };
 
   const buildSpawnManyPrompts = async (repo: RepoEntry): Promise<string[]> => {
@@ -166,13 +200,15 @@ export default function NewContainerModal({
     return "Paste at least one non-empty line";
   };
 
-  const getSpawnManyButtonLabel = (): string => {
-    if (spawning) return "Spawning...";
-    if (spawnManyMode === "issues") return "Spawn Issue Containers";
-    if (spawnManyMode === "reviewRequests") return "Spawn Review Containers";
-    if (spawnManyMode === "reviewComments") return "Spawn Comment Fix Containers";
-    return "Spawn Pasted Containers";
+  const getPrepareButtonLabel = (): string => {
+    if (spawning) return "Loading...";
+    if (spawnManyMode === "issues") return "Preview Issue Containers";
+    if (spawnManyMode === "reviewRequests") return "Preview Review Containers";
+    if (spawnManyMode === "reviewComments") return "Preview Comment Fix Containers";
+    return "Preview Pasted Containers";
   };
+
+  const selectedSpawnCount = spawnItems ? spawnItems.filter((item) => item.selected).length : 0;
 
   return (
     <div
@@ -336,14 +372,64 @@ export default function NewContainerModal({
                     />
                   )}
 
-                  <button
-                    type="button"
-                    onClick={handleSpawnMany}
-                    disabled={!selectedConfig || !selectedRepo || spawning || loading}
-                    className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {getSpawnManyButtonLabel()}
-                  </button>
+                  {spawnItems === null ? (
+                    <button
+                      type="button"
+                      onClick={handlePrepareSpawnMany}
+                      disabled={!selectedConfig || !selectedRepo || spawning || loading}
+                      className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {getPrepareButtonLabel()}
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400">
+                          {selectedSpawnCount} of {spawnItems.length} selected
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setAllSpawnItems(true)}
+                            className="text-xs text-slate-400 hover:text-slate-100"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAllSpawnItems(false)}
+                            className="text-xs text-slate-400 hover:text-slate-100"
+                          >
+                            Deselect all
+                          </button>
+                        </div>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto border border-slate-700 rounded-lg divide-y divide-slate-800">
+                        {spawnItems.map((item, index) => (
+                          <label
+                            key={index}
+                            className="flex items-start gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={item.selected}
+                              onChange={() => toggleSpawnItem(index)}
+                              className="mt-0.5 accent-indigo-500"
+                            />
+                            <span className="break-words">{item.prompt}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSpawnMany}
+                        disabled={!selectedConfig || !selectedRepo || spawning || loading || selectedSpawnCount === 0}
+                        className="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {spawning ? "Spawning..." : `Spawn ${selectedSpawnCount} Container${selectedSpawnCount === 1 ? "" : "s"}`}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
