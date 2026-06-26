@@ -1,11 +1,13 @@
 # code-remote-control
 
-A web app for managing Docker containers that run opencode remote control instances.
+A web app for managing Docker containers that each run Claude Code inside a mobile-friendly web terminal.
 
 ## Prerequisites
 
 - Docker
 - GitHub token for repository access
+- A Claude OAuth token per configuration (run `claude setup-token`, or copy the
+  `claudeAiOauth` block from a logged-in `~/.claude/.credentials.json`)
 
 ## Setup
 
@@ -21,9 +23,13 @@ Create your environment configuration file to specify the modes a container can 
     "gitlab_url": "https://gitlab.example.com",
     "configurations": [
         {
-            "name": "gpt-5.3-codex",
-            "env": {
-                "OPENAI_API_KEY": "sk-..."
+            "name": "claude-default",
+            "oauth": {
+                "accessToken": "sk-ant-oat01-...",
+                "refreshToken": "sk-ant-ort01-...",
+                "expiresAt": 1812345678000,
+                "scopes": ["user:inference", "user:profile"],
+                "subscriptionType": "max"
             },
             "docker": {
                 "network_mode": "bridge",
@@ -32,7 +38,7 @@ Create your environment configuration file to specify the modes a container can 
                 "nano_cpus": 4000000000,
                 "memory": 8589934592,
                 "binds": [
-                    "/srv/cache/opencode:/workspace/.cache"
+                    "/srv/cache/claude:/workspace/.cache"
                 ],
                 "device_requests": [
                     {
@@ -42,29 +48,23 @@ Create your environment configuration file to specify the modes a container can 
                     }
                 ]
             },
-            "opencode": {
-                "$schema": "https://opencode.ai/config.json",
-                "model": "openai/gpt-5.3-codex",
-                "small_model": "openai/gpt-5.3-codex",
-                "enabled_providers": [
-                    "openai"
-                ],
-                "provider": {
-                    "openai": {
-                        "npm": "@ai-sdk/openai-compatible",
-                        "name": "LiteLLM Proxy",
-                        "options": {
-                            "baseURL": "http://192.168.1.2:4000/v1",
-                            "apiKey": "sk-dud",
-                            "timeout": 3600000
-                        }
-                    }
-                }
+            "claude": {
+                "model": "claude-opus-4-8"
             }
         }
     ]
 }
 ```
+
+Each configuration carries its own Claude OAuth credentials in the `oauth` block;
+the server writes them to `~/.claude/.credentials.json` inside the container at
+create time, so different configurations can use different tokens. Provide a
+`refreshToken`/`expiresAt` for auto-refresh, or use a long-lived token from
+`claude setup-token`.
+
+The optional `claude` block is merged into the container's `~/.claude/settings.json`
+(the server force-injects the git-hygiene/task hooks and an autonomous permission
+mode). Put any Claude Code settings here, e.g. `model`.
 
 The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
 

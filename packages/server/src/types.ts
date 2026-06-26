@@ -1,6 +1,7 @@
 export type {
   EnvironmentConfig,
   DockerConfig,
+  ClaudeOauth,
   ConfigFile,
   ContainerHealth,
   ManagedContainer,

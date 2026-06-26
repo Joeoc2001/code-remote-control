@@ -44,18 +44,17 @@ cd "/workspace"
 echo "Starting container metadata server..."
 tsx /opt/crc/packages/container-metadata-server/src/index.ts &
 
-echo "Starting opencode..."
-opencode web --port 8080 --hostname 0.0.0.0 &
-OPENCODE_PID=$!
-trap 'kill "$OPENCODE_PID" 2>/dev/null || true' TERM INT
-
+CLAUDE_SESSION="crc"
+echo "Starting Claude Code session..."
 if [ -n "$CRC_INITIAL_PROMPT" ]; then
-  (
-    until curl -fsS http://127.0.0.1:8080/global/health >/dev/null; do
-      sleep 1
-    done
-    opencode run --attach http://127.0.0.1:8080 --dir /workspace "$CRC_INITIAL_PROMPT"
-  ) &
+  tmux new-session -d -s "$CLAUDE_SESSION" sh -c 'claude "$CRC_INITIAL_PROMPT"'
+else
+  tmux new-session -d -s "$CLAUDE_SESSION" claude
 fi
 
-wait "$OPENCODE_PID"
+echo "Starting web terminal..."
+ttyd -p 8080 -i 0.0.0.0 -W tmux attach -t "$CLAUDE_SESSION" &
+TTYD_PID=$!
+trap 'kill "$TTYD_PID" 2>/dev/null || true' TERM INT
+
+wait "$TTYD_PID"

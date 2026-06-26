@@ -1,0 +1,8 @@
+{
+  "name": "@crc/claude-assets",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "node --check hooks/task-description.js && node --check hooks/git-hygiene.js"
+  }
+}

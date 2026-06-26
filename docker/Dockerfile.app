@@ -46,7 +46,6 @@ COPY packages/container-metadata-types/ ./packages/container-metadata-types/
 COPY --from=build /app/packages/server/dist/ ./packages/server/dist/
 COPY --from=build /app/packages/server/build-info.json ./packages/server/build-info.json
 COPY --from=build /app/packages/client/dist/ ./packages/client/dist/
-COPY opencode/ ./opencode/
 
 EXPOSE 3000
 

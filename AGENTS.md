@@ -1,13 +1,13 @@
-This is a repo for a web app which lets me manage containers for running opencode remote instances on my home PC. It is built with Node/Express/React/Tailwind and integrates with both Docker and GitHub.
+This is a repo for a web app which lets me manage containers for running Claude Code remote instances on my home PC. It is built with Node/Express/React/Tailwind and integrates with both Docker and GitHub.
 
 ## Functionality
 
-This app functions as a wrapper around Docker to spawn containers which each contain an instance of OpenCode's web interface.
+This app functions as a wrapper around Docker to spawn containers which each run Claude Code inside a mobile-friendly web terminal (ttyd attached to a tmux session).
 
 ## Repo setup
 
 The repo is composed of 2 docker container definitions:
-- `env` describes the container which is spun up for each opencode instance, providing devtools and a sandbox;
+- `env` describes the container which is spun up for each Claude Code instance, providing devtools and a sandbox;
 - `app` gives the webserver.
 
 These can both be found in `./docker`.
