@@ -338,11 +338,14 @@ export async function createContainer(
   });
 
   const settingsJson = Buffer.from(JSON.stringify(buildClaudeSettings(config.claude)));
-  const credentialsJson = Buffer.from(JSON.stringify(buildClaudeCredentials(config.oauth)));
-  const claudeTar = await createTar([
+  const claudeFiles: TarEntry[] = [
     { path: CLAUDE_SETTINGS_RELATIVE_PATH, content: settingsJson, mode: 0o444 },
-    { path: CLAUDE_CREDENTIALS_RELATIVE_PATH, content: credentialsJson, mode: 0o600 },
-  ]);
+  ];
+  if (config.oauth) {
+    const credentialsJson = Buffer.from(JSON.stringify(buildClaudeCredentials(config.oauth)));
+    claudeFiles.push({ path: CLAUDE_CREDENTIALS_RELATIVE_PATH, content: credentialsJson, mode: 0o600 });
+  }
+  const claudeTar = await createTar(claudeFiles);
   await container.putArchive(claudeTar, { path: "/" });
 
   const endpointConfig = buildEndpointConfig(config.docker);

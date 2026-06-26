@@ -56,11 +56,24 @@ Create your environment configuration file to specify the modes a container can 
 }
 ```
 
-Each configuration carries its own Claude OAuth credentials in the `oauth` block;
-the server writes them to `~/.claude/.credentials.json` inside the container at
-create time, so different configurations can use different tokens. Provide a
-`refreshToken`/`expiresAt` for auto-refresh, or use a long-lived token from
-`claude setup-token`.
+Each configuration may carry its own Claude OAuth credentials in the `oauth` block;
+when present, the server writes them to `~/.claude/.credentials.json` inside the
+container at create time, so different configurations can use different tokens.
+Provide a `refreshToken`/`expiresAt` for auto-refresh, or use a long-lived token
+from `claude setup-token`.
+
+The `oauth` block is optional. To run against a custom or proxy endpoint
+(for example a LiteLLM proxy) instead of a Claude subscription, omit `oauth` and
+set the Anthropic environment variables in the `env` block:
+
+```json
+"env": {
+    "ANTHROPIC_BASE_URL": "http://litellm:4000",
+    "ANTHROPIC_AUTH_TOKEN": "sk-...",
+    "ANTHROPIC_MODEL": "glm-5.2",
+    "ANTHROPIC_SMALL_FAST_MODEL": "glm-5.2"
+}
+```
 
 The optional `claude` block is merged into the container's `~/.claude/settings.json`
 (the server force-injects the git-hygiene/task hooks and an autonomous permission

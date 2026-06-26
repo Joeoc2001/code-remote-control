@@ -69,7 +69,7 @@ export const claudeOauthSchema = z.object({
 
 export const environmentConfigSchema = z.object({
   name: z.string().min(1),
-  oauth: claudeOauthSchema,
+  oauth: claudeOauthSchema.optional(),
   claude: z.record(z.string(), z.unknown()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   docker: dockerConfigSchema.optional(),
