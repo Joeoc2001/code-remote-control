@@ -8,6 +8,7 @@ import type {
   EnvironmentConfig,
   ConfigFile,
   DockerConfig,
+  ClaudeOauth,
 } from "./types.js";
 import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
 
@@ -23,9 +24,11 @@ const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
 const LABEL_SUBDOMAIN = "crc.subdomain";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
-const OPENCODE_CONFIG_RELATIVE_PATH = "root/.config/opencode/opencode.json";
+const CLAUDE_SETTINGS_RELATIVE_PATH = "root/.claude/settings.json";
+const CLAUDE_CREDENTIALS_RELATIVE_PATH = "root/.claude/.credentials.json";
+const CLAUDE_HOOKS_DIR = "/opt/crc/claude-hooks";
 
-type OpenCodeConfig = Record<string, unknown>;
+type ClaudeSettings = Record<string, unknown>;
 type DockerHostConfig = NonNullable<Dockerode.ContainerCreateOptions["HostConfig"]>;
 type DockerDevice = NonNullable<DockerConfig["devices"]>[number];
 type DockerDeviceRequest = NonNullable<DockerConfig["device_requests"]>[number];
@@ -98,72 +101,71 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function withReadPermissions(permission: unknown): Record<string, unknown> {
-  const permissionRecord = isRecord(permission) ? permission : {};
+const FORCED_ALLOWED_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"];
+
+function buildClaudePermissions(permissions: unknown): Record<string, unknown> {
+  const permissionsRecord = isRecord(permissions) ? permissions : {};
+  const existingAllow = Array.isArray(permissionsRecord.allow)
+    ? permissionsRecord.allow.filter((entry): entry is string => typeof entry === "string")
+    : [];
 
   return {
-    ...permissionRecord,
-    read: "allow",
-    glob: "allow",
-    grep: "allow",
-    list: "allow",
-    external_directory: "allow",
+    ...permissionsRecord,
+    defaultMode: "acceptEdits",
+    allow: [...new Set([...existingAllow, ...FORCED_ALLOWED_TOOLS])],
   };
 }
 
-function withReadToolsAllowed(tools: unknown): Record<string, unknown> {
-  const toolsRecord = isRecord(tools) ? tools : {};
+function buildClaudeHooks(): Record<string, unknown> {
+  const command = (script: string) => ({
+    hooks: [{ type: "command", command: `node ${CLAUDE_HOOKS_DIR}/${script}` }],
+  });
 
   return {
-    ...toolsRecord,
-    read: true,
-    glob: true,
-    grep: true,
-    list: true,
+    UserPromptSubmit: [command("task-description.js")],
+    Stop: [command("git-hygiene.js")],
   };
 }
 
-function withForcedReadPermission(agentOrModeConfig: unknown): unknown {
-  if (!isRecord(agentOrModeConfig)) {
-    return agentOrModeConfig;
-  }
+function buildClaudeSettings(config: ClaudeSettings | undefined): ClaudeSettings {
+  const baseConfig = isRecord(config) ? config : {};
 
   return {
-    ...agentOrModeConfig,
-    permission: withReadPermissions(agentOrModeConfig.permission),
-    tools: withReadToolsAllowed(agentOrModeConfig.tools),
+    ...baseConfig,
+    permissions: buildClaudePermissions(baseConfig.permissions),
+    hooks: buildClaudeHooks(),
   };
 }
 
-function buildOpenCodeConfig(config: OpenCodeConfig): OpenCodeConfig {
-  const builtConfig: OpenCodeConfig = {
-    ...config,
-    permission: withReadPermissions(config.permission),
-  };
-
-  if (isRecord(config.agent)) {
-    builtConfig.agent = Object.fromEntries(
-      Object.entries(config.agent).map(([agentName, agentConfig]) => {
-        return [agentName, withForcedReadPermission(agentConfig)];
-      }),
-    );
-  }
-
-  if (isRecord(config.mode)) {
-    builtConfig.mode = Object.fromEntries(
-      Object.entries(config.mode).map(([modeName, modeConfig]) => {
-        return [modeName, withForcedReadPermission(modeConfig)];
-      }),
-    );
-  }
-
-  return builtConfig;
+function buildClaudeCredentials(oauth: ClaudeOauth): Record<string, unknown> {
+  return { claudeAiOauth: oauth };
 }
 
-function createSingleFileTar(filePath: string, content: Buffer, mode: number): Promise<Buffer> {
+interface TarEntry {
+  path: string;
+  content: Buffer;
+  mode: number;
+}
+
+function createTar(entries: TarEntry[]): Promise<Buffer> {
   const pack = tar.pack();
-  pack.entry({ name: filePath, mode }, content);
-  pack.finalize();
+
+  const addEntry = (index: number): void => {
+    if (index >= entries.length) {
+      pack.finalize();
+      return;
+    }
+    const entry = entries[index];
+    pack.entry({ name: entry.path, mode: entry.mode }, entry.content, (err) => {
+      if (err) {
+        pack.destroy(err);
+        return;
+      }
+      addEntry(index + 1);
+    });
+  };
+
+  addEntry(0);
 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -219,7 +221,7 @@ function buildManagedContainer(
 
   const health = healthCache.get(id) || {
     container: status === "running" ? "running" as const : "stopped" as const,
-    openCode: "unknown" as const,
+    claude: "unknown" as const,
   };
 
   const createdAtStr = typeof createdAt === "number"
@@ -335,10 +337,13 @@ export async function createContainer(
     HostConfig: hostConfig,
   });
 
-  const openCodeConfig = buildOpenCodeConfig(config.opencode);
-  const configJson = Buffer.from(JSON.stringify(openCodeConfig));
-  const configTar = await createSingleFileTar(OPENCODE_CONFIG_RELATIVE_PATH, configJson, 0o444);
-  await container.putArchive(configTar, { path: "/" });
+  const settingsJson = Buffer.from(JSON.stringify(buildClaudeSettings(config.claude)));
+  const credentialsJson = Buffer.from(JSON.stringify(buildClaudeCredentials(config.oauth)));
+  const claudeTar = await createTar([
+    { path: CLAUDE_SETTINGS_RELATIVE_PATH, content: settingsJson, mode: 0o444 },
+    { path: CLAUDE_CREDENTIALS_RELATIVE_PATH, content: credentialsJson, mode: 0o600 },
+  ]);
+  await container.putArchive(claudeTar, { path: "/" });
 
   const endpointConfig = buildEndpointConfig(config.docker);
   const networkNames = config.docker?.networks || [];
@@ -453,17 +458,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function checkOpencodeHealth(container: ManagedContainer): Promise<ContainerHealth["openCode"]> {
+async function checkClaudeHealth(container: ManagedContainer): Promise<ContainerHealth["claude"]> {
   try {
     const response = await withTimeout(
-      fetch(`http://${container.name}:${CONTAINER_INTERNAL_PORT}/global/health`),
+      fetch(`http://${container.name}:${CONTAINER_INTERNAL_PORT}/`),
       HEALTH_CHECK_TIMEOUT_MS,
     );
 
-    if (response.status !== 200) return "unhealthy";
-
-    const data = await response.json() as { healthy?: boolean };
-    return data.healthy === true ? "healthy" : "unhealthy";
+    return response.status === 200 ? "healthy" : "unhealthy";
   } catch {
     return "unhealthy";
   }
@@ -483,21 +485,21 @@ export async function runHealthChecks(): Promise<void> {
         containerState = "error";
       }
 
-      const opencodeState: ContainerHealth["openCode"] =
+      const claudeState: ContainerHealth["claude"] =
         containerState === "running"
-          ? await checkOpencodeHealth(managed)
+          ? await checkClaudeHealth(managed)
           : "unknown";
 
       const health: ContainerHealth = {
         container: containerState,
-        openCode: opencodeState,
+        claude: claudeState,
       };
 
       const prev = healthCache.get(managed.id);
       const changed =
         !prev ||
         prev.container !== health.container ||
-        prev.openCode !== health.openCode;
+        prev.claude !== health.claude;
 
       healthCache.set(managed.id, health);
       return { id: managed.id, changed };

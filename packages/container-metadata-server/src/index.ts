@@ -6,7 +6,7 @@ import type { ContainerCodeStatus, ForgeProvider, PipelineStatus, ReviewRequestS
 
 const execFileAsync = promisify(execFile);
 const METADATA_PORT = parseInt(process.env.CRC_METADATA_PORT || "8081", 10);
-const TASK_DESCRIPTION_PATH = "/run/opencode-current-task-description";
+const TASK_DESCRIPTION_PATH = "/run/crc-current-task-description";
 
 function respondJson(res: import("node:http").ServerResponse, statusCode: number, body: unknown): void {
   res.statusCode = statusCode;

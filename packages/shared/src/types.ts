@@ -59,9 +59,18 @@ export const dockerConfigSchema = z.object({
   ulimits: z.array(dockerUlimitSchema).optional(),
 });
 
+export const claudeOauthSchema = z.object({
+  accessToken: z.string().min(1),
+  refreshToken: z.string().min(1).optional(),
+  expiresAt: z.number().int().optional(),
+  scopes: z.array(z.string().min(1)).optional(),
+  subscriptionType: z.string().min(1).optional(),
+});
+
 export const environmentConfigSchema = z.object({
   name: z.string().min(1),
-  opencode: z.record(z.string(), z.unknown()),
+  oauth: claudeOauthSchema,
+  claude: z.record(z.string(), z.unknown()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   docker: dockerConfigSchema.optional(),
 });
@@ -75,12 +84,13 @@ export const configFileSchema = z.object({
 
 export type GitConfig = z.infer<typeof gitConfigSchema>;
 export type DockerConfig = z.infer<typeof dockerConfigSchema>;
+export type ClaudeOauth = z.infer<typeof claudeOauthSchema>;
 export type EnvironmentConfig = z.infer<typeof environmentConfigSchema>;
 export type ConfigFile = z.infer<typeof configFileSchema>;
 
 export interface ContainerHealth {
   container: "running" | "stopped" | "error";
-  openCode: "healthy" | "unhealthy" | "unknown";
+  claude: "healthy" | "unhealthy" | "unknown";
 }
 
 export interface ManagedContainer {

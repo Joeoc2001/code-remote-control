@@ -17,6 +17,6 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run check:opencode-assets
+      - run: npm run check:claude-assets
 
       - run: npm run typecheck

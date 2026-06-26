@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/task-description.js" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/git-hygiene.js" }] }
+    ]
+  }
+}
