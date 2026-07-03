@@ -1,4 +1,4 @@
-name: CI — Type Check
+name: CI
 
 on:
   pull_request:
@@ -20,3 +20,33 @@ jobs:
       - run: npm run check:claude-assets
 
       - run: npm run typecheck
+
+  prod-dependency-closure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install production dependencies as Dockerfile.app does
+        run: |
+          npm ci --omit=dev \
+            --workspace packages/shared \
+            --workspace packages/container-metadata-types \
+            --workspace packages/server \
+            --workspace packages/client
+
+      - name: Import every server production dependency
+        working-directory: packages/server
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const pkg = JSON.parse(readFileSync("./package.json", "utf8"));
+            for (const dep of Object.keys(pkg.dependencies)) {
+              await import(dep);
+              console.log("ok:", dep);
+            }
+          '
