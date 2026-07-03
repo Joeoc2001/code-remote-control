@@ -61,14 +61,45 @@ jobs:
           docker image prune -af || true
           docker builder prune -af || true
 
-      - name: Build and push app image
+      - name: Build app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.app
+          load: true
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=min,scope=app
+          build-args: |
+            BUILD_ID=${{ github.sha }}
+          tags: |
+            ${{ env.APP_IMAGE }}:latest
+            ${{ env.APP_IMAGE }}:${{ github.sha }}
+
+      - name: Boot app image
+        run: |
+          mkdir smoke-configs
+          echo '{"root_domain":"smoke.localhost","git":{"email":"smoke@example.com","username":"smoke"},"configurations":[]}' > smoke-configs/environments.json
+          docker run -d --name app-smoke -e GITHUB_TOKEN=smoke -v "$PWD/smoke-configs:/configs:ro" -p 3000:3000 "${APP_IMAGE}:${{ github.sha }}"
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/api/build-info; then
+              echo
+              docker rm -f app-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not respond on /api/build-info" >&2
+          docker logs app-smoke >&2
+          docker rm -f app-smoke
+          exit 1
+
+      - name: Push app image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile.app
           push: true
           cache-from: type=gha,scope=app
-          cache-to: type=gha,mode=min,scope=app
           build-args: |
             BUILD_ID=${{ github.sha }}
           tags: |
