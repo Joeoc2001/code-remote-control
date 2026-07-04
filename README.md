@@ -80,6 +80,7 @@ services:
       - "80:3000"
     environment:
       GITHUB_TOKEN: ghp_...
+      CRC_ACCESS_TOKEN: choose-a-long-random-secret
     volumes:
       - ./environments.json:/configs/environments.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -89,3 +90,17 @@ services:
 ```
 
 Note that the runners must be accessible from the CRC server, so must share at least one docker network.
+
+## Authentication
+
+Set `CRC_ACCESS_TOKEN` to protect the dashboard, the API, and the per-container
+terminals with a shared secret. When it is set, the server requires the token on
+every request (including the proxied `*.root_domain` terminals and their
+WebSocket connections). Authenticate a browser by visiting
+`https://<root_domain>/?access_token=<token>` once — the server stores an
+`HttpOnly` cookie scoped to `.root_domain` (covering every container subdomain)
+and redirects to a clean URL. Programmatic clients can instead send
+`Authorization: Bearer <token>`.
+
+If `CRC_ACCESS_TOKEN` is left unset the server starts with authentication
+disabled and logs a warning; only do this on a trusted, isolated network.

@@ -19,6 +19,7 @@ export default function ContainerLogs() {
     eventSource.onopen = () => {
       setConnected(true);
       setError(null);
+      setLogs([]);
     };
 
     eventSource.addEventListener("message", (event) => {

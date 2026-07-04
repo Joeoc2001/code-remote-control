@@ -109,6 +109,15 @@ export interface CreateContainerRequest {
   repoFullName: string;
 }
 
+export interface ConfigSummary {
+  name: string;
+}
+
+export interface ConfigSummaryFile {
+  root_domain: string;
+  configurations: ConfigSummary[];
+}
+
 export interface GitHubRepo {
   fullName: string;
   description: string | null;

@@ -12,7 +12,6 @@
   "dependencies": {
     "@crc/container-metadata-types": "*",
     "@crc/shared": "*",
-    "cors": "^2.8.5",
     "dockerode": "^4.0.4",
     "express": "^4.21.2",
     "http-proxy-middleware": "^3.0.5",
@@ -20,9 +19,8 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
     "@types/dockerode": "^3.3.34",
-    "@types/express": "^5.0.0",
+    "@types/express": "^4.17.21",
     "@types/node": "^22.13.0",
     "@types/tar-stream": "^3.1.4",
     "tsx": "^4.19.0",

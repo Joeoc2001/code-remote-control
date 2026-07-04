@@ -3,6 +3,8 @@ export type {
   DockerConfig,
   ClaudeOauth,
   ConfigFile,
+  ConfigSummary,
+  ConfigSummaryFile,
   ContainerHealth,
   ManagedContainer,
   CreateContainerRequest,

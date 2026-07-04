@@ -1,6 +1,6 @@
 import type {
   ManagedContainer,
-  EnvironmentConfig,
+  ConfigSummary,
   GitHubRepo,
   GitLabRepo,
   RepoSource,
@@ -58,7 +58,7 @@ export async function deleteAllContainers(): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete all containers");
 }
 
-export async function fetchConfigs(): Promise<EnvironmentConfig[]> {
+export async function fetchConfigs(): Promise<ConfigSummary[]> {
   const res = await fetch(`${BASE}/configs`);
   if (!res.ok) throw new Error("Failed to fetch configs");
   const data = await res.json();

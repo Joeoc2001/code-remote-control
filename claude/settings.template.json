@@ -8,7 +8,7 @@
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/task-description.js" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/git-hygiene.js" }] }
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/git-hygiene.js", "timeout": 1230 }] }
     ]
   }
 }
