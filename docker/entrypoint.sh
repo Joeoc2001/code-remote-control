@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+umask 077
 
 if [ -n "$GIT_USER_NAME" ]; then
   git config --global user.name "$GIT_USER_NAME"
@@ -36,7 +37,7 @@ if [ -n "$REPO_URL" ]; then
   fi
 else
   echo "Error: REPO_URL not set"
-  exit -1
+  exit 1
 fi
 
 cd "/workspace"

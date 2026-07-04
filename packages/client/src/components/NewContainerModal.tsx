@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { EnvironmentConfig, ManagedContainer, RepoReviewRequest, RepoSource, RepoWorkItem } from "../types";
+import type { ConfigSummary, ManagedContainer, RepoReviewRequest, RepoSource, RepoWorkItem } from "../types";
 import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, createContainer, createContainers, fetchRepoReviewRequests, fetchRepoWorkItems } from "../api";
 
 interface NewContainerModalProps {
@@ -33,7 +33,7 @@ export default function NewContainerModal({
   onClose,
   onCreated,
 }: NewContainerModalProps) {
-  const [configs, setConfigs] = useState<EnvironmentConfig[]>([]);
+  const [configs, setConfigs] = useState<ConfigSummary[]>([]);
   const [repos, setRepos] = useState<RepoEntry[]>([]);
   const [gitlabConfigured, setGitlabConfigured] = useState(false);
   const [selectedConfig, setSelectedConfig] = useState("");

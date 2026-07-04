@@ -18,7 +18,7 @@ import {
 } from "./docker.js";
 import { fetchOpenIssues as fetchGitHubOpenIssues, fetchOpenPullRequests as fetchGitHubOpenPullRequests, fetchRepos as fetchGitHubRepos } from "./github.js";
 import { fetchOpenIssuesAndWorkItems as fetchGitLabOpenIssuesAndWorkItems, fetchOpenMergeRequests as fetchGitLabOpenMergeRequests, fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
-import type { CreateContainerRequestV2, CreateContainersRequest, ManagedContainer, RepoSource } from "./types.js";
+import type { ConfigSummaryFile, CreateContainerRequestV2, CreateContainersRequest, ManagedContainer, RepoSource } from "./types.js";
 import type { ContainerCodeStatus } from "@crc/container-metadata-types";
 
 export const router = Router();
@@ -165,7 +165,11 @@ router.post("/api/containers/many", async (req, res) => {
       return;
     }
 
-    await pullLatestImage();
+    try {
+      await pullLatestImage();
+    } catch (err) {
+      console.warn("Failed to pull latest image, using locally available image:", err);
+    }
 
     const containers: ManagedContainer[] = [];
     const errors: Array<{ prompt: string; error: string }> = [];
@@ -191,12 +195,27 @@ router.post("/api/containers/many", async (req, res) => {
 router.delete("/api/containers", async (_req, res) => {
   try {
     const containers = await listContainers();
-    await Promise.all(
+    const results = await Promise.allSettled(
       containers.map(async (c) => {
         await removeContainer(c.id);
         broadcastRemoval(c.id);
       }),
     );
+
+    const errors = results
+      .map((result, index) => ({ result, id: containers[index].id }))
+      .filter((entry): entry is { result: PromiseRejectedResult; id: string } => entry.result.status === "rejected")
+      .map((entry) => ({
+        id: entry.id,
+        error: entry.result.reason instanceof Error ? entry.result.reason.message : String(entry.result.reason),
+      }));
+
+    if (errors.length > 0) {
+      console.error("Some containers failed to remove:", errors);
+      res.status(207).json({ removed: containers.length - errors.length, errors });
+      return;
+    }
+
     res.status(204).send();
   } catch (err) {
     console.error("Error removing all containers:", err);
@@ -310,7 +329,11 @@ router.get("/api/containers/:id/code-status", async (req, res) => {
 router.get("/api/configs", async (_req, res) => {
   try {
     const configs = await loadConfigurations();
-    res.json(configs);
+    const summary: ConfigSummaryFile = {
+      root_domain: configs.root_domain,
+      configurations: configs.configurations.map((c) => ({ name: c.name })),
+    };
+    res.json(summary);
   } catch (err) {
     console.error("Error loading configs:", err);
     res.status(500).json({ error: "Failed to load configurations" });
@@ -318,8 +341,13 @@ router.get("/api/configs", async (_req, res) => {
 });
 
 router.get("/api/root-domain", async (_req, res) => {
-  const configs = await loadConfigurations();
-  res.json({ rootDomain: configs.root_domain || undefined });
+  try {
+    const configs = await loadConfigurations();
+    res.json({ rootDomain: configs.root_domain || undefined });
+  } catch (err) {
+    console.error("Error loading root domain:", err);
+    res.status(500).json({ error: "Failed to load root domain" });
+  }
 });
 
 router.get("/api/build-info", (_req, res) => {

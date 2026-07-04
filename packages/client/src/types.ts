@@ -1,7 +1,7 @@
 export type {
   ContainerHealth,
   ManagedContainer,
-  EnvironmentConfig,
+  ConfigSummary,
   GitHubRepo,
   GitLabRepo,
   CreateContainersResponse,

@@ -3,7 +3,7 @@ const { readFileSync, writeFileSync } = require("node:fs");
 
 const CWD = "/workspace";
 const POLL_INTERVAL_MS = 60_000;
-const WATCH_TIMEOUT_MS = parseInt(process.env.CRC_CI_WATCH_TIMEOUT_MS || "86400000", 10);
+const WATCH_TIMEOUT_MS = parseInt(process.env.CRC_CI_WATCH_TIMEOUT_MS || "1200000", 10);
 const GITHUB_CHECK_BUCKETS = new Set(["pass", "fail", "pending", "cancel", "skipping"]);
 
 function run(command, args) {

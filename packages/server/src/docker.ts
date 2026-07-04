@@ -39,6 +39,16 @@ interface CreateContainerOptions {
   pullImage?: boolean;
 }
 
+const DEFAULT_RESTART_MAX_RETRIES = 3;
+
+function buildRestartPolicy(dockerConfig: DockerConfig | undefined): DockerHostConfig["RestartPolicy"] {
+  const name = dockerConfig?.restart_policy?.name ?? "on-failure";
+  const maximumRetryCount = name === "on-failure"
+    ? dockerConfig?.restart_policy?.maximum_retry_count ?? DEFAULT_RESTART_MAX_RETRIES
+    : dockerConfig?.restart_policy?.maximum_retry_count;
+  return { Name: name, MaximumRetryCount: maximumRetryCount };
+}
+
 function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConfig {
   return {
     AutoRemove: dockerConfig?.auto_remove ?? false,
@@ -73,10 +83,7 @@ function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConf
       Options: request.options,
     })),
     Runtime: dockerConfig?.runtime,
-    RestartPolicy: {
-      Name: dockerConfig?.restart_policy?.name ?? "unless-stopped",
-      MaximumRetryCount: dockerConfig?.restart_policy?.maximum_retry_count,
-    },
+    RestartPolicy: buildRestartPolicy(dockerConfig),
     Ulimits: dockerConfig?.ulimits?.map((ulimit: DockerUlimit) => ({
       Name: ulimit.name,
       Soft: ulimit.soft,
@@ -116,14 +123,16 @@ function buildClaudePermissions(permissions: unknown): Record<string, unknown> {
   };
 }
 
+const GIT_HYGIENE_HOOK_TIMEOUT_SECONDS = 1230;
+
 function buildClaudeHooks(): Record<string, unknown> {
-  const command = (script: string) => ({
-    hooks: [{ type: "command", command: `node ${CLAUDE_HOOKS_DIR}/${script}` }],
+  const command = (script: string, timeout?: number) => ({
+    hooks: [{ type: "command", command: `node ${CLAUDE_HOOKS_DIR}/${script}`, ...(timeout ? { timeout } : {}) }],
   });
 
   return {
     UserPromptSubmit: [command("task-description.js")],
-    Stop: [command("git-hygiene.js")],
+    Stop: [command("git-hygiene.js", GIT_HYGIENE_HOOK_TIMEOUT_SECONDS)],
   };
 }
 
@@ -296,7 +305,11 @@ export async function createContainer(
   options: CreateContainerOptions = {},
 ): Promise<ManagedContainer> {
   if (options.pullImage !== false) {
-    await pullLatestImage();
+    try {
+      await pullLatestImage();
+    } catch (err) {
+      console.warn("Failed to pull latest image, using locally available image:", err);
+    }
   }
 
   const gitlabUrl = appConfig.gitlab_url || "https://gitlab.com";
@@ -311,8 +324,8 @@ export async function createContainer(
 
   const envVars = [
     `REPO_URL=${repoUrl}`,
-    `GITHUB_TOKEN=${GITHUB_TOKEN}`,
-    `GITLAB_TOKEN=${GITLAB_TOKEN}`,
+    ...(repoSource === "github" && GITHUB_TOKEN ? [`GITHUB_TOKEN=${GITHUB_TOKEN}`] : []),
+    ...(repoSource === "gitlab" && GITLAB_TOKEN ? [`GITLAB_TOKEN=${GITLAB_TOKEN}`] : []),
     `GITLAB_URL=${gitlabUrl}`,
     `CRC_REPO_SOURCE=${repoSource}`,
     `CRC_METADATA_PORT=${CONTAINER_METADATA_INTERNAL_PORT}`,
@@ -337,34 +350,41 @@ export async function createContainer(
     HostConfig: hostConfig,
   });
 
-  const settingsJson = Buffer.from(JSON.stringify(buildClaudeSettings(config.claude)));
-  const credentialsJson = Buffer.from(JSON.stringify(buildClaudeCredentials(config.oauth)));
-  const claudeTar = await createTar([
-    { path: CLAUDE_SETTINGS_RELATIVE_PATH, content: settingsJson, mode: 0o444 },
-    { path: CLAUDE_CREDENTIALS_RELATIVE_PATH, content: credentialsJson, mode: 0o600 },
-  ]);
-  await container.putArchive(claudeTar, { path: "/" });
+  try {
+    const settingsJson = Buffer.from(JSON.stringify(buildClaudeSettings(config.claude)));
+    const credentialsJson = Buffer.from(JSON.stringify(buildClaudeCredentials(config.oauth)));
+    const claudeTar = await createTar([
+      { path: CLAUDE_SETTINGS_RELATIVE_PATH, content: settingsJson, mode: 0o444 },
+      { path: CLAUDE_CREDENTIALS_RELATIVE_PATH, content: credentialsJson, mode: 0o600 },
+    ]);
+    await container.putArchive(claudeTar, { path: "/" });
 
-  const endpointConfig = buildEndpointConfig(config.docker);
-  const networkNames = config.docker?.networks || [];
-  for (const networkName of networkNames) {
-    const network = docker.getNetwork(networkName);
-    await network.connect({
-      Container: container.id,
-      EndpointConfig: endpointConfig,
+    const endpointConfig = buildEndpointConfig(config.docker);
+    const networkNames = config.docker?.networks || [];
+    for (const networkName of networkNames) {
+      const network = docker.getNetwork(networkName);
+      await network.connect({
+        Container: container.id,
+        EndpointConfig: endpointConfig,
+      });
+    }
+
+    await container.start();
+
+    const info = await container.inspect();
+    return buildManagedContainer(
+      info.Id,
+      containerName,
+      info.Config.Labels,
+      "running",
+      info.Created,
+    );
+  } catch (err) {
+    await container.remove({ force: true, v: true }).catch((removeErr) => {
+      console.error("Failed to clean up container after creation error:", removeErr);
     });
+    throw err;
   }
-
-  await container.start();
-
-  const info = await container.inspect();
-  return buildManagedContainer(
-    info.Id,
-    containerName,
-    info.Config.Labels,
-    "running",
-    info.Created,
-  );
 }
 
 export async function removeContainer(id: string): Promise<void> {
@@ -448,22 +468,11 @@ export function broadcastRemoval(id: string): void {
   broadcastSSE("container-removed", { id });
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timeout")), ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
-
 async function checkClaudeHealth(container: ManagedContainer): Promise<ContainerHealth["claude"]> {
   try {
-    const response = await withTimeout(
-      fetch(`http://${container.name}:${CONTAINER_INTERNAL_PORT}/`),
-      HEALTH_CHECK_TIMEOUT_MS,
-    );
+    const response = await fetch(`http://${container.name}:${CONTAINER_INTERNAL_PORT}/`, {
+      signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+    });
 
     return response.status === 200 ? "healthy" : "unhealthy";
   } catch {
@@ -471,8 +480,18 @@ async function checkClaudeHealth(container: ManagedContainer): Promise<Container
   }
 }
 
+function pruneStaleCaches(liveIds: Set<string>): void {
+  for (const id of healthCache.keys()) {
+    if (!liveIds.has(id)) healthCache.delete(id);
+  }
+  for (const id of [...logWatchers.keys()]) {
+    if (!liveIds.has(id)) cleanupLogWatcher(id);
+  }
+}
+
 export async function runHealthChecks(): Promise<void> {
   const containers = await listContainers();
+  pruneStaleCaches(new Set(containers.map((c) => c.id)));
 
   const results = await Promise.allSettled(
     containers.map(async (managed) => {

@@ -1,5 +1,4 @@
 import express from "express";
-import cors from "cors";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
@@ -7,15 +6,24 @@ import { router } from "./routes.js";
 import { runHealthChecks, cleanupAll } from "./docker.js";
 import { PORT, validateEnvironment, loadConfigurations } from "./config.js";
 import { proxyMiddleware, wsUpgradeHandler } from "./proxy.js";
+import { authMiddleware, isAuthEnabled } from "./auth.js";
+
+const HEALTH_CHECK_INTERVAL_MS = 1000;
 
 validateEnvironment();
+
+await loadConfigurations();
+
+if (!isAuthEnabled()) {
+  console.warn("CRC_ACCESS_TOKEN is not set: the API and container terminals are exposed without authentication.");
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 
+app.use(authMiddleware);
 app.use(proxyMiddleware);
-app.use(cors());
 app.use(express.json({ limit: "100kb" }));
 
 const clientDistPath = resolve(__dirname, "../../client/dist");
@@ -38,19 +46,24 @@ if (existsSync(clientDistPath) && indexHtml) {
   });
 }
 
-loadConfigurations().catch((err) => {
-  console.error("Failed to load configurations:", err);
-});
+let stopping = false;
+let healthTimer: NodeJS.Timeout | null = null;
 
-runHealthChecks().catch((err) => {
-  console.error("Initial health check error:", err);
-});
-
-const healthInterval = setInterval(() => {
-  runHealthChecks().catch((err) => {
+async function healthLoop(): Promise<void> {
+  if (stopping) return;
+  try {
+    await runHealthChecks();
+  } catch (err) {
     console.error("Health check error:", err);
-  });
-}, 1000);
+  }
+  if (!stopping) {
+    healthTimer = setTimeout(() => {
+      void healthLoop();
+    }, HEALTH_CHECK_INTERVAL_MS);
+  }
+}
+
+void healthLoop();
 
 const server = app.listen(PORT, () => {
   console.log(`Code Remote Control server listening on port ${PORT}`);
@@ -60,7 +73,8 @@ server.on("upgrade", wsUpgradeHandler);
 
 function shutdown() {
   console.log("Shutting down...");
-  clearInterval(healthInterval);
+  stopping = true;
+  if (healthTimer) clearTimeout(healthTimer);
   cleanupAll();
   server.close(() => {
     process.exit(0);
