@@ -28,6 +28,7 @@ const CLAUDE_SETTINGS_RELATIVE_PATH = "root/.claude/settings.json";
 const CLAUDE_CREDENTIALS_RELATIVE_PATH = "root/.claude/.credentials.json";
 const CLAUDE_CONFIG_RELATIVE_PATH = "root/.claude.json";
 const CLAUDE_HOOKS_DIR = "/opt/crc/claude-hooks";
+const WORKSPACE_DIR = "/workspace";
 
 type ClaudeSettings = Record<string, unknown>;
 type DockerHostConfig = NonNullable<Dockerode.ContainerCreateOptions["HostConfig"]>;
@@ -155,6 +156,12 @@ function buildClaudeConfig(): Record<string, unknown> {
   return {
     hasCompletedOnboarding: true,
     theme: "dark",
+    projects: {
+      [WORKSPACE_DIR]: {
+        hasTrustDialogAccepted: true,
+        hasCompletedProjectOnboarding: true,
+      },
+    },
   };
 }
 
