@@ -532,7 +532,31 @@ export async function runHealthChecks(): Promise<void> {
   }
 }
 
+async function localImageDigests(): Promise<string[] | null> {
+  try {
+    const info = await docker.getImage(CRC_ENV_IMAGE).inspect();
+    return info.RepoDigests ?? [];
+  } catch {
+    return null;
+  }
+}
+
+async function remoteImageDigest(): Promise<string> {
+  const info = await docker.getImage(CRC_ENV_IMAGE).distribution();
+  return info.Descriptor.digest;
+}
+
 export async function pullLatestImage(): Promise<void> {
+  const localDigests = await localImageDigests();
+
+  if (localDigests !== null) {
+    const remoteDigest = await remoteImageDigest();
+    if (localDigests.some((digest) => digest.endsWith(`@${remoteDigest}`))) {
+      console.log(`Local image already up to date: ${CRC_ENV_IMAGE}`);
+      return;
+    }
+  }
+
   console.log(`Pulling latest image: ${CRC_ENV_IMAGE}`);
 
   const stream = await docker.pull(CRC_ENV_IMAGE);
