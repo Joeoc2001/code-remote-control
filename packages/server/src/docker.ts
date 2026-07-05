@@ -26,6 +26,7 @@ const LABEL_SUBDOMAIN = "crc.subdomain";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const CLAUDE_SETTINGS_RELATIVE_PATH = "root/.claude/settings.json";
 const CLAUDE_CREDENTIALS_RELATIVE_PATH = "root/.claude/.credentials.json";
+const CLAUDE_CONFIG_RELATIVE_PATH = "root/.claude.json";
 const CLAUDE_HOOKS_DIR = "/opt/crc/claude-hooks";
 
 type ClaudeSettings = Record<string, unknown>;
@@ -148,6 +149,13 @@ function buildClaudeSettings(config: ClaudeSettings | undefined): ClaudeSettings
 
 function buildClaudeCredentials(oauth: ClaudeOauth): Record<string, unknown> {
   return { claudeAiOauth: oauth };
+}
+
+function buildClaudeConfig(): Record<string, unknown> {
+  return {
+    hasCompletedOnboarding: true,
+    theme: "dark",
+  };
 }
 
 interface TarEntry {
@@ -353,9 +361,11 @@ export async function createContainer(
   try {
     const settingsJson = Buffer.from(JSON.stringify(buildClaudeSettings(config.claude)));
     const credentialsJson = Buffer.from(JSON.stringify(buildClaudeCredentials(config.oauth)));
+    const configJson = Buffer.from(JSON.stringify(buildClaudeConfig()));
     const claudeTar = await createTar([
       { path: CLAUDE_SETTINGS_RELATIVE_PATH, content: settingsJson, mode: 0o444 },
       { path: CLAUDE_CREDENTIALS_RELATIVE_PATH, content: credentialsJson, mode: 0o600 },
+      { path: CLAUDE_CONFIG_RELATIVE_PATH, content: configJson, mode: 0o600 },
     ]);
     await container.putArchive(claudeTar, { path: "/" });
 
