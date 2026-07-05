@@ -54,7 +54,10 @@ else
 fi
 
 echo "Starting web terminal..."
-ttyd -p 8080 -i 0.0.0.0 -W tmux attach -t "$CLAUDE_SESSION" &
+ttyd -p 8080 -i 0.0.0.0 -W \
+  -I /opt/crc/ttyd-index.html \
+  -t "fontFamily=\"${TTYD_FONT_FAMILY}\", monospace" \
+  tmux attach -t "$CLAUDE_SESSION" &
 TTYD_PID=$!
 trap 'kill "$TTYD_PID" 2>/dev/null || true' TERM INT
 
