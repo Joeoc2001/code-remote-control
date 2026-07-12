@@ -120,7 +120,7 @@ function buildClaudePermissions(permissions: unknown): Record<string, unknown> {
 
   return {
     ...permissionsRecord,
-    defaultMode: "acceptEdits",
+    defaultMode: "bypassPermissions",
     allow: [...new Set([...existingAllow, ...FORCED_ALLOWED_TOOLS])],
   };
 }
@@ -155,6 +155,7 @@ function buildClaudeCredentials(oauth: ClaudeOauth): Record<string, unknown> {
 function buildClaudeConfig(): Record<string, unknown> {
   return {
     hasCompletedOnboarding: true,
+    bypassPermissionsModeAccepted: true,
     theme: "dark",
     projects: {
       [WORKSPACE_DIR]: {

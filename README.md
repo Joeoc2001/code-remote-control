@@ -63,8 +63,9 @@ create time, so different configurations can use different tokens. Provide a
 `claude setup-token`.
 
 The optional `claude` block is merged into the container's `~/.claude/settings.json`
-(the server force-injects the git-hygiene/task hooks and an autonomous permission
-mode). Put any Claude Code settings here, e.g. `model`.
+(the server force-injects the git-hygiene/task hooks and bypass-permissions
+mode, so Claude runs all commands without prompting). Put any Claude Code
+settings here, e.g. `model`.
 
 The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
 
