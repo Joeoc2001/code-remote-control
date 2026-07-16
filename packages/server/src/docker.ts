@@ -120,7 +120,7 @@ function buildClaudePermissions(permissions: unknown): Record<string, unknown> {
 
   return {
     ...permissionsRecord,
-    defaultMode: "acceptEdits",
+    defaultMode: "bypassPermissions",
     allow: [...new Set([...existingAllow, ...FORCED_ALLOWED_TOOLS])],
   };
 }
@@ -145,6 +145,7 @@ function buildClaudeSettings(config: ClaudeSettings | undefined): ClaudeSettings
     ...baseConfig,
     permissions: buildClaudePermissions(baseConfig.permissions),
     hooks: buildClaudeHooks(),
+    skipDangerousModePermissionPrompt: true,
   };
 }
 
@@ -346,6 +347,7 @@ export async function createContainer(
     `CRC_METADATA_PORT=${CONTAINER_METADATA_INTERNAL_PORT}`,
     `GIT_USER_NAME=${appConfig.git.username}`,
     `GIT_USER_EMAIL=${appConfig.git.email}`,
+    "IS_SANDBOX=1",
     ...(options.initialPrompt ? [`CRC_INITIAL_PROMPT=${options.initialPrompt}`] : []),
     ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
   ];
