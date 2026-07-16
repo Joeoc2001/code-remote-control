@@ -1,8 +1,9 @@
 {
   "permissions": {
-    "defaultMode": "acceptEdits",
+    "defaultMode": "bypassPermissions",
     "allow": ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]
   },
+  "skipDangerousModePermissionPrompt": true,
   "hooks": {
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/task-description.js" }] }
