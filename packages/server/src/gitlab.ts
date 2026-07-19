@@ -139,6 +139,23 @@ export async function fetchOpenIssuesAndWorkItems(repoFullName: string): Promise
   });
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export async function fetchOpenMergeRequests(repoFullName: string): Promise<RepoReviewRequest[]> {
   if (!isGitLabConfigured()) return [];
 
@@ -152,7 +169,7 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
 
   while (page <= MAX_PAGES) {
     const response = await fetch(
-      `${apiBase}/api/v4/projects/${encodedProject}/merge_requests?state=opened&per_page=${perPage}&page=${page}`,
+      `${apiBase}/api/v4/projects/${encodedProject}/merge_requests?state=opened&with_merge_status_recheck=true&per_page=${perPage}&page=${page}`,
       {
         headers: {
           "PRIVATE-TOKEN": GITLAB_TOKEN,
@@ -170,11 +187,34 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
       title: string;
       web_url: string;
       description: string | null;
+      has_conflicts: boolean;
+      blocking_discussions_resolved: boolean;
     }>;
 
     if (data.length === 0) break;
 
-    for (const mergeRequest of data) {
+    const pipelineStatuses = await mapWithConcurrency(data, 10, async (mergeRequest) => {
+      const detailResponse = await fetch(
+        `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequest.iid}`,
+        {
+          headers: {
+            "PRIVATE-TOKEN": GITLAB_TOKEN,
+          },
+        },
+      );
+
+      if (!detailResponse.ok) {
+        throw new Error(`GitLab API error: ${detailResponse.status} ${detailResponse.statusText}`);
+      }
+
+      const detail = (await detailResponse.json()) as {
+        head_pipeline: { status: string } | null;
+      };
+
+      return detail.head_pipeline?.status ?? null;
+    });
+
+    data.forEach((mergeRequest, index) => {
       items.push({
         id: String(mergeRequest.id),
         reference: `!${mergeRequest.iid}`,
@@ -182,8 +222,11 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
         url: mergeRequest.web_url,
         body: mergeRequest.description,
         kind: "merge_request",
+        hasConflicts: mergeRequest.has_conflicts,
+        ciFailing: pipelineStatuses[index] === "failed",
+        hasUnresolvedComments: !mergeRequest.blocking_discussions_resolved,
       });
-    }
+    });
 
     if (data.length < perPage) break;
     page++;

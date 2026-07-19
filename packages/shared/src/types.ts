@@ -169,6 +169,9 @@ export interface RepoReviewRequest {
   url: string;
   body: string | null;
   kind: "pull_request" | "merge_request";
+  hasConflicts: boolean;
+  ciFailing: boolean;
+  hasUnresolvedComments: boolean;
 }
 
 export type SSEEvent =
