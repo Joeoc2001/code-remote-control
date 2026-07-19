@@ -105,48 +105,94 @@ export async function fetchOpenIssues(repoFullName: string): Promise<RepoWorkIte
   return items;
 }
 
-export async function fetchOpenPullRequests(repoFullName: string): Promise<RepoReviewRequest[]> {
-  const items: RepoReviewRequest[] = [];
-  let page = 1;
-  const perPage = 100;
+const PULL_REQUESTS_QUERY = `
+query($owner: String!, $name: String!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        title
+        url
+        body
+        mergeable
+        commits(last: 1) {
+          nodes { commit { statusCheckRollup { state } } }
+        }
+      }
+    }
+  }
+}`;
 
-  while (page <= MAX_PAGES) {
-    const response = await fetch(
-      `https://api.github.com/repos/${repoFullName}/pulls?state=open&per_page=${perPage}&page=${page}`,
-      {
-        headers: {
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
-          Accept: "application/vnd.github.v3+json",
-        },
+export async function fetchOpenPullRequests(repoFullName: string): Promise<RepoReviewRequest[]> {
+  const [owner, name] = repoFullName.split("/");
+  const items: RepoReviewRequest[] = [];
+  let cursor: string | null = null;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const response = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        query: PULL_REQUESTS_QUERY,
+        variables: { owner, name, cursor },
+      }),
+    });
 
     if (!response.ok) {
       throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
     }
 
-    const data = (await response.json()) as Array<{
-      number: number;
-      title: string;
-      html_url: string;
-      body: string | null;
-    }>;
+    const result = (await response.json()) as {
+      errors?: Array<{ message: string }>;
+      data?: {
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: Array<{
+              number: number;
+              title: string;
+              url: string;
+              body: string;
+              mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+              commits: {
+                nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }>;
+              };
+            }>;
+          };
+        } | null;
+      };
+    };
 
-    if (data.length === 0) break;
+    if (result.errors && result.errors.length > 0) {
+      throw new Error(`GitHub GraphQL error: ${result.errors.map((e) => e.message).join("; ")}`);
+    }
 
-    for (const pullRequest of data) {
+    if (!result.data?.repository) {
+      throw new Error(`GitHub repository not found: ${repoFullName}`);
+    }
+
+    const { pageInfo, nodes } = result.data.repository.pullRequests;
+
+    for (const pullRequest of nodes) {
+      const rollupState = pullRequest.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null;
       items.push({
         id: String(pullRequest.number),
         reference: `#${pullRequest.number}`,
         title: pullRequest.title,
-        url: pullRequest.html_url,
-        body: pullRequest.body,
+        url: pullRequest.url,
+        body: pullRequest.body || null,
         kind: "pull_request",
+        hasConflicts: pullRequest.mergeable === "CONFLICTING",
+        ciFailing: rollupState === "FAILURE" || rollupState === "ERROR",
       });
     }
 
-    if (data.length < perPage) break;
-    page++;
+    if (!pageInfo.hasNextPage) break;
+    cursor = pageInfo.endCursor;
   }
 
   return items;

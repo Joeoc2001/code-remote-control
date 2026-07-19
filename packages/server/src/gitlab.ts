@@ -170,11 +170,35 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
       title: string;
       web_url: string;
       description: string | null;
+      has_conflicts: boolean;
     }>;
 
     if (data.length === 0) break;
 
-    for (const mergeRequest of data) {
+    const pipelineStatuses = await Promise.all(
+      data.map(async (mergeRequest) => {
+        const detailResponse = await fetch(
+          `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequest.iid}`,
+          {
+            headers: {
+              "PRIVATE-TOKEN": GITLAB_TOKEN,
+            },
+          },
+        );
+
+        if (!detailResponse.ok) {
+          throw new Error(`GitLab API error: ${detailResponse.status} ${detailResponse.statusText}`);
+        }
+
+        const detail = (await detailResponse.json()) as {
+          head_pipeline: { status: string } | null;
+        };
+
+        return detail.head_pipeline?.status ?? null;
+      }),
+    );
+
+    data.forEach((mergeRequest, index) => {
       items.push({
         id: String(mergeRequest.id),
         reference: `!${mergeRequest.iid}`,
@@ -182,8 +206,10 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
         url: mergeRequest.web_url,
         body: mergeRequest.description,
         kind: "merge_request",
+        hasConflicts: mergeRequest.has_conflicts,
+        ciFailing: pipelineStatuses[index] === "failed",
       });
-    }
+    });
 
     if (data.length < perPage) break;
     page++;

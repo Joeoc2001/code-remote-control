@@ -15,18 +15,45 @@ type RepoEntry = {
 
 const ISSUE_PROMPT_SUFFIX = "Ensure your implementation is thoroughly tested and is clearly correct from the test output. If you struggle to complete this in its entirety for any reason, including the task being too large, comment your findings and then stop.";
 
-type SpawnManyMode = "issues" | "reviewRequests" | "reviewComments" | "text";
+type SpawnManyMode = "issues" | "reviewRequests" | "reviewComments" | "rebase" | "fixCi" | "text";
+
+type SpawnItem = { label: string; prompt: string; selected: boolean };
+
+const SPAWN_MANY_MODES: Array<{ mode: SpawnManyMode; label: string }> = [
+  { mode: "issues", label: "Issues" },
+  { mode: "reviewRequests", label: "Review PR/MRs" },
+  { mode: "reviewComments", label: "Fix Comments" },
+  { mode: "rebase", label: "Rebase on Main" },
+  { mode: "fixCi", label: "Fix Failing CI" },
+  { mode: "text", label: "Pasted Text" },
+];
+
+function reviewRequestNoun(item: RepoReviewRequest): string {
+  return item.kind === "merge_request" ? "merge request" : "pull request";
+}
 
 function buildIssuePrompt(item: RepoWorkItem): string {
   return `Address issue ${item.reference} at ${item.url}. ${ISSUE_PROMPT_SUFFIX}`;
 }
 
 function buildReviewRequestPrompt(item: RepoReviewRequest): string {
-  return `Review ${item.kind === "merge_request" ? "merge request" : "pull request"} ${item.reference} at ${item.url}, leaving comments with suggestions and recommendations.`;
+  return `Review ${reviewRequestNoun(item)} ${item.reference} at ${item.url}, leaving comments with suggestions and recommendations.`;
 }
 
 function buildReviewCommentsPrompt(item: RepoReviewRequest): string {
-  return `Address all open comments on ${item.kind === "merge_request" ? "merge request" : "pull request"} ${item.reference} at ${item.url}, closing comments as they are resolved.`;
+  return `Address all open comments on ${reviewRequestNoun(item)} ${item.reference} at ${item.url}, closing comments as they are resolved.`;
+}
+
+function buildRebasePrompt(item: RepoReviewRequest): string {
+  return `Rebase ${reviewRequestNoun(item)} ${item.reference} at ${item.url} onto the main branch, resolving any merge conflicts, and force-push the rebased branch.`;
+}
+
+function buildFixCiPrompt(item: RepoReviewRequest): string {
+  return `Investigate the failing CI on ${reviewRequestNoun(item)} ${item.reference} at ${item.url} and push fixes to its branch until CI passes.`;
+}
+
+function reviewRequestLabel(item: RepoReviewRequest): string {
+  return `${item.reference} ${item.title}`;
 }
 
 export default function NewContainerModal({
@@ -46,7 +73,7 @@ export default function NewContainerModal({
   const [showSpawnMany, setShowSpawnMany] = useState(false);
   const [spawnManyMode, setSpawnManyMode] = useState<SpawnManyMode>("issues");
   const [pastedText, setPastedText] = useState("");
-  const [spawnItems, setSpawnItems] = useState<{ prompt: string; selected: boolean }[] | null>(null);
+  const [spawnItems, setSpawnItems] = useState<SpawnItem[] | null>(null);
 
   useEffect(() => {
     Promise.all([fetchConfigs(), fetchGitHubRepos(), fetchGitLabRepos()])
@@ -116,14 +143,14 @@ export default function NewContainerModal({
     setError(null);
 
     try {
-      const prompts = await buildSpawnManyPrompts(selectedRepo);
+      const items = await buildSpawnManyItems(selectedRepo);
 
-      if (prompts.length === 0) {
+      if (items.length === 0) {
         setError(getEmptySpawnManyError(selectedRepo));
         return;
       }
 
-      setSpawnItems(prompts.map((prompt) => ({ prompt, selected: true })));
+      setSpawnItems(items.map((item) => ({ ...item, selected: true })));
     } catch (err) {
       setError("Failed to load items: " + String(err));
     } finally {
@@ -172,29 +199,59 @@ export default function NewContainerModal({
     setSpawnItems((items) => (items ? items.map((item) => ({ ...item, selected })) : items));
   };
 
-  const buildSpawnManyPrompts = async (repo: RepoEntry): Promise<string[]> => {
+  const buildSpawnManyItems = async (repo: RepoEntry): Promise<Array<{ label: string; prompt: string }>> => {
     if (spawnManyMode === "issues") {
-      return (await fetchRepoWorkItems(repo.fullName, repo.source)).map(buildIssuePrompt);
+      return (await fetchRepoWorkItems(repo.fullName, repo.source)).map((item) => ({
+        label: `${item.reference} ${item.title}`,
+        prompt: buildIssuePrompt(item),
+      }));
     }
 
-    if (spawnManyMode === "reviewRequests") {
-      return (await fetchRepoReviewRequests(repo.fullName, repo.source)).map(buildReviewRequestPrompt);
+    if (spawnManyMode === "text") {
+      return pastedText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((prompt) => ({ label: prompt, prompt }));
     }
 
-    if (spawnManyMode === "reviewComments") {
-      return (await fetchRepoReviewRequests(repo.fullName, repo.source)).map(buildReviewCommentsPrompt);
+    const reviewRequests = await fetchRepoReviewRequests(repo.fullName, repo.source);
+
+    if (spawnManyMode === "rebase") {
+      return reviewRequests
+        .filter((item) => item.hasConflicts)
+        .map((item) => ({ label: reviewRequestLabel(item), prompt: buildRebasePrompt(item) }));
     }
 
-    return pastedText.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (spawnManyMode === "fixCi") {
+      return reviewRequests
+        .filter((item) => item.ciFailing)
+        .map((item) => ({ label: reviewRequestLabel(item), prompt: buildFixCiPrompt(item) }));
+    }
+
+    const buildPrompt = spawnManyMode === "reviewRequests" ? buildReviewRequestPrompt : buildReviewCommentsPrompt;
+    return reviewRequests
+      .filter((item) => item.hasConflicts || item.ciFailing)
+      .map((item) => ({ label: reviewRequestLabel(item), prompt: buildPrompt(item) }));
   };
 
   const getEmptySpawnManyError = (repo: RepoEntry): string => {
+    const noun = repo.source === "gitlab" ? "merge requests" : "pull requests";
+
     if (spawnManyMode === "issues") {
       return "No open issues or work items found";
     }
 
     if (spawnManyMode === "reviewRequests" || spawnManyMode === "reviewComments") {
-      return `No open ${repo.source === "gitlab" ? "merge requests" : "pull requests"} found`;
+      return `No open ${noun} with merge conflicts or failing CI found`;
+    }
+
+    if (spawnManyMode === "rebase") {
+      return `No open ${noun} with merge conflicts found`;
+    }
+
+    if (spawnManyMode === "fixCi") {
+      return `No open ${noun} with failing CI found`;
     }
 
     return "Paste at least one non-empty line";
@@ -205,6 +262,8 @@ export default function NewContainerModal({
     if (spawnManyMode === "issues") return "Preview Issue Containers";
     if (spawnManyMode === "reviewRequests") return "Preview Review Containers";
     if (spawnManyMode === "reviewComments") return "Preview Comment Fix Containers";
+    if (spawnManyMode === "rebase") return "Preview Rebase Containers";
+    if (spawnManyMode === "fixCi") return "Preview CI Fix Containers";
     return "Preview Pasted Containers";
   };
 
@@ -313,41 +372,21 @@ export default function NewContainerModal({
 
               {showSpawnMany && (
                 <div className="border border-slate-700 rounded-xl bg-slate-950/40 p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-100">Spawn Many</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">Creates one container per selected input using the repository above.</p>
-                    </div>
-                    <div className="grid grid-cols-2 rounded-lg border border-slate-700 overflow-hidden sm:flex">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-100">Spawn Many</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Creates one container per selected input using the repository above.</p>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-slate-700 border border-slate-700 rounded-lg overflow-hidden">
+                    {SPAWN_MANY_MODES.map(({ mode, label }) => (
                       <button
+                        key={mode}
                         type="button"
-                        onClick={() => setSpawnManyMode("issues")}
-                        className={`px-3 py-1.5 text-xs ${spawnManyMode === "issues" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
+                        onClick={() => setSpawnManyMode(mode)}
+                        className={`px-3 py-1.5 text-xs ${spawnManyMode === mode ? "bg-slate-700 text-slate-100" : "bg-slate-900 text-slate-400 hover:bg-slate-800"}`}
                       >
-                        Issues
+                        {label}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setSpawnManyMode("reviewRequests")}
-                        className={`px-3 py-1.5 text-xs border-l border-slate-700 ${spawnManyMode === "reviewRequests" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
-                      >
-                        Review PR/MRs
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSpawnManyMode("reviewComments")}
-                        className={`px-3 py-1.5 text-xs border-t border-slate-700 sm:border-t-0 sm:border-l ${spawnManyMode === "reviewComments" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
-                      >
-                        Fix Comments
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSpawnManyMode("text")}
-                        className={`px-3 py-1.5 text-xs border-l border-t border-slate-700 sm:border-t-0 ${spawnManyMode === "text" ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:bg-slate-800"}`}
-                      >
-                        Pasted Text
-                      </button>
-                    </div>
+                    ))}
                   </div>
 
                   {spawnManyMode === "issues" ? (
@@ -356,11 +395,19 @@ export default function NewContainerModal({
                     </p>
                   ) : spawnManyMode === "reviewRequests" ? (
                     <p className="text-sm text-slate-400">
-                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} to review it and leave comments with suggestions and recommendations.
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with merge conflicts or failing CI to review it and leave comments with suggestions and recommendations.
                     </p>
                   ) : spawnManyMode === "reviewComments" ? (
                     <p className="text-sm text-slate-400">
-                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} to address all open comments and close them as they are resolved.
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with merge conflicts or failing CI to address all open comments and close them as they are resolved.
+                    </p>
+                  ) : spawnManyMode === "rebase" ? (
+                    <p className="text-sm text-slate-400">
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with merge conflicts to rebase it onto the main branch and resolve the conflicts.
+                    </p>
+                  ) : spawnManyMode === "fixCi" ? (
+                    <p className="text-sm text-slate-400">
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with failing CI to investigate and fix the failures.
                     </p>
                   ) : (
                     <textarea
@@ -416,7 +463,7 @@ export default function NewContainerModal({
                               onChange={() => toggleSpawnItem(index)}
                               className="mt-0.5 accent-indigo-500"
                             />
-                            <span className="break-words">{item.prompt}</span>
+                            <span className="break-words">{item.label}</span>
                           </label>
                         ))}
                       </div>
