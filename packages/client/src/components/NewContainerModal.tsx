@@ -52,7 +52,7 @@ function buildFixCiPrompt(item: RepoReviewRequest): string {
   return `Investigate the failing CI on ${reviewRequestNoun(item)} ${item.reference} at ${item.url} and push fixes to its branch until CI passes.`;
 }
 
-function reviewRequestLabel(item: RepoReviewRequest): string {
+function referenceLabel(item: { reference: string; title: string }): string {
   return `${item.reference} ${item.title}`;
 }
 
@@ -199,10 +199,10 @@ export default function NewContainerModal({
     setSpawnItems((items) => (items ? items.map((item) => ({ ...item, selected })) : items));
   };
 
-  const buildSpawnManyItems = async (repo: RepoEntry): Promise<Array<{ label: string; prompt: string }>> => {
+  const buildSpawnManyItems = async (repo: RepoEntry): Promise<Omit<SpawnItem, "selected">[]> => {
     if (spawnManyMode === "issues") {
       return (await fetchRepoWorkItems(repo.fullName, repo.source)).map((item) => ({
-        label: `${item.reference} ${item.title}`,
+        label: referenceLabel(item),
         prompt: buildIssuePrompt(item),
       }));
     }
@@ -220,19 +220,24 @@ export default function NewContainerModal({
     if (spawnManyMode === "rebase") {
       return reviewRequests
         .filter((item) => item.hasConflicts)
-        .map((item) => ({ label: reviewRequestLabel(item), prompt: buildRebasePrompt(item) }));
+        .map((item) => ({ label: referenceLabel(item), prompt: buildRebasePrompt(item) }));
     }
 
     if (spawnManyMode === "fixCi") {
       return reviewRequests
         .filter((item) => item.ciFailing)
-        .map((item) => ({ label: reviewRequestLabel(item), prompt: buildFixCiPrompt(item) }));
+        .map((item) => ({ label: referenceLabel(item), prompt: buildFixCiPrompt(item) }));
     }
 
-    const buildPrompt = spawnManyMode === "reviewRequests" ? buildReviewRequestPrompt : buildReviewCommentsPrompt;
+    if (spawnManyMode === "reviewComments") {
+      return reviewRequests
+        .filter((item) => item.hasUnresolvedComments)
+        .map((item) => ({ label: referenceLabel(item), prompt: buildReviewCommentsPrompt(item) }));
+    }
+
     return reviewRequests
       .filter((item) => item.hasConflicts || item.ciFailing)
-      .map((item) => ({ label: reviewRequestLabel(item), prompt: buildPrompt(item) }));
+      .map((item) => ({ label: referenceLabel(item), prompt: buildReviewRequestPrompt(item) }));
   };
 
   const getEmptySpawnManyError = (repo: RepoEntry): string => {
@@ -242,8 +247,12 @@ export default function NewContainerModal({
       return "No open issues or work items found";
     }
 
-    if (spawnManyMode === "reviewRequests" || spawnManyMode === "reviewComments") {
+    if (spawnManyMode === "reviewRequests") {
       return `No open ${noun} with merge conflicts or failing CI found`;
+    }
+
+    if (spawnManyMode === "reviewComments") {
+      return `No open ${noun} with unresolved comments found`;
     }
 
     if (spawnManyMode === "rebase") {
@@ -399,7 +408,7 @@ export default function NewContainerModal({
                     </p>
                   ) : spawnManyMode === "reviewComments" ? (
                     <p className="text-sm text-slate-400">
-                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with merge conflicts or failing CI to address all open comments and close them as they are resolved.
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with unresolved comments to address all open comments and close them as they are resolved.
                     </p>
                   ) : spawnManyMode === "rebase" ? (
                     <p className="text-sm text-slate-400">

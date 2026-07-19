@@ -171,6 +171,7 @@ export interface RepoReviewRequest {
   kind: "pull_request" | "merge_request";
   hasConflicts: boolean;
   ciFailing: boolean;
+  hasUnresolvedComments: boolean;
 }
 
 export type SSEEvent =

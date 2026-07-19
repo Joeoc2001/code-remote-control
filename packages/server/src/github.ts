@@ -119,6 +119,9 @@ query($owner: String!, $name: String!, $cursor: String) {
         commits(last: 1) {
           nodes { commit { statusCheckRollup { state } } }
         }
+        reviewThreads(first: 100) {
+          nodes { isResolved }
+        }
       }
     }
   }
@@ -161,6 +164,9 @@ export async function fetchOpenPullRequests(repoFullName: string): Promise<RepoR
               commits: {
                 nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }>;
               };
+              reviewThreads: {
+                nodes: Array<{ isResolved: boolean }>;
+              };
             }>;
           };
         } | null;
@@ -188,6 +194,7 @@ export async function fetchOpenPullRequests(repoFullName: string): Promise<RepoR
         kind: "pull_request",
         hasConflicts: pullRequest.mergeable === "CONFLICTING",
         ciFailing: rollupState === "FAILURE" || rollupState === "ERROR",
+        hasUnresolvedComments: pullRequest.reviewThreads.nodes.some((thread) => !thread.isResolved),
       });
     }
 
