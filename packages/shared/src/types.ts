@@ -67,15 +67,18 @@ export const claudeOauthSchema = z.object({
   subscriptionType: z.string().min(1).optional(),
 });
 
-export const environmentConfigSchema = z.object({
-  name: z.string().min(1),
-  oauth: claudeOauthSchema,
+const configDefaultsSchema = z.object({
+  oauth: claudeOauthSchema.optional(),
   claude: z.record(z.string(), z.unknown()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   docker: dockerConfigSchema.optional(),
 });
 
-export const configFileSchema = z.object({
+export const environmentConfigSchema = configDefaultsSchema.extend({
+  name: z.string().min(1),
+});
+
+export const configFileSchema = configDefaultsSchema.extend({
   root_domain: z.string(),
   git: gitConfigSchema,
   gitlab_url: z.string().optional(),
@@ -85,8 +88,48 @@ export const configFileSchema = z.object({
 export type GitConfig = z.infer<typeof gitConfigSchema>;
 export type DockerConfig = z.infer<typeof dockerConfigSchema>;
 export type ClaudeOauth = z.infer<typeof claudeOauthSchema>;
+export type ConfigDefaults = z.infer<typeof configDefaultsSchema>;
 export type EnvironmentConfig = z.infer<typeof environmentConfigSchema>;
 export type ConfigFile = z.infer<typeof configFileSchema>;
+
+export type ResolvedEnvironmentConfig = EnvironmentConfig & { oauth: ClaudeOauth };
+export type ResolvedConfigFile = Omit<ConfigFile, "configurations"> & {
+  configurations: ResolvedEnvironmentConfig[];
+};
+
+function mergeBlock<T extends object>(defaults: T | undefined, override: T | undefined): T | undefined {
+  if (!defaults) return override;
+  if (!override) return defaults;
+  return { ...defaults, ...override };
+}
+
+export function resolveEnvironmentConfig(
+  defaults: ConfigDefaults,
+  config: EnvironmentConfig,
+): ResolvedEnvironmentConfig {
+  const oauth = mergeBlock(defaults.oauth, config.oauth);
+  if (!oauth) {
+    throw new Error(
+      `Configuration '${config.name}' has no oauth block and no top-level oauth default is set`,
+    );
+  }
+  return {
+    name: config.name,
+    oauth,
+    claude: mergeBlock(defaults.claude, config.claude),
+    env: mergeBlock(defaults.env, config.env),
+    docker: mergeBlock(defaults.docker, config.docker),
+  };
+}
+
+export function resolveConfigFile(file: ConfigFile): ResolvedConfigFile {
+  return {
+    ...file,
+    configurations: file.configurations.map((config) =>
+      resolveEnvironmentConfig(file, config),
+    ),
+  };
+}
 
 export interface ContainerHealth {
   container: "running" | "stopped" | "error";

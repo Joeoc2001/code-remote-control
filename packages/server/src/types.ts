@@ -1,8 +1,10 @@
 export type {
   EnvironmentConfig,
+  ResolvedEnvironmentConfig,
   DockerConfig,
   ClaudeOauth,
   ConfigFile,
+  ResolvedConfigFile,
   ConfigSummary,
   ConfigSummaryFile,
   ContainerHealth,
@@ -23,4 +25,5 @@ export {
   configFileSchema,
   environmentConfigSchema,
   gitConfigSchema,
+  resolveConfigFile,
 } from "@crc/shared";
