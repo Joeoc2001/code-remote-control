@@ -156,6 +156,43 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+async function fetchHasUnresolvedDiscussions(
+  apiBase: string,
+  encodedProject: string,
+  mergeRequestIid: number,
+): Promise<boolean> {
+  let page = 1;
+  const perPage = 100;
+
+  while (page <= MAX_PAGES) {
+    const response = await fetch(
+      `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequestIid}/discussions?per_page=${perPage}&page=${page}`,
+      {
+        headers: {
+          "PRIVATE-TOKEN": GITLAB_TOKEN,
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`GitLab API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as Array<{
+      notes: Array<{ resolvable: boolean; resolved: boolean }>;
+    }>;
+
+    if (data.some((discussion) => discussion.notes.some((note) => note.resolvable && !note.resolved))) {
+      return true;
+    }
+
+    if (data.length < perPage) break;
+    page++;
+  }
+
+  return false;
+}
+
 export async function fetchOpenMergeRequests(repoFullName: string): Promise<RepoReviewRequest[]> {
   if (!isGitLabConfigured()) return [];
 
@@ -188,20 +225,19 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
       web_url: string;
       description: string | null;
       has_conflicts: boolean;
-      blocking_discussions_resolved: boolean;
     }>;
 
     if (data.length === 0) break;
 
-    const pipelineStatuses = await mapWithConcurrency(data, 10, async (mergeRequest) => {
-      const detailResponse = await fetch(
-        `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequest.iid}`,
-        {
+    const mergeRequestDetails = await mapWithConcurrency(data, 10, async (mergeRequest) => {
+      const [detailResponse, hasUnresolvedComments] = await Promise.all([
+        fetch(`${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequest.iid}`, {
           headers: {
             "PRIVATE-TOKEN": GITLAB_TOKEN,
           },
-        },
-      );
+        }),
+        fetchHasUnresolvedDiscussions(apiBase, encodedProject, mergeRequest.iid),
+      ]);
 
       if (!detailResponse.ok) {
         throw new Error(`GitLab API error: ${detailResponse.status} ${detailResponse.statusText}`);
@@ -211,7 +247,10 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
         head_pipeline: { status: string } | null;
       };
 
-      return detail.head_pipeline?.status ?? null;
+      return {
+        pipelineStatus: detail.head_pipeline?.status ?? null,
+        hasUnresolvedComments,
+      };
     });
 
     data.forEach((mergeRequest, index) => {
@@ -223,8 +262,8 @@ export async function fetchOpenMergeRequests(repoFullName: string): Promise<Repo
         body: mergeRequest.description,
         kind: "merge_request",
         hasConflicts: mergeRequest.has_conflicts,
-        ciFailing: pipelineStatuses[index] === "failed",
-        hasUnresolvedComments: !mergeRequest.blocking_discussions_resolved,
+        ciFailing: mergeRequestDetails[index].pipelineStatus === "failed",
+        hasUnresolvedComments: mergeRequestDetails[index].hasUnresolvedComments,
       });
     });
 
