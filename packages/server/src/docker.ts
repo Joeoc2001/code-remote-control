@@ -5,8 +5,8 @@ import tar from "tar-stream";
 import type {
   ManagedContainer,
   ContainerHealth,
-  EnvironmentConfig,
-  ConfigFile,
+  ResolvedEnvironmentConfig,
+  ResolvedConfigFile,
   DockerConfig,
   ClaudeOauth,
 } from "./types.js";
@@ -314,8 +314,8 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
 }
 
 export async function createContainer(
-  appConfig: ConfigFile,
-  config: EnvironmentConfig,
+  appConfig: ResolvedConfigFile,
+  config: ResolvedEnvironmentConfig,
   repoFullName: string,
   repoSource: RepoSource = "github",
   options: CreateContainerOptions = {},

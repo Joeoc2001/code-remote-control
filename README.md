@@ -56,6 +56,14 @@ Create your environment configuration file to specify the modes a container can 
 }
 ```
 
+The `oauth`, `claude`, `env`, and `docker` blocks can also appear at the top
+level of the file, where they act as defaults for every configuration. A
+configuration's own block is merged over the top-level one key by key — e.g. a
+top-level `env` of `{"FOO": "1", "BAR": "2"}` combined with a configuration
+`env` of `{"BAR": "3", "BAZ": "4"}` yields `{"FOO": "1", "BAR": "3", "BAZ":
+"4"}`. Each configuration must end up with an `oauth` block, either its own or
+the top-level default.
+
 Each configuration carries its own Claude OAuth credentials in the `oauth` block;
 the server writes them to `~/.claude/.credentials.json` inside the container at
 create time, so different configurations can use different tokens. Provide a

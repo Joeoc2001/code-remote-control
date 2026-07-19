@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
-import { configFileSchema, type ConfigFile } from "./types.js";
+import { configFileSchema, resolveConfigFile, type ResolvedConfigFile } from "./types.js";
 
-let configCache: ConfigFile | null = null;
+let configCache: ResolvedConfigFile | null = null;
 
-export async function loadConfigurations(): Promise<ConfigFile> {
+export async function loadConfigurations(): Promise<ResolvedConfigFile> {
   if (configCache) return configCache;
   const raw = await readFile("/configs/environments.json", "utf-8");
   const parsed: unknown = JSON.parse(raw);
-  configCache = configFileSchema.parse(parsed);
+  configCache = resolveConfigFile(configFileSchema.parse(parsed));
   return configCache;
 }
 
