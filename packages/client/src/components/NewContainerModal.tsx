@@ -235,9 +235,7 @@ export default function NewContainerModal({
         .map((item) => ({ label: referenceLabel(item), prompt: buildReviewCommentsPrompt(item) }));
     }
 
-    return reviewRequests
-      .filter((item) => item.hasConflicts || item.ciFailing)
-      .map((item) => ({ label: referenceLabel(item), prompt: buildReviewRequestPrompt(item) }));
+    return reviewRequests.map((item) => ({ label: referenceLabel(item), prompt: buildReviewRequestPrompt(item) }));
   };
 
   const getEmptySpawnManyError = (repo: RepoEntry): string => {
@@ -248,7 +246,7 @@ export default function NewContainerModal({
     }
 
     if (spawnManyMode === "reviewRequests") {
-      return `No open ${noun} with merge conflicts or failing CI found`;
+      return `No open ${noun} found`;
     }
 
     if (spawnManyMode === "reviewComments") {
@@ -404,7 +402,7 @@ export default function NewContainerModal({
                     </p>
                   ) : spawnManyMode === "reviewRequests" ? (
                     <p className="text-sm text-slate-400">
-                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with merge conflicts or failing CI to review it and leave comments with suggestions and recommendations.
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} to review it and leave comments with suggestions and recommendations.
                     </p>
                   ) : spawnManyMode === "reviewComments" ? (
                     <p className="text-sm text-slate-400">
