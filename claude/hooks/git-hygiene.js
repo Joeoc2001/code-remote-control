@@ -1,5 +1,6 @@
 const { spawnSync } = require("node:child_process");
 const { readFileSync, writeFileSync } = require("node:fs");
+const { writeInstanceStatus } = require("./instance-status.js");
 
 const CWD = "/workspace";
 const POLL_INTERVAL_MS = 60_000;
@@ -29,10 +30,12 @@ function isRecord(value) {
 }
 
 function allowStop() {
+  writeInstanceStatus(true);
   process.exit(0);
 }
 
 function blockStop(reason) {
+  writeInstanceStatus(false);
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
   process.exit(0);
 }

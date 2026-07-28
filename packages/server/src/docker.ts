@@ -128,13 +128,13 @@ function buildClaudePermissions(permissions: unknown): Record<string, unknown> {
 const GIT_HYGIENE_HOOK_TIMEOUT_SECONDS = 1230;
 
 function buildClaudeHooks(): Record<string, unknown> {
-  const command = (script: string, timeout?: number) => ({
-    hooks: [{ type: "command", command: `node ${CLAUDE_HOOKS_DIR}/${script}`, ...(timeout ? { timeout } : {}) }],
+  const command = (script: string, args = "", timeout?: number) => ({
+    hooks: [{ type: "command", command: `node ${CLAUDE_HOOKS_DIR}/${script}${args ? ` ${args}` : ""}`, ...(timeout ? { timeout } : {}) }],
   });
 
   return {
-    UserPromptSubmit: [command("task-description.js")],
-    Stop: [command("git-hygiene.js", GIT_HYGIENE_HOOK_TIMEOUT_SECONDS)],
+    UserPromptSubmit: [command("task-description.js"), command("instance-status.js", "working")],
+    Stop: [command("git-hygiene.js", "", GIT_HYGIENE_HOOK_TIMEOUT_SECONDS)],
   };
 }
 

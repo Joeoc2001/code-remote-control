@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { ManagedContainer, ReviewRequestStatus } from "../types";
+import type { InstanceStatus, ManagedContainer, ReviewRequestStatus } from "../types";
 import { deleteContainer } from "../api";
 import HealthDot from "./HealthDot";
+import InstanceStatusBadge from "./InstanceStatusBadge";
 
 interface ContainerCardProps {
   container: ManagedContainer;
   title: string;
   reviewRequest: ReviewRequestStatus | null;
+  instanceStatus: InstanceStatus | null;
   onRemoved: () => void;
 }
 
@@ -59,6 +61,7 @@ export default function ContainerCard({
   container,
   title,
   reviewRequest,
+  instanceStatus,
   onRemoved,
 }: ContainerCardProps) {
   const [killing, setKilling] = useState(false);
@@ -118,20 +121,23 @@ export default function ContainerCard({
           <p className="text-slate-400 text-sm mt-1 truncate" title={container.repoName}>
             {container.repoName}
           </p>
-          {reviewRequest?.url && (
-            <a
-              href={reviewRequest.url}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => event.stopPropagation()}
-              title={`PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
-              aria-label={`Open PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
-              className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
-            >
-              <ReviewRequestStatusIcon state={reviewRequest.state} />
-              <span className="truncate">PR/MR #{reviewRequest.id}</span>
-            </a>
-          )}
+          <div className="mt-2 flex flex-wrap items-center gap-2 empty:mt-0">
+            <InstanceStatusBadge instanceStatus={instanceStatus} />
+            {reviewRequest?.url && (
+              <a
+                href={reviewRequest.url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => event.stopPropagation()}
+                title={`PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
+                aria-label={`Open PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
+              >
+                <ReviewRequestStatusIcon state={reviewRequest.state} />
+                <span className="truncate">PR/MR #{reviewRequest.id}</span>
+              </a>
+            )}
+          </div>
         </div>
         <div className="flex flex-col items-end gap-2">
           <HealthDot health={container.health} />

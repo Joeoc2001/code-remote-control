@@ -1,0 +1,18 @@
+const { writeFileSync } = require("node:fs");
+
+const INSTANCE_STATUS_PATH = "/run/crc-instance-status.json";
+
+function writeInstanceStatus(finished) {
+  const payload = { finished, updatedAt: new Date().toISOString() };
+  writeFileSync(INSTANCE_STATUS_PATH, `${JSON.stringify(payload)}\n`, { encoding: "utf-8", mode: 0o644 });
+}
+
+module.exports = { INSTANCE_STATUS_PATH, writeInstanceStatus };
+
+if (require.main === module) {
+  const state = process.argv[2];
+  if (state !== "finished" && state !== "working") {
+    throw new Error(`instance-status.js expects 'finished' or 'working', got '${state}'`);
+  }
+  writeInstanceStatus(state === "finished");
+}

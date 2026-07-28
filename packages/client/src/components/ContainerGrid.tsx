@@ -1,10 +1,11 @@
-import type { ManagedContainer, ReviewRequestStatus } from "../types";
+import type { InstanceStatus, ManagedContainer, ReviewRequestStatus } from "../types";
 import ContainerCard from "./ContainerCard";
 
 interface ContainerGridProps {
   containers: ManagedContainer[];
   getContainerTitle: (container: ManagedContainer) => string;
   getContainerReviewRequest: (container: ManagedContainer) => ReviewRequestStatus | null;
+  getContainerInstanceStatus: (container: ManagedContainer) => InstanceStatus | null;
   onRefresh: () => void;
 }
 
@@ -12,6 +13,7 @@ export default function ContainerGrid({
   containers,
   getContainerTitle,
   getContainerReviewRequest,
+  getContainerInstanceStatus,
   onRefresh,
 }: ContainerGridProps) {
   return (
@@ -22,6 +24,7 @@ export default function ContainerGrid({
           container={container}
           title={getContainerTitle(container)}
           reviewRequest={getContainerReviewRequest(container)}
+          instanceStatus={getContainerInstanceStatus(container)}
           onRemoved={onRefresh}
         />
       ))}

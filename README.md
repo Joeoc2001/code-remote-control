@@ -71,8 +71,16 @@ create time, so different configurations can use different tokens. Provide a
 `claude setup-token`.
 
 The optional `claude` block is merged into the container's `~/.claude/settings.json`
-(the server force-injects the git-hygiene/task hooks and an autonomous permission
-mode). Put any Claude Code settings here, e.g. `model`.
+(the server force-injects the git-hygiene/task/instance-status hooks and an
+autonomous permission mode). Put any Claude Code settings here, e.g. `model`.
+
+The instance-status hooks record whether Claude is still working: submitting a
+prompt marks the instance as working, and the Stop hook marks it as finished once
+it lets Claude stop (it stays working while the git-hygiene hook blocks the stop).
+The state lives in `/run/crc-instance-status.json` inside the container, is served
+by the container metadata server on `/api/instance-status`, proxied by the app on
+`/api/containers/:id/instance-status`, and shown as a Working/Finished badge in the
+UI.
 
 The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
 

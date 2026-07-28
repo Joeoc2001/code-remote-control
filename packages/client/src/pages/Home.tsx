@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import type { ManagedContainer, ReviewRequestStatus } from "../types";
-import { fetchContainers, fetchContainerCodeStatus, subscribeToEvents } from "../api";
+import type { InstanceStatus, ManagedContainer, ReviewRequestStatus } from "../types";
+import { fetchContainers, fetchContainerCodeStatus, fetchContainerInstanceStatus, subscribeToEvents } from "../api";
 import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
 import NewContainerModal from "../components/NewContainerModal";
@@ -9,6 +9,7 @@ import Footer from "../components/Footer";
 
 const TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 15000;
 const EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 3000;
+const INSTANCE_STATUS_REFRESH_INTERVAL_MS = 5000;
 
 interface ContainerTileMetadata {
   taskDescription: string | null;
@@ -23,6 +24,41 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
   const [metadataByContainerId, setMetadataByContainerId] = useState<Record<string, ContainerTileMetadata>>({});
+  const [instanceStatusByContainerId, setInstanceStatusByContainerId] = useState<Record<string, InstanceStatus>>({});
+
+  const refreshInstanceStatuses = useCallback(async (containersToRefresh: ManagedContainer[]) => {
+    const runningContainers = containersToRefresh.filter((container) => container.status === "running");
+
+    const statusEntries = await Promise.all(
+      runningContainers.map(async (container) => {
+        try {
+          return { id: container.id, instanceStatus: await fetchContainerInstanceStatus(container.id) };
+        } catch {
+          return { id: container.id, instanceStatus: null };
+        }
+      }),
+    );
+
+    setInstanceStatusByContainerId((previous) => {
+      const next = { ...previous };
+
+      for (const container of containersToRefresh) {
+        if (container.status !== "running") {
+          delete next[container.id];
+        }
+      }
+
+      for (const { id, instanceStatus } of statusEntries) {
+        if (instanceStatus) {
+          next[id] = instanceStatus;
+        } else {
+          delete next[id];
+        }
+      }
+
+      return next;
+    });
+  }, []);
 
   const refreshContainerMetadata = useCallback(async (containersToRefresh: ManagedContainer[], pruneMissing = false) => {
     const runningContainers = containersToRefresh.filter((container) => container.status === "running");
@@ -86,6 +122,7 @@ export default function Home() {
       const data = await fetchContainers();
       setContainers(data);
       void refreshContainerMetadata(data, true);
+      void refreshInstanceStatuses(data);
       setError(null);
     } catch (err) {
       console.error("Failed to load containers:", err);
@@ -93,7 +130,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [refreshContainerMetadata]);
+  }, [refreshContainerMetadata, refreshInstanceStatuses]);
 
   useEffect(() => {
     loadContainers();
@@ -114,8 +151,14 @@ export default function Home() {
 
         if (updated.status === "running") {
           void refreshContainerMetadata([updated]);
+          void refreshInstanceStatuses([updated]);
         } else {
           setMetadataByContainerId((prev) => {
+            const next = { ...prev };
+            delete next[updated.id];
+            return next;
+          });
+          setInstanceStatusByContainerId((prev) => {
             const next = { ...prev };
             delete next[updated.id];
             return next;
@@ -129,12 +172,17 @@ export default function Home() {
           delete next[removedId];
           return next;
         });
+        setInstanceStatusByContainerId((prev) => {
+          const next = { ...prev };
+          delete next[removedId];
+          return next;
+        });
       },
       loadContainers,
       setConnected,
     );
     return unsubscribe;
-  }, [loadContainers, refreshContainerMetadata]);
+  }, [loadContainers, refreshContainerMetadata, refreshInstanceStatuses]);
 
   useEffect(() => {
     if (containers.length === 0) {
@@ -150,6 +198,21 @@ export default function Home() {
       clearInterval(interval);
     };
   }, [containers, refreshContainerMetadata]);
+
+  useEffect(() => {
+    if (containers.length === 0) {
+      setInstanceStatusByContainerId({});
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void refreshInstanceStatuses(containers);
+    }, INSTANCE_STATUS_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [containers, refreshInstanceStatuses]);
 
   useEffect(() => {
     const pendingContainers = containers.filter(
@@ -186,6 +249,7 @@ export default function Home() {
     const runningContainers = createdContainers.filter((container) => container.status === "running");
     if (runningContainers.length > 0) {
       void refreshContainerMetadata(runningContainers);
+      void refreshInstanceStatuses(runningContainers);
     }
   };
 
@@ -227,6 +291,7 @@ export default function Home() {
             containers={containers}
             getContainerTitle={getContainerTitle}
             getContainerReviewRequest={(container) => metadataByContainerId[container.id]?.reviewRequest || null}
+            getContainerInstanceStatus={(container) => instanceStatusByContainerId[container.id] || null}
             onRefresh={loadContainers}
           />
         )}
