@@ -1,7 +1,8 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
-import type { ManagedContainer, ContainerCodeStatus, InstanceStatus } from "../types";
+import { useState, useEffect, useMemo } from "react";
+import type { ManagedContainer, ContainerCodeStatus } from "../types";
 import { fetchIframeDomain, fetchContainerCodeStatus, fetchContainerInstanceStatus, deleteContainer } from "../api";
+import usePolledContainerData from "../hooks/usePolledContainerData";
 import InstanceStatusBadge from "../components/InstanceStatusBadge";
 
 const BASE = "/api";
@@ -13,7 +14,6 @@ export default function ContainerView() {
   const [container, setContainer] = useState<ManagedContainer | null>(null);
   const [rootDomain, setRootDomain] = useState<string | undefined>(undefined);
   const [codeStatus, setCodeStatus] = useState<ContainerCodeStatus | null>(null);
-  const [instanceStatus, setInstanceStatus] = useState<InstanceStatus | null>(null);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,6 +21,14 @@ export default function ContainerView() {
   const [killing, setKilling] = useState(false);
   const currentTaskTitle = codeStatus?.currentTaskDescription?.trim() || "No current task";
   const activeReviewRequest = codeStatus?.reviewRequest?.url ? codeStatus.reviewRequest : null;
+
+  const polledContainers = useMemo(() => (container ? [container] : []), [container]);
+  const [instanceStatusByContainerId, refreshInstanceStatus] = usePolledContainerData(
+    polledContainers,
+    fetchContainerInstanceStatus,
+    INSTANCE_STATUS_REFRESH_INTERVAL_MS,
+  );
+  const instanceStatus = container ? instanceStatusByContainerId[container.id] ?? null : null;
 
   const handleDelete = async () => {
     if (!container) return;
@@ -84,6 +92,7 @@ export default function ContainerView() {
 
     if (id) {
       const interval = setInterval(() => {
+        if (document.hidden) return;
         refreshCodeStatus(id).catch((err) => {
           console.error("Failed to refresh code status:", err);
         });
@@ -101,34 +110,8 @@ export default function ContainerView() {
   }, [id]);
 
   useEffect(() => {
-    if (!id) return;
-
-    let cancelled = false;
-
-    async function refreshInstanceStatus(containerId: string) {
-      try {
-        const status = await fetchContainerInstanceStatus(containerId);
-        if (!cancelled) {
-          setInstanceStatus(status);
-        }
-      } catch (err) {
-        console.error("Failed to load container instance status:", err);
-        if (!cancelled) {
-          setInstanceStatus(null);
-        }
-      }
-    }
-
-    void refreshInstanceStatus(id);
-    const interval = setInterval(() => {
-      void refreshInstanceStatus(id);
-    }, INSTANCE_STATUS_REFRESH_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [id]);
+    void refreshInstanceStatus(polledContainers);
+  }, [polledContainers, refreshInstanceStatus]);
 
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-100">

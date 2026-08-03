@@ -216,4 +216,8 @@ async function main() {
   allowStop();
 }
 
-main();
+main().catch((error) => {
+  writeInstanceStatus(true);
+  process.stderr.write(`git-hygiene hook failed: ${error && error.stack ? error.stack : error}\n`);
+  process.exit(1);
+});

@@ -75,12 +75,17 @@ The optional `claude` block is merged into the container's `~/.claude/settings.j
 autonomous permission mode). Put any Claude Code settings here, e.g. `model`.
 
 The instance-status hooks record whether Claude is still working: submitting a
-prompt marks the instance as working, and the Stop hook marks it as finished once
-it lets Claude stop (it stays working while the git-hygiene hook blocks the stop).
+prompt marks the instance as working, the Stop hook marks it as finished once it
+lets Claude stop (it stays working while the git-hygiene hook blocks the stop), and
+a SessionEnd hook marks it finished when the session goes away without a Stop event.
 The state lives in `/run/crc-instance-status.json` inside the container, is served
 by the container metadata server on `/api/instance-status`, proxied by the app on
 `/api/containers/:id/instance-status`, and shown as a Working/Finished badge in the
 UI.
+
+Known limitation: interrupting a turn from the terminal (Esc) fires no hook, so the
+badge keeps reading "Working" until the next stop or session end. The badge tooltip
+shows when the state last changed, which makes a stale "Working" recognisable.
 
 The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
 

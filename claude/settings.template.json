@@ -11,6 +11,9 @@
     ],
     "Stop": [
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/git-hygiene.js", "timeout": 1230 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/instance-status.js finished" }] }
     ]
   }
 }
