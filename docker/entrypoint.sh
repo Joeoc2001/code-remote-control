@@ -46,12 +46,7 @@ echo "Starting container metadata server..."
 tsx /opt/crc/packages/container-metadata-server/src/index.ts &
 
 CLAUDE_SESSION="crc"
-echo "Starting Claude Code session..."
-if [ -n "$CRC_INITIAL_PROMPT" ]; then
-  tmux new-session -d -s "$CLAUDE_SESSION" sh -c 'claude "$CRC_INITIAL_PROMPT"'
-else
-  tmux new-session -d -s "$CLAUDE_SESSION" claude
-fi
+/opt/crc/start-claude-session.sh "$CLAUDE_SESSION"
 
 echo "Starting web terminal..."
 ttyd -p 8080 -i 0.0.0.0 -W \

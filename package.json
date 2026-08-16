@@ -15,6 +15,10 @@
     "dev:server": "npm run dev -w packages/server",
     "build": "npm run build -w packages/client && npm run build -w packages/server",
     "typecheck": "npm run typecheck -w packages/container-metadata-types && npm run typecheck -w packages/container-metadata-server && npm run typecheck -w packages/client && npm run typecheck -w packages/server",
-    "check:claude-assets": "node --check claude/hooks/task-description.js && node --check claude/hooks/git-hygiene.js && node --check claude/hooks/instance-status.js"
+    "check:claude-assets": "node --check claude/hooks/task-description.js && node --check claude/hooks/git-hygiene.js && node --check claude/hooks/instance-status.js",
+    "test": "node --import tsx --test tests/*.test.js tests/*.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
   }
 }

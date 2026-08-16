@@ -31,7 +31,12 @@ const dockerRestartPolicySchema = z.object({
 });
 
 export const dockerConfigSchema = z.object({
-  auto_remove: z.boolean().optional(),
+  auto_remove: z
+    .literal(false, {
+      error:
+        "docker.auto_remove must not be enabled: it deletes the container on exit, which discards the workspace and the Claude Code transcripts needed to resume the session after a restart",
+    })
+    .optional(),
   network_mode: z.string().min(1).optional(),
   networks: z.array(z.string().min(1)).optional(),
   network_aliases: z.array(z.string().min(1)).optional(),
