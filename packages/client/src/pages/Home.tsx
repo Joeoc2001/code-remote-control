@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ManagedContainer, ReviewRequestStatus } from "../types";
-import { fetchContainers, fetchContainerCodeStatus, subscribeToEvents } from "../api";
+import { fetchContainers, fetchContainerCodeStatus, fetchContainerInstanceStatus, subscribeToEvents } from "../api";
+import usePolledContainerData from "../hooks/usePolledContainerData";
 import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
 import NewContainerModal from "../components/NewContainerModal";
@@ -9,10 +10,18 @@ import Footer from "../components/Footer";
 
 const TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 15000;
 const EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 3000;
+const INSTANCE_STATUS_REFRESH_INTERVAL_MS = 5000;
 
 interface ContainerTileMetadata {
   taskDescription: string | null;
   reviewRequest: ReviewRequestStatus | null;
+}
+
+async function fetchContainerTileMetadata(containerId: string): Promise<ContainerTileMetadata | null> {
+  const codeStatus = await fetchContainerCodeStatus(containerId);
+  const taskDescription = codeStatus.currentTaskDescription?.trim() || null;
+  if (!taskDescription && !codeStatus.reviewRequest) return null;
+  return { taskDescription, reviewRequest: codeStatus.reviewRequest };
 }
 
 export default function Home() {
@@ -22,70 +31,24 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
-  const [metadataByContainerId, setMetadataByContainerId] = useState<Record<string, ContainerTileMetadata>>({});
 
-  const refreshContainerMetadata = useCallback(async (containersToRefresh: ManagedContainer[], pruneMissing = false) => {
-    const runningContainers = containersToRefresh.filter((container) => container.status === "running");
-
-    const metadataEntries = await Promise.all(
-      runningContainers.map(async (container) => {
-        try {
-          const codeStatus = await fetchContainerCodeStatus(container.id);
-          const taskDescription = codeStatus.currentTaskDescription?.trim() || null;
-          return {
-            id: container.id,
-            metadata: {
-              taskDescription,
-              reviewRequest: codeStatus.reviewRequest,
-            },
-          };
-        } catch {
-          return {
-            id: container.id,
-            metadata: {
-              taskDescription: null,
-              reviewRequest: null,
-            },
-          };
-        }
-      }),
-    );
-
-    setMetadataByContainerId((previous) => {
-      const next: Record<string, ContainerTileMetadata> = { ...previous };
-
-      if (pruneMissing) {
-        const activeIds = new Set(containersToRefresh.map((container) => container.id));
-        for (const id of Object.keys(next)) {
-          if (!activeIds.has(id)) {
-            delete next[id];
-          }
-        }
-      }
-
-      for (const container of containersToRefresh) {
-        if (container.status !== "running") {
-          delete next[container.id];
-        }
-      }
-
-      for (const { id, metadata } of metadataEntries) {
-        if (metadata.taskDescription || metadata.reviewRequest) {
-          next[id] = metadata;
-        } else {
-          delete next[id];
-        }
-      }
-
-      return next;
-    });
-  }, []);
+  const [metadataByContainerId, refreshContainerMetadata] = usePolledContainerData(
+    containers,
+    fetchContainerTileMetadata,
+    TASK_DESCRIPTION_REFRESH_INTERVAL_MS,
+  );
+  const [instanceStatusByContainerId, refreshInstanceStatuses] = usePolledContainerData(
+    containers,
+    fetchContainerInstanceStatus,
+    INSTANCE_STATUS_REFRESH_INTERVAL_MS,
+  );
 
   const loadContainers = useCallback(async () => {
     try {
       const data = await fetchContainers();
       setContainers(data);
-      void refreshContainerMetadata(data, true);
+      void refreshContainerMetadata(data);
+      void refreshInstanceStatuses(data);
       setError(null);
     } catch (err) {
       console.error("Failed to load containers:", err);
@@ -93,7 +56,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [refreshContainerMetadata]);
+  }, [refreshContainerMetadata, refreshInstanceStatuses]);
 
   useEffect(() => {
     loadContainers();
@@ -114,42 +77,17 @@ export default function Home() {
 
         if (updated.status === "running") {
           void refreshContainerMetadata([updated]);
-        } else {
-          setMetadataByContainerId((prev) => {
-            const next = { ...prev };
-            delete next[updated.id];
-            return next;
-          });
+          void refreshInstanceStatuses([updated]);
         }
       },
       (removedId) => {
         setContainers((prev) => prev.filter((c) => c.id !== removedId));
-        setMetadataByContainerId((prev) => {
-          const next = { ...prev };
-          delete next[removedId];
-          return next;
-        });
       },
       loadContainers,
       setConnected,
     );
     return unsubscribe;
-  }, [loadContainers, refreshContainerMetadata]);
-
-  useEffect(() => {
-    if (containers.length === 0) {
-      setMetadataByContainerId({});
-      return;
-    }
-
-    const interval = setInterval(() => {
-      void refreshContainerMetadata(containers, true);
-    }, TASK_DESCRIPTION_REFRESH_INTERVAL_MS);
-
-    return () => {
-      clearInterval(interval);
-    };
-  }, [containers, refreshContainerMetadata]);
+  }, [loadContainers, refreshContainerMetadata, refreshInstanceStatuses]);
 
   useEffect(() => {
     const pendingContainers = containers.filter(
@@ -163,6 +101,7 @@ export default function Home() {
     void refreshContainerMetadata(pendingContainers);
 
     const interval = setInterval(() => {
+      if (document.hidden) return;
       void refreshContainerMetadata(pendingContainers);
     }, EAGER_TASK_DESCRIPTION_REFRESH_INTERVAL_MS);
 
@@ -186,6 +125,7 @@ export default function Home() {
     const runningContainers = createdContainers.filter((container) => container.status === "running");
     if (runningContainers.length > 0) {
       void refreshContainerMetadata(runningContainers);
+      void refreshInstanceStatuses(runningContainers);
     }
   };
 
@@ -227,6 +167,7 @@ export default function Home() {
             containers={containers}
             getContainerTitle={getContainerTitle}
             getContainerReviewRequest={(container) => metadataByContainerId[container.id]?.reviewRequest || null}
+            getContainerInstanceStatus={(container) => instanceStatusByContainerId[container.id] || null}
             onRefresh={loadContainers}
           />
         )}

@@ -12,6 +12,7 @@ export type {
 
 export type {
   ContainerCodeStatus,
+  InstanceStatus,
   ReviewRequestStatus,
   PipelineStatus,
   ForgeProvider,

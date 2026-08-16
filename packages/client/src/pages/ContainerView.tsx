@@ -1,9 +1,12 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { ManagedContainer, ContainerCodeStatus } from "../types";
-import { fetchIframeDomain, fetchContainerCodeStatus, deleteContainer } from "../api";
+import { fetchIframeDomain, fetchContainerCodeStatus, fetchContainerInstanceStatus, deleteContainer } from "../api";
+import usePolledContainerData from "../hooks/usePolledContainerData";
+import InstanceStatusBadge from "../components/InstanceStatusBadge";
 
 const BASE = "/api";
+const INSTANCE_STATUS_REFRESH_INTERVAL_MS = 5000;
 
 export default function ContainerView() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +21,14 @@ export default function ContainerView() {
   const [killing, setKilling] = useState(false);
   const currentTaskTitle = codeStatus?.currentTaskDescription?.trim() || "No current task";
   const activeReviewRequest = codeStatus?.reviewRequest?.url ? codeStatus.reviewRequest : null;
+
+  const polledContainers = useMemo(() => (container ? [container] : []), [container]);
+  const [instanceStatusByContainerId, refreshInstanceStatus] = usePolledContainerData(
+    polledContainers,
+    fetchContainerInstanceStatus,
+    INSTANCE_STATUS_REFRESH_INTERVAL_MS,
+  );
+  const instanceStatus = container ? instanceStatusByContainerId[container.id] ?? null : null;
 
   const handleDelete = async () => {
     if (!container) return;
@@ -81,6 +92,7 @@ export default function ContainerView() {
 
     if (id) {
       const interval = setInterval(() => {
+        if (document.hidden) return;
         refreshCodeStatus(id).catch((err) => {
           console.error("Failed to refresh code status:", err);
         });
@@ -97,6 +109,10 @@ export default function ContainerView() {
     };
   }, [id]);
 
+  useEffect(() => {
+    void refreshInstanceStatus(polledContainers);
+  }, [polledContainers, refreshInstanceStatus]);
+
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-100">
       <header className="shrink-0 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
@@ -108,6 +124,7 @@ export default function ContainerView() {
             ← Back
           </Link>
           <h1 className="flex-1 truncate text-xl font-semibold">{currentTaskTitle}</h1>
+          <InstanceStatusBadge instanceStatus={instanceStatus} />
           {!loading && !error && container && (
             <div className="ml-auto flex flex-col items-end gap-1">
               <div className="flex items-center gap-2">

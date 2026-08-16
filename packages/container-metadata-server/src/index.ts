@@ -2,11 +2,12 @@ import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { ContainerCodeStatus, ForgeProvider, PipelineStatus, ReviewRequestStatus } from "../../container-metadata-types/src/index.js";
+import type { ContainerCodeStatus, ForgeProvider, InstanceStatus, PipelineStatus, ReviewRequestStatus } from "../../container-metadata-types/src/index.js";
 
 const execFileAsync = promisify(execFile);
 const METADATA_PORT = parseInt(process.env.CRC_METADATA_PORT || "8081", 10);
 const TASK_DESCRIPTION_PATH = "/run/crc-current-task-description";
+const INSTANCE_STATUS_PATH = "/run/crc-instance-status.json";
 
 function respondJson(res: import("node:http").ServerResponse, statusCode: number, body: unknown): void {
   res.statusCode = statusCode;
@@ -39,6 +40,25 @@ async function readCurrentTaskDescription(): Promise<string | null> {
     }
     throw error;
   }
+}
+
+async function readInstanceStatus(): Promise<InstanceStatus> {
+  let raw: string;
+  try {
+    raw = await readFile(INSTANCE_STATUS_PATH, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { finished: false, updatedAt: null };
+    }
+    throw error;
+  }
+
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (typeof parsed.finished !== "boolean" || typeof parsed.updatedAt !== "string") {
+    throw new Error(`Instance status file ${INSTANCE_STATUS_PATH} is malformed`);
+  }
+
+  return { finished: parsed.finished, updatedAt: parsed.updatedAt };
 }
 
 function parseRepoInfo(remoteUrl: string): { orgName: string | null; repoName: string | null } {
@@ -310,18 +330,32 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
 }
 
 const server = createServer(async (req, res) => {
-  if (req.method !== "GET" || req.url !== "/api/code-status") {
+  if (req.method !== "GET") {
     respondJson(res, 404, { error: "Not found" });
     return;
   }
 
-  try {
-    const payload = await buildCodeStatus();
-    respondJson(res, 200, payload);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    respondJson(res, 500, { error: `Failed to build code status metadata: ${message}` });
+  if (req.url === "/api/code-status") {
+    try {
+      respondJson(res, 200, await buildCodeStatus());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      respondJson(res, 500, { error: `Failed to build code status metadata: ${message}` });
+    }
+    return;
   }
+
+  if (req.url === "/api/instance-status") {
+    try {
+      respondJson(res, 200, await readInstanceStatus());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      respondJson(res, 500, { error: `Failed to read instance status: ${message}` });
+    }
+    return;
+  }
+
+  respondJson(res, 404, { error: "Not found" });
 });
 
 server.listen(METADATA_PORT, "0.0.0.0", () => {

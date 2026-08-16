@@ -15,6 +15,11 @@ export interface PipelineStatus {
   url: string | null;
 }
 
+export interface InstanceStatus {
+  finished: boolean;
+  updatedAt: string | null;
+}
+
 export interface ContainerCodeStatus {
   branch: string;
   commitSha: string;

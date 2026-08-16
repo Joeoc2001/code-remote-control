@@ -133,8 +133,9 @@ function buildClaudeHooks(): Record<string, unknown> {
   });
 
   return {
-    UserPromptSubmit: [command("task-description.js")],
+    UserPromptSubmit: [command("task-description.js"), command("instance-status.js working")],
     Stop: [command("git-hygiene.js", GIT_HYGIENE_HOOK_TIMEOUT_SECONDS)],
+    SessionEnd: [command("instance-status.js finished")],
   };
 }
 

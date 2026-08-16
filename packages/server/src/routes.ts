@@ -19,7 +19,7 @@ import {
 import { fetchOpenIssues as fetchGitHubOpenIssues, fetchOpenPullRequests as fetchGitHubOpenPullRequests, fetchRepos as fetchGitHubRepos } from "./github.js";
 import { fetchOpenIssuesAndWorkItems as fetchGitLabOpenIssuesAndWorkItems, fetchOpenMergeRequests as fetchGitLabOpenMergeRequests, fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
 import type { ConfigSummaryFile, CreateContainerRequestV2, CreateContainersRequest, ManagedContainer, RepoSource } from "./types.js";
-import type { ContainerCodeStatus } from "@crc/container-metadata-types";
+import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
 
 export const router = Router();
 
@@ -27,6 +27,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const CODE_STATUS_CACHE_TTL_MS = 30_000;
 const codeStatusCache = new Map<string, { data: ContainerCodeStatus; expiresAt: number }>();
+
+const INSTANCE_STATUS_CACHE_TTL_MS = 2_000;
+const instanceStatusCache = new Map<string, { data: InstanceStatus; expiresAt: number }>();
 
 const VALID_REPO_SOURCES: RepoSource[] = ["github", "gitlab"];
 const GITHUB_REPO_NAME_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
@@ -323,6 +326,50 @@ router.get("/api/containers/:id/code-status", async (req, res) => {
   } catch (err) {
     console.error("Error fetching container code status:", err);
     res.status(500).json({ error: "Failed to fetch container code status" });
+  }
+});
+
+router.get("/api/containers/:id/instance-status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidContainerId(id)) {
+      res.status(400).json({ error: "Invalid container ID" });
+      return;
+    }
+
+    const container = await getContainer(id);
+    if (!container) {
+      res.status(404).json({ error: "Container not found" });
+      return;
+    }
+
+    if (container.status !== "running") {
+      res.status(409).json({ error: "Container is not running" });
+      return;
+    }
+
+    const cached = instanceStatusCache.get(id);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.json(cached.data);
+      return;
+    }
+
+    const response = await fetch(
+      `http://${container.name}:${CONTAINER_METADATA_INTERNAL_PORT}/api/instance-status`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+
+    if (!response.ok) {
+      res.status(502).json({ error: "Container metadata server returned an error" });
+      return;
+    }
+
+    const payload = await response.json() as InstanceStatus;
+    instanceStatusCache.set(id, { data: payload, expiresAt: Date.now() + INSTANCE_STATUS_CACHE_TTL_MS });
+    res.json(payload);
+  } catch (err) {
+    console.error("Error fetching container instance status:", err);
+    res.status(500).json({ error: "Failed to fetch container instance status" });
   }
 });
 

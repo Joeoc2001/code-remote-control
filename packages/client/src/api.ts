@@ -8,6 +8,7 @@ import type {
   RepoReviewRequest,
   RepoWorkItem,
   ContainerCodeStatus,
+  InstanceStatus,
 } from "./types";
 
 const BASE = "/api";
@@ -110,6 +111,12 @@ export async function fetchBuildInfo(): Promise<{ buildId: string }> {
 export async function fetchContainerCodeStatus(id: string): Promise<ContainerCodeStatus> {
   const res = await fetch(`${BASE}/containers/${id}/code-status`);
   if (!res.ok) throw new Error("Failed to fetch container code status");
+  return res.json();
+}
+
+export async function fetchContainerInstanceStatus(id: string): Promise<InstanceStatus> {
+  const res = await fetch(`${BASE}/containers/${id}/instance-status`);
+  if (!res.ok) throw new Error("Failed to fetch container instance status");
   return res.json();
 }
 
