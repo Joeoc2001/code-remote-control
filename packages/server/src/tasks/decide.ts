@@ -3,7 +3,7 @@ import type { RepoReviewRequest, Task, TaskPhase, TaskStep } from "../types.js";
 export const PER_STEP_SPAWN_CAP = 3;
 export const TOTAL_SPAWN_CAP = 12;
 
-const PER_STEP_CAPPED_STEPS: readonly TaskStep[] = ["implement", "fix_ci", "rebase"];
+const PER_STEP_CAPPED_STEPS: readonly TaskStep[] = ["fix_ci", "rebase"];
 
 export type TaskDecision =
   | { kind: "noop"; phase: TaskPhase | null }
@@ -49,7 +49,13 @@ export function decide(task: Task, reviewRequest: RepoReviewRequest | null): Tas
     if (task.attemptsByStep.implement === 0) {
       return spawn(task, "implement");
     }
-    return { kind: "fail", reason: "Implement agent finished without opening a PR/MR" };
+    const lastImplementAttempt = [...task.attempts].reverse().find((attempt) => attempt.step === "implement");
+    return {
+      kind: "fail",
+      reason: lastImplementAttempt?.error
+        ? `Implement agent did not open a PR/MR (attempt failed: ${lastImplementAttempt.error})`
+        : "Implement agent finished without opening a PR/MR",
+    };
   }
 
   if (!reviewRequest) {

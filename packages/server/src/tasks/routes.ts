@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { loadConfigurations } from "../config.js";
-import { broadcastRemoval, removeContainer } from "../docker.js";
+import { broadcastRemoval, removeContainerIfPresent } from "../docker.js";
 import { getForge } from "../forge/index.js";
 import { TASK_STEPS } from "../types.js";
 import type { CreateTasksRequest, Task, TaskStep, UpdateTaskRequest } from "../types.js";
@@ -203,6 +203,17 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
       return;
     }
 
+    if (phase === "paused" && (task.phase === "merged" || task.phase === "failed")) {
+      res.status(409).json({ error: `Cannot pause a ${task.phase} task` });
+      return;
+    }
+
+    if (phase === "resume" && task.phase !== "failed" && task.phase !== "paused") {
+      res.status(409).json({ error: `Cannot resume a task in phase '${task.phase}'` });
+      return;
+    }
+
+    let configByStepPatch: Partial<Record<TaskStep, string>> = {};
     if (configByStep !== undefined) {
       const configs = await loadConfigurations();
       const configNames = new Set(configs.configurations.map((c) => c.name));
@@ -211,31 +222,22 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
         res.status(400).json({ error: result.error });
         return;
       }
-      task.configByStep = { ...task.configByStep, ...result.value };
+      configByStepPatch = result.value;
     }
 
+    task.configByStep = { ...task.configByStep, ...configByStepPatch };
+
     if (phase === "paused") {
-      if (task.phase === "merged" || task.phase === "failed") {
-        res.status(409).json({ error: `Cannot pause a ${task.phase} task` });
-        return;
-      }
       task.phase = "paused";
     }
 
     if (phase === "resume") {
-      if (task.phase === "merged") {
-        res.status(409).json({ error: "Cannot resume a merged task" });
-        return;
-      }
       if (task.phase === "failed") {
         task.attemptsByStep = Object.fromEntries(
           Object.keys(task.attemptsByStep).map((step) => [step, 0]),
         ) as Record<TaskStep, number>;
         task.error = null;
         task.consecutiveErrors = 0;
-      } else if (task.phase !== "paused") {
-        res.status(409).json({ error: `Cannot resume a task in phase '${task.phase}'` });
-        return;
       }
       task.phase = task.activeContainerId ? "agent_running" : "spawning";
     }
@@ -248,11 +250,6 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
   }
 });
 
-function isMissingContainerError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-  return message.includes("no such container") || message.includes("404");
-}
-
 tasksRouter.delete("/api/tasks/:id", async (req, res) => {
   try {
     const task = taskStore.get(req.params.id);
@@ -262,12 +259,8 @@ tasksRouter.delete("/api/tasks/:id", async (req, res) => {
     }
 
     if (task.activeContainerId) {
-      try {
-        await removeContainer(task.activeContainerId);
-        broadcastRemoval(task.activeContainerId);
-      } catch (err) {
-        if (!isMissingContainerError(err)) throw err;
-      }
+      await removeContainerIfPresent(task.activeContainerId);
+      broadcastRemoval(task.activeContainerId);
     }
 
     taskStore.remove(task.id);

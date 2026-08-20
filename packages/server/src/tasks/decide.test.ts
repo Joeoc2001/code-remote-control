@@ -40,6 +40,26 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
     });
     const decision = decide(task, null);
     assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /finished without opening/);
+  });
+
+  it("rule 1: attributes the failure to the attempt error when implement did not finish cleanly", () => {
+    const task = makeTask({
+      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [
+        {
+          step: "implement",
+          containerId: "c0ffee0000000000",
+          headShaBefore: null,
+          startedAt: "2026-08-20T10:00:00.000Z",
+          finishedAt: "2026-08-20T12:00:00.000Z",
+          error: "Attempt timed out after 120 minutes",
+        },
+      ],
+    });
+    const decision = decide(task, null);
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /timed out after 120 minutes/);
   });
 });
 

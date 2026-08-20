@@ -44,7 +44,7 @@ export interface SchedulerDeps {
   now(): Date;
 }
 
-function isLive(task: Task): boolean {
+function isSchedulable(task: Task): boolean {
   return task.phase !== "merged" && task.phase !== "failed" && task.phase !== "paused";
 }
 
@@ -70,6 +70,15 @@ async function recordTaskError(deps: SchedulerDeps, task: Task, err: unknown): P
     task.phase = "failed";
     task.error = `Failed after ${MAX_CONSECUTIVE_ERRORS} consecutive errors, most recently: ${message}`;
     if (task.activeContainerId) {
+      try {
+        deps.store.writeAttemptLog(
+          task.id,
+          task.attempts.length - 1,
+          await deps.getContainerLogTail(task.activeContainerId),
+        );
+      } catch (logErr) {
+        console.error(`Task ${task.id}: could not capture log tail before failing:`, logErr);
+      }
       try {
         await deps.removeContainer(task.activeContainerId);
       } catch (removeErr) {
@@ -114,8 +123,24 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   }
 
   const container = await deps.getContainer(containerId);
-  if (!container || container.status !== "running") {
-    finishAttempt(deps, task, attempt, "Agent container disappeared or stopped unexpectedly");
+  if (!container) {
+    finishAttempt(deps, task, attempt, "Agent container disappeared unexpectedly");
+    saveTask(deps, task);
+    return "evaluate";
+  }
+
+  if (container.status === "restarting") {
+    return "settle";
+  }
+
+  if (container.status !== "running") {
+    try {
+      deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
+    } catch (err) {
+      console.error(`Task ${task.id}: could not capture log tail of stopped container:`, err);
+    }
+    await deps.removeContainer(containerId);
+    finishAttempt(deps, task, attempt, `Agent container stopped unexpectedly (status: ${container.status})`);
     saveTask(deps, task);
     return "evaluate";
   }
@@ -146,7 +171,8 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   let status: InstanceStatus;
   try {
     status = await deps.fetchInstanceStatus(container.name);
-  } catch {
+  } catch (err) {
+    console.error(`Task ${task.id}: container metadata server unreachable, waiting:`, err);
     return "settle";
   }
 
@@ -206,6 +232,12 @@ async function spawnAgent(
     initialPrompt: prompt,
   });
 
+  const current = deps.store.get(task.id);
+  if (!current) {
+    await deps.removeContainer(container.id);
+    return;
+  }
+
   task.attempts.push({
     step: decision.step,
     containerId: container.id,
@@ -217,7 +249,9 @@ async function spawnAgent(
   task.attemptsByStep[decision.step] += 1;
   task.activeContainerId = container.id;
   task.activeStep = decision.step;
-  task.phase = "agent_running";
+  if (current.phase !== "paused") {
+    task.phase = "agent_running";
+  }
   clearTaskError(task);
   saveTask(deps, task);
 }
@@ -277,7 +311,7 @@ async function executeDecision(
 }
 
 export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
-  const liveTasks = deps.store.list().filter(isLive);
+  const liveTasks = deps.store.list().filter(isSchedulable);
 
   const toEvaluate: Task[] = [];
   for (const task of liveTasks) {
@@ -293,13 +327,22 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
       await recordTaskError(deps, task, err);
       outcome = "settle";
     }
-    if (outcome === "evaluate" && isLive(task)) {
+    if (outcome === "evaluate" && isSchedulable(task)) {
       toEvaluate.push(task);
     }
   }
 
+  for (const task of toEvaluate.filter((t) => !t.reviewRequest)) {
+    try {
+      const decision = decide(task, null);
+      await executeDecision(deps, deps.getForge(task.repoSource), task, decision, null);
+    } catch (err) {
+      await recordTaskError(deps, task, err);
+    }
+  }
+
   const groups = new Map<string, Task[]>();
-  for (const task of toEvaluate) {
+  for (const task of toEvaluate.filter((t) => t.reviewRequest)) {
     const key = `${task.repoSource}:${task.repoFullName}`;
     const group = groups.get(key);
     if (group) {
@@ -332,7 +375,7 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
             snapshot.find((item) => item.id === linkedId) ??
             (await forge.getReviewRequest(repoFullName, linkedId));
         }
-        if (!isLive(task)) continue;
+        if (!isSchedulable(task)) continue;
         const decision = decide(task, reviewRequest);
         await executeDecision(deps, forge, task, decision, reviewRequest);
       } catch (err) {

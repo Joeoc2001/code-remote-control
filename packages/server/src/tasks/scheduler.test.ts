@@ -71,6 +71,7 @@ interface HarnessOptions {
   containers?: ManagedContainer[];
   snapshot?: RepoReviewRequest[];
   listError?: Error;
+  getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
   instanceStatus?: Record<string, InstanceStatus>;
   codeStatus?: Record<string, ContainerCodeStatus>;
@@ -112,7 +113,10 @@ function makeHarness(options: HarnessOptions) {
     store,
     getForge: () => forge,
     loadConfigurations: async () => CONFIG_FILE,
-    getContainer: async (id) => containers.get(id) ?? null,
+    getContainer: async (id) => {
+      if (options.getContainerError) throw options.getContainerError;
+      return containers.get(id) ?? null;
+    },
     createContainer: async (_appConfig, config, repoFullName, _repoSource, opts) => {
       const id = `abcd00000000000${nextContainer}`;
       nextContainer += 1;
@@ -319,10 +323,43 @@ describe("scheduler: watching a running agent", () => {
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.match(task.attempts[1].error ?? "", /disappeared or stopped/);
+    assert.match(task.attempts[1].error ?? "", /disappeared/);
     assert.equal(harness.created.length, 1);
     assert.equal(task.activeStep, "fix_ci");
     assert.equal(task.attemptsByStep.fix_ci, 2);
+  });
+
+  it("captures the log and removes an exited container before re-evaluating", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME, "exited")],
+      snapshot: [makeReviewRequest({ ciState: "failed" })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(harness.store.readAttemptLog(task.id, 1), "captured log tail");
+    assert.match(task.attempts[1].error ?? "", /stopped unexpectedly \(status: exited\)/);
+    assert.equal(harness.created.length, 1);
+  });
+
+  it("treats a transient container-inspect error as an error, not a vanished agent", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      getContainerError: new Error("docker daemon hiccup"),
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.attempts[1].finishedAt, null);
+    assert.equal(task.consecutiveErrors, 1);
+    assert.match(task.error ?? "", /docker daemon hiccup/);
+    assert.equal(harness.created.length, 0);
+    assert.equal(harness.removed.length, 0);
   });
 
   it("fails a task whose implement agent finished without opening a PR/MR", async () => {
@@ -446,6 +483,68 @@ describe("scheduler: rails", () => {
     assert.equal(harness.removed.length, 0);
     assert.equal(harness.created.length, 0);
     assert.equal(harness.broadcasts.length, 0);
+  });
+
+  it("spawns implement agents even while the forge is down, since they need no forge data", async () => {
+    const task = makeTask();
+    const harness = makeHarness({ tasks: [task], listError: new Error("forge is down") });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.error, null);
+  });
+
+  it("discards the container instead of resurrecting a task deleted during spawn", async () => {
+    const task = makeTask();
+    const harness = makeHarness({ tasks: [task] });
+    const originalCreate = harness.deps.createContainer;
+    harness.deps.createContainer = async (...args) => {
+      harness.store.remove(task.id);
+      return originalCreate(...args);
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.removed.length, 1);
+    assert.deepEqual(harness.store.list(), []);
+  });
+
+  it("keeps a pause that landed while the agent container was being created", async () => {
+    const task = makeTask();
+    const harness = makeHarness({ tasks: [task] });
+    const originalCreate = harness.deps.createContainer;
+    harness.deps.createContainer = async (...args) => {
+      task.phase = "paused";
+      harness.store.save(task);
+      return originalCreate(...args);
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "paused");
+    assert.ok(task.activeContainerId);
+    assert.equal(task.attempts.length, 1);
+  });
+
+  it("captures the active attempt's log before failing a task on repeated errors", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+    });
+
+    for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
+      await runTaskSchedulerTick(harness.deps);
+    }
+
+    assert.equal(task.phase, "failed");
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(harness.store.readAttemptLog(task.id, 1), "captured log tail");
+    assert.ok(task.attempts[1].finishedAt);
   });
 
   it("records snapshot errors and fails the task after repeated failures", async () => {

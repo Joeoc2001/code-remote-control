@@ -225,6 +225,35 @@ function demuxDockerStream(rawStream: NodeJS.ReadableStream): NodeJS.ReadableStr
   return output;
 }
 
+function isNotFoundError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { statusCode?: number }).statusCode === 404;
+}
+
+export async function findManagedContainer(id: string): Promise<ManagedContainer | null> {
+  const container = docker.getContainer(id);
+  let info: Dockerode.ContainerInspectInfo;
+  try {
+    info = await container.inspect();
+  } catch (err) {
+    if (isNotFoundError(err)) return null;
+    throw err;
+  }
+
+  const name = info.Name.replace(/^\//, "");
+  if (!name.startsWith(CONTAINER_PREFIX)) return null;
+
+  const status = info.State.Running ? "running" : info.State.Status;
+  return buildManagedContainer(info.Id, name, info.Config.Labels, status, info.Created);
+}
+
+export async function removeContainerIfPresent(id: string): Promise<void> {
+  try {
+    await removeContainer(id);
+  } catch (err) {
+    if (!isNotFoundError(err)) throw err;
+  }
+}
+
 async function assertManagedContainer(id: string): Promise<void> {
   const container = docker.getContainer(id);
   const info = await container.inspect();

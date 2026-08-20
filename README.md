@@ -178,7 +178,8 @@ agent finishes, its container's log tail and PR/MR link are captured, the
 container is removed, and the task settles for one tick before deciding again.
 The task detail page shows the full attempt timeline with the captured logs.
 
-Safety rails: implement/fix-CI/rebase each spawn at most 3 times and a task
+Safety rails: fix-CI and rebase each spawn at most 3 times, an implement agent
+that ends without opening a PR/MR is never retried automatically, and a task
 spawns at most 12 agents in total before failing; a wedged attempt is killed
 after 2 hours (an interrupted agent can otherwise report "working" forever —
 see the known limitation above); repeated forge errors fail the task; paused

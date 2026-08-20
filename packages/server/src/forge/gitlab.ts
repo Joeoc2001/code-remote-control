@@ -375,7 +375,9 @@ export async function mergeMergeRequest(repoFullName: string, id: string): Promi
   const config = await loadConfigurations();
   const apiBase = await gitlabApiBase();
   const encodedProject = encodeURIComponent(repoFullName);
-  await gitlabRequest("PUT", `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/merge`, {
-    squash: config.merge_method === "squash",
-  });
+  await gitlabRequest(
+    "PUT",
+    `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/merge`,
+    config.merge_method === "squash" ? { squash: true } : undefined,
+  );
 }

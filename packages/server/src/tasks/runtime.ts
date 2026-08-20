@@ -4,7 +4,7 @@ import {
   broadcastRemoval,
   broadcastSSE,
   createContainer,
-  getContainer,
+  findManagedContainer,
   getContainerLogTail,
   removeContainer,
   CONTAINER_METADATA_INTERNAL_PORT,
@@ -38,7 +38,7 @@ export const schedulerDeps: SchedulerDeps = {
   store: taskStore,
   getForge,
   loadConfigurations,
-  getContainer,
+  getContainer: findManagedContainer,
   createContainer,
   removeContainer: async (id) => {
     await removeContainer(id);
