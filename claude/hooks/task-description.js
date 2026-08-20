@@ -3,6 +3,17 @@ const { writeFileSync } = require("node:fs");
 const TASK_DESCRIPTION_PATH = "/run/crc-current-task-description";
 const MAX_LENGTH = 500;
 
+function isResumePrompt(prompt) {
+  const resumePrompt = process.env.CRC_RESUME_PROMPT;
+  return Boolean(resumePrompt) && prompt === resumePrompt;
+}
+
+function taskDescriptionFor(prompt) {
+  const trimmed = typeof prompt === "string" ? prompt.trim() : "";
+  if (!trimmed || isResumePrompt(trimmed)) return null;
+  return trimmed.replace(/\s+/g, " ").slice(0, MAX_LENGTH);
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     let data = "";
@@ -17,11 +28,14 @@ function readStdin() {
 async function main() {
   const raw = await readStdin();
   const payload = JSON.parse(raw);
-  const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
-  if (!prompt) return;
+  const description = taskDescriptionFor(payload.prompt);
+  if (!description) return;
 
-  const description = prompt.replace(/\s+/g, " ").slice(0, MAX_LENGTH);
   writeFileSync(TASK_DESCRIPTION_PATH, `${description}\n`, { encoding: "utf-8", mode: 0o644 });
 }
 
-main();
+module.exports = { TASK_DESCRIPTION_PATH, taskDescriptionFor };
+
+if (require.main === module) {
+  main();
+}

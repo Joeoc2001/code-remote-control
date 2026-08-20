@@ -53,7 +53,7 @@ function buildRestartPolicy(dockerConfig: DockerConfig | undefined): DockerHostC
 
 function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConfig {
   return {
-    AutoRemove: dockerConfig?.auto_remove ?? false,
+    AutoRemove: false,
     NetworkMode: dockerConfig?.network_mode,
     Binds: dockerConfig?.binds,
     Tmpfs: dockerConfig?.tmpfs,

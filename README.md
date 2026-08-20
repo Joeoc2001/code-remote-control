@@ -89,6 +89,10 @@ shows when the state last changed, which makes a stale "Working" recognisable.
 
 The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
 
+`docker.auto_remove` may only be `false`: a container that deletes itself on exit
+takes the workspace and the Claude Code transcripts with it, so the session could
+never be resumed. Configs that enable it are rejected at load time.
+
 For GPU passthrough, set `device_requests` with NVIDIA capabilities as shown above.
 
 Launch web server docker container:
@@ -112,6 +116,34 @@ services:
 
 Note that the runners must be accessible from the CRC server, so must share at least one docker network.
 
+## Restarts
+
+When a container restarts — a host reboot, a `docker restart`, or a restart policy
+firing after a crash — the writable layer survives, so `/workspace` and
+`/root/.claude` still hold the previous run's work and conversation. The
+entrypoint hands the session launch to `docker/start-claude-session.sh`, which
+checks for a Claude Code transcript in `/root/.claude/projects/-workspace` and,
+if one exists, starts the session with `claude --continue` plus a prompt telling
+the agent that the container restarted and to carry on from where it left off.
+The original `CRC_INITIAL_PROMPT` is only replayed on the container's first
+start, so a restart never re-runs a task from scratch against a half-finished
+workspace.
+
+If the instance status recorded in `/run/crc-instance-status.json` says the
+previous task had already finished, the session is reopened with a bare
+`claude --continue` instead. The conversation is still there to read in the web
+terminal, but the agent is not prompted, so a host reboot does not wake every
+completed container back up.
+
+The resume prompt is exported as `CRC_RESUME_PROMPT` so the task-description hook
+can ignore it and keep showing the real task in the UI.
+
+Docker only restarts containers automatically after a daemon restart when their
+restart policy is `always` or `unless-stopped`; set
+`docker.restart_policy.name` to `unless-stopped` for reliable comeback after a
+reboot. Recreating a container (delete and re-create, or an image upgrade) still
+starts from scratch — nothing survives `docker rm`.
+
 ## Authentication
 
 Set `CRC_ACCESS_TOKEN` to protect the dashboard, the API, and the per-container
@@ -125,3 +157,14 @@ and redirects to a clean URL. Programmatic clients can instead send
 
 If `CRC_ACCESS_TOKEN` is left unset the server starts with authentication
 disabled and logs a warning; only do this on a trusted, isolated network.
+
+## Tests
+
+```
+npm install
+npm test
+```
+
+The suite covers the container session/restart logic (including a pass that drives
+real `tmux`, so `tmux` must be installed), the Claude hooks, and the configuration
+schema.
