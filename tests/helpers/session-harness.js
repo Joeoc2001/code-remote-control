@@ -1,5 +1,5 @@
 const { execFileSync } = require("node:child_process");
-const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require("node:fs");
+const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
@@ -29,6 +29,8 @@ ${RECORD_ARGV}
 record_argv "$CRC_TEST_DIR/claude-argv" "$@"
 printf '%s' "\${CRC_RESUME_PROMPT-}" > "$CRC_TEST_DIR/claude-resume-prompt-env"
 printf '%s' "\${CRC_INITIAL_PROMPT-}" > "$CRC_TEST_DIR/claude-initial-prompt-env"
+: > "$CRC_TEST_DIR/claude-done"
+exit "\${CRC_TEST_CLAUDE_EXIT_STATUS:-0}"
 `;
 
 function writeStub(dir, name, body) {
@@ -37,7 +39,14 @@ function writeStub(dir, name, body) {
   chmodSync(file, 0o755);
 }
 
-function prepare({ transcriptFiles = [], transcriptSubdirs = [], createTranscriptDir = true, initialPrompt }) {
+function prepare({
+  transcriptFiles = [],
+  transcriptSubdirs = [],
+  createTranscriptDir = true,
+  initialPrompt,
+  instanceStatus,
+  claudeExitStatus,
+}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "crc-session-test-"));
   const bin = path.join(root, "bin");
   mkdirSync(bin);
@@ -54,13 +63,20 @@ function prepare({ transcriptFiles = [], transcriptSubdirs = [], createTranscrip
     }
   }
 
+  const instanceStatusPath = path.join(root, "crc-instance-status.json");
+  if (instanceStatus !== undefined) {
+    writeFileSync(instanceStatusPath, typeof instanceStatus === "string" ? instanceStatus : `${JSON.stringify(instanceStatus)}\n`);
+  }
+
   const env = {
     PATH: `${bin}:${process.env.PATH}`,
     HOME: root,
     CRC_TEST_DIR: root,
     CRC_TRANSCRIPT_DIR: transcriptDir,
+    CRC_INSTANCE_STATUS_PATH: instanceStatusPath,
   };
   if (initialPrompt !== undefined) env.CRC_INITIAL_PROMPT = initialPrompt;
+  if (claudeExitStatus !== undefined) env.CRC_TEST_CLAUDE_EXIT_STATUS = String(claudeExitStatus);
 
   return { root, bin, transcriptDir, env };
 }
@@ -99,11 +115,14 @@ function startSession(options = {}) {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
     });
+    return { stdout, error, ...collect(root) };
   } catch (err) {
     error = err;
+    stdout = String(err.stdout ?? "");
+    return { stdout, error, ...collect(root) };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
-
-  return { stdout, error, ...collect(root) };
 }
 
 function requireTmux() {
@@ -127,13 +146,12 @@ async function startSessionWithRealTmux(options = {}) {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const argvFile = path.join(root, "claude-argv");
+    const doneFile = path.join(root, "claude-done");
     const deadline = Date.now() + 10_000;
-    while (!existsSync(argvFile) && Date.now() < deadline) {
+    while (!existsSync(doneFile) && Date.now() < deadline) {
       await delay(25);
     }
-    if (!existsSync(argvFile)) throw new Error("tmux never launched the claude command");
-    await delay(50);
+    if (!existsSync(doneFile)) throw new Error("tmux never ran the claude command to completion");
 
     return collect(root);
   } finally {
@@ -142,6 +160,7 @@ async function startSessionWithRealTmux(options = {}) {
     } catch {
       // the server exits on its own once the stub command finishes
     }
+    rmSync(root, { recursive: true, force: true });
   }
 }
 

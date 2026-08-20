@@ -120,13 +120,20 @@ Note that the runners must be accessible from the CRC server, so must share at l
 
 When a container restarts — a host reboot, a `docker restart`, or a restart policy
 firing after a crash — the writable layer survives, so `/workspace` and
-`/root/.claude` still hold the previous run's work and conversation. The entrypoint
-therefore checks for a Claude Code transcript in
-`/root/.claude/projects/-workspace` and, if one exists, starts the session with
-`claude --continue` plus a prompt telling the agent that the container restarted
-and to carry on from where it left off. The original `CRC_INITIAL_PROMPT` is only
-replayed on the container's first start, so a restart never re-runs a task from
-scratch against a half-finished workspace.
+`/root/.claude` still hold the previous run's work and conversation. The
+entrypoint hands the session launch to `docker/start-claude-session.sh`, which
+checks for a Claude Code transcript in `/root/.claude/projects/-workspace` and,
+if one exists, starts the session with `claude --continue` plus a prompt telling
+the agent that the container restarted and to carry on from where it left off.
+The original `CRC_INITIAL_PROMPT` is only replayed on the container's first
+start, so a restart never re-runs a task from scratch against a half-finished
+workspace.
+
+If the instance status recorded in `/run/crc-instance-status.json` says the
+previous task had already finished, the session is reopened with a bare
+`claude --continue` instead. The conversation is still there to read in the web
+terminal, but the agent is not prompted, so a host reboot does not wake every
+completed container back up.
 
 The resume prompt is exported as `CRC_RESUME_PROMPT` so the task-description hook
 can ignore it and keep showing the real task in the UI.
