@@ -1,6 +1,8 @@
 import type {
   ManagedContainer,
   ConfigSummary,
+  CreateTasksRequest,
+  CreateTasksResponse,
   GitHubRepo,
   GitLabRepo,
   RepoSource,
@@ -9,6 +11,8 @@ import type {
   RepoWorkItem,
   ContainerCodeStatus,
   InstanceStatus,
+  Task,
+  UpdateTaskRequest,
 } from "./types";
 
 const BASE = "/api";
@@ -120,35 +124,91 @@ export async function fetchContainerInstanceStatus(id: string): Promise<Instance
   return res.json();
 }
 
-export function subscribeToEvents(
-  onContainerUpdated: (container: ManagedContainer) => void,
-  onContainerRemoved: (id: string) => void,
-  onReconnect?: () => void,
-  onConnectionError?: (connected: boolean) => void,
-): () => void {
+export async function fetchTasks(): Promise<Task[]> {
+  const res = await fetch(`${BASE}/tasks`);
+  if (!res.ok) throw new Error("Failed to fetch tasks");
+  return res.json();
+}
+
+export async function fetchTask(id: string): Promise<Task> {
+  const res = await fetch(`${BASE}/tasks/${id}`);
+  if (!res.ok) throw new Error("Failed to fetch task");
+  return res.json();
+}
+
+export async function createTasks(request: CreateTasksRequest): Promise<CreateTasksResponse> {
+  const res = await fetch(`${BASE}/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok && res.status !== 207 && res.status !== 409) throw new Error("Failed to create tasks");
+  return res.json();
+}
+
+export async function updateTask(id: string, patch: UpdateTaskRequest): Promise<Task> {
+  const res = await fetch(`${BASE}/tasks/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error("Failed to update task");
+  return res.json();
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/tasks/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete task");
+}
+
+export async function fetchTaskAttemptLog(id: string, attemptIndex: number): Promise<string> {
+  const res = await fetch(`${BASE}/tasks/${id}/attempts/${attemptIndex}/log`);
+  if (!res.ok) throw new Error("Failed to fetch attempt log");
+  const data: { log: string } = await res.json();
+  return data.log;
+}
+
+export interface EventHandlers {
+  onContainerUpdated?: (container: ManagedContainer) => void;
+  onContainerRemoved?: (id: string) => void;
+  onTaskUpdated?: (task: Task) => void;
+  onTaskRemoved?: (id: string) => void;
+  onReconnect?: () => void;
+  onConnectionError?: (connected: boolean) => void;
+}
+
+export function subscribeToEvents(handlers: EventHandlers): () => void {
   const eventSource = new EventSource(`${BASE}/events`);
   let wasConnected = false;
 
   eventSource.addEventListener("container-updated", (event) => {
-    const container = JSON.parse(event.data) as ManagedContainer;
-    onContainerUpdated(container);
+    handlers.onContainerUpdated?.(JSON.parse(event.data) as ManagedContainer);
   });
 
   eventSource.addEventListener("container-removed", (event) => {
     const { id } = JSON.parse(event.data) as { id: string };
-    onContainerRemoved(id);
+    handlers.onContainerRemoved?.(id);
+  });
+
+  eventSource.addEventListener("task-updated", (event) => {
+    handlers.onTaskUpdated?.(JSON.parse(event.data) as Task);
+  });
+
+  eventSource.addEventListener("task-removed", (event) => {
+    const { id } = JSON.parse(event.data) as { id: string };
+    handlers.onTaskRemoved?.(id);
   });
 
   eventSource.onopen = () => {
-    onConnectionError?.(true);
-    if (wasConnected && onReconnect) {
-      onReconnect();
+    handlers.onConnectionError?.(true);
+    if (wasConnected && handlers.onReconnect) {
+      handlers.onReconnect();
     }
     wasConnected = true;
   };
 
   eventSource.onerror = () => {
-    onConnectionError?.(false);
+    handlers.onConnectionError?.(false);
   };
 
   return () => eventSource.close();

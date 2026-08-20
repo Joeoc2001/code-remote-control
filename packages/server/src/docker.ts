@@ -423,6 +423,34 @@ export async function removeContainer(id: string): Promise<void> {
   healthCache.delete(id);
 }
 
+function demuxLogBuffer(buffer: Buffer): string {
+  if (buffer.length === 0) return "";
+  if (buffer[0] > 2) return buffer.toString("utf-8");
+
+  const parts: string[] = [];
+  let offset = 0;
+  while (offset + 8 <= buffer.length) {
+    const size = buffer.readUInt32BE(offset + 4);
+    parts.push(buffer.subarray(offset + 8, Math.min(offset + 8 + size, buffer.length)).toString("utf-8"));
+    offset += 8 + size;
+  }
+  return parts.join("");
+}
+
+const LOG_TAIL_LINES = 2000;
+
+export async function getContainerLogTail(id: string): Promise<string> {
+  await assertManagedContainer(id);
+  const container = docker.getContainer(id);
+  const buffer = await container.logs({
+    follow: false,
+    stdout: true,
+    stderr: true,
+    tail: LOG_TAIL_LINES,
+  });
+  return demuxLogBuffer(buffer as unknown as Buffer);
+}
+
 export async function getContainerLogStream(id: string): Promise<NodeJS.ReadableStream> {
   await assertManagedContainer(id);
   const container = docker.getContainer(id);
@@ -462,7 +490,7 @@ export function removeSSEClient(clientId: string): void {
   if (index !== -1) sseClients.splice(index, 1);
 }
 
-function broadcastSSE(event: string, data: unknown): void {
+export function broadcastSSE(event: string, data: unknown): void {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   const deadClientIds: string[] = [];
   for (const client of sseClients) {

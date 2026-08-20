@@ -13,12 +13,23 @@ export type {
   CreateContainerRequestV2,
   CreateContainersRequest,
   CreateContainersResponse,
+  CreateTasksRequest,
+  CreateTasksResponse,
   GitHubRepo,
   GitLabRepo,
+  MergeMethod,
   RepoWorkItem,
   RepoReviewRequest,
   RepoSource,
+  ReviewRequestCiState,
+  ReviewRequestState,
   SSEEvent,
+  Task,
+  TaskAttempt,
+  TaskPhase,
+  TaskReviewRequestRef,
+  TaskStep,
+  UpdateTaskRequest,
 } from "@crc/shared";
 
 export {
@@ -26,4 +37,5 @@ export {
   environmentConfigSchema,
   gitConfigSchema,
   resolveConfigFile,
+  TASK_STEPS,
 } from "@crc/shared";

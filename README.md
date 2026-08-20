@@ -95,6 +95,10 @@ never be resumed. Configs that enable it are rejected at load time.
 
 For GPU passthrough, set `device_requests` with NVIDIA capabilities as shown above.
 
+The optional top-level `merge_method` (`"merge"`, `"squash"`, or `"rebase"`)
+controls how Tasks merge PRs. On GitLab only `"squash"` changes behaviour (the
+project's own merge method setting governs the rest).
+
 Launch web server docker container:
 ```
 services:
@@ -108,6 +112,7 @@ services:
       CRC_ACCESS_TOKEN: choose-a-long-random-secret
     volumes:
       - ./environments.json:/configs/environments.json:ro
+      - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - runner-network
@@ -115,6 +120,11 @@ services:
 ```
 
 Note that the runners must be accessible from the CRC server, so must share at least one docker network.
+
+The `/data` volume holds Task state (`tasks.json` plus captured per-attempt log
+tails) so tasks survive server restarts. Override the location with
+`CRC_STATE_DIR`. Without the volume, tasks are lost whenever the container is
+recreated.
 
 ## Restarts
 
@@ -143,6 +153,36 @@ restart policy is `always` or `unless-stopped`; set
 `docker.restart_policy.name` to `unless-stopped` for reliable comeback after a
 reboot. Recreating a container (delete and re-create, or an image upgrade) still
 starts from scratch — nothing survives `docker rm`.
+
+## Tasks
+
+The **Tasks** tab shepherds a work item from issue to merged PR/MR without a
+human in the loop. A task repeatedly evaluates its PR/MR's forge state every 30
+seconds and spawns exactly the agent the current state calls for:
+
+1. No PR/MR yet → an **implement** agent (its deliverable is an open PR/MR; if
+   it finishes without opening one, the task fails rather than retrying).
+2. CI failing → a **fix CI** agent; CI in flight → wait.
+3. Behind the target branch without conflicts → a fast-forward rebase via the
+   forge API on GitLab, or a **rebase** agent on GitHub (where the API
+   equivalent would create a merge commit).
+4. Merge conflicts → a **rebase** agent.
+5. Head commit changed since the last review → a **review** agent, then an
+   **address comments** agent while unresolved threads remain.
+6. Green, reviewed, and comment-free → the task waits for a human approval
+   (approvals from the bot's own forge account are ignored), then merges via
+   the forge API.
+
+Each step runs under a per-step configuration chosen at task creation. When an
+agent finishes, its container's log tail and PR/MR link are captured, the
+container is removed, and the task settles for one tick before deciding again.
+The task detail page shows the full attempt timeline with the captured logs.
+
+Safety rails: implement/fix-CI/rebase each spawn at most 3 times and a task
+spawns at most 12 agents in total before failing; a wedged attempt is killed
+after 2 hours (an interrupted agent can otherwise report "working" forever —
+see the known limitation above); repeated forge errors fail the task; paused
+tasks are never evaluated; and each work item can have only one live task.
 
 ## Authentication
 

@@ -83,14 +83,18 @@ export const environmentConfigSchema = configDefaultsSchema.extend({
   name: z.string().min(1),
 });
 
+export const mergeMethodSchema = z.enum(["merge", "squash", "rebase"]);
+
 export const configFileSchema = configDefaultsSchema.extend({
   root_domain: z.string(),
   git: gitConfigSchema,
   gitlab_url: z.string().optional(),
+  merge_method: mergeMethodSchema.optional(),
   configurations: z.array(environmentConfigSchema),
 });
 
 export type GitConfig = z.infer<typeof gitConfigSchema>;
+export type MergeMethod = z.infer<typeof mergeMethodSchema>;
 export type DockerConfig = z.infer<typeof dockerConfigSchema>;
 export type ClaudeOauth = z.infer<typeof claudeOauthSchema>;
 export type ConfigDefaults = z.infer<typeof configDefaultsSchema>;
@@ -210,6 +214,10 @@ export interface RepoWorkItem {
   kind: "issue" | "work_item";
 }
 
+export type ReviewRequestState = "open" | "merged" | "closed";
+
+export type ReviewRequestCiState = "none" | "pending" | "running" | "success" | "failed";
+
 export interface RepoReviewRequest {
   id: string;
   reference: string;
@@ -217,11 +225,84 @@ export interface RepoReviewRequest {
   url: string;
   body: string | null;
   kind: "pull_request" | "merge_request";
+  state: ReviewRequestState;
+  headSha: string;
+  ciState: ReviewRequestCiState;
   hasConflicts: boolean;
-  ciFailing: boolean;
+  needsRebase: boolean;
+  mergeStateKnown: boolean;
+  approvedByHuman: boolean;
   hasUnresolvedComments: boolean;
+}
+
+export const TASK_STEPS = ["implement", "fix_ci", "rebase", "review", "address_comments"] as const;
+
+export type TaskStep = (typeof TASK_STEPS)[number];
+
+export type TaskPhase =
+  | "spawning"
+  | "agent_running"
+  | "waiting_ci"
+  | "waiting_approval"
+  | "merging"
+  | "merged"
+  | "failed"
+  | "paused";
+
+export interface TaskAttempt {
+  step: TaskStep;
+  containerId: string | null;
+  headShaBefore: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+export interface TaskReviewRequestRef {
+  id: string;
+  url: string;
+  sourceBranch: string;
+}
+
+export interface Task {
+  id: string;
+  repoFullName: string;
+  repoSource: RepoSource;
+  workItem: RepoWorkItem;
+  configByStep: Record<TaskStep, string>;
+  phase: TaskPhase;
+  reviewRequest: TaskReviewRequestRef | null;
+  lastReviewedSha: string | null;
+  activeContainerId: string | null;
+  activeStep: TaskStep | null;
+  attemptsByStep: Record<TaskStep, number>;
+  attempts: TaskAttempt[];
+  consecutiveErrors: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTasksRequest {
+  repoFullName: string;
+  repoSource: RepoSource;
+  workItemIds: string[];
+  configName: string;
+  configByStep?: Partial<Record<TaskStep, string>>;
+}
+
+export interface CreateTasksResponse {
+  tasks: Task[];
+  errors: Array<{ workItemId: string; error: string }>;
+}
+
+export interface UpdateTaskRequest {
+  phase?: "paused" | "resume";
+  configByStep?: Partial<Record<TaskStep, string>>;
 }
 
 export type SSEEvent =
   | { type: "container-updated"; data: ManagedContainer }
-  | { type: "container-removed"; data: { id: string } };
+  | { type: "container-removed"; data: { id: string } }
+  | { type: "task-updated"; data: Task }
+  | { type: "task-removed"; data: { id: string } };

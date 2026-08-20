@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/types.ts"
+    ".": "./src/types.ts",
+    "./prompts": "./src/prompts.ts"
   },
   "dependencies": {
     "zod": "^4.3.6"
