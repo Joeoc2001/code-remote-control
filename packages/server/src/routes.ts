@@ -16,12 +16,17 @@ import {
   broadcastRemoval,
   pullLatestImage,
 } from "./docker.js";
-import { fetchOpenIssues as fetchGitHubOpenIssues, fetchOpenPullRequests as fetchGitHubOpenPullRequests, fetchRepos as fetchGitHubRepos } from "./github.js";
-import { fetchOpenIssuesAndWorkItems as fetchGitLabOpenIssuesAndWorkItems, fetchOpenMergeRequests as fetchGitLabOpenMergeRequests, fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./gitlab.js";
-import type { ConfigSummaryFile, CreateContainerRequestV2, CreateContainersRequest, ManagedContainer, RepoSource } from "./types.js";
+import { getForge } from "./forge/index.js";
+import { fetchRepos as fetchGitHubRepos } from "./forge/github.js";
+import { fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./forge/gitlab.js";
+import { tasksRouter } from "./tasks/routes.js";
+import type { ConfigSummaryFile, CreateContainerRequestV2, CreateContainersRequest, ManagedContainer } from "./types.js";
+import { getRepoNameError, isValidContainerId, isValidRepoSource } from "./validation.js";
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
 
 export const router = Router();
+
+router.use(tasksRouter);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,9 +36,6 @@ const codeStatusCache = new Map<string, { data: ContainerCodeStatus; expiresAt: 
 const INSTANCE_STATUS_CACHE_TTL_MS = 2_000;
 const instanceStatusCache = new Map<string, { data: InstanceStatus; expiresAt: number }>();
 
-const VALID_REPO_SOURCES: RepoSource[] = ["github", "gitlab"];
-const GITHUB_REPO_NAME_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
-const GITLAB_REPO_NAME_RE = /^[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)+$/;
 const MAX_BULK_PROMPTS = 25;
 
 function getBuildId(): string {
@@ -44,22 +46,6 @@ function getBuildId(): string {
   } catch {
     return "unknown";
   }
-}
-
-function isValidContainerId(id: string): boolean {
-  return /^[a-f0-9]+$/.test(id) && id.length >= 12 && id.length <= 64;
-}
-
-function isValidRepoSource(value: unknown): value is RepoSource {
-  return typeof value === "string" && VALID_REPO_SOURCES.includes(value as RepoSource);
-}
-
-function getRepoNameError(repoFullName: string, repoSource: RepoSource): string | null {
-  if (repoSource === "github") {
-    return GITHUB_REPO_NAME_RE.test(repoFullName) ? null : "GitHub repoFullName must be in owner/repo format";
-  }
-
-  return GITLAB_REPO_NAME_RE.test(repoFullName) ? null : "GitLab repoFullName must be in namespace/repo format";
 }
 
 router.get("/api/containers", async (_req, res) => {
@@ -446,9 +432,7 @@ router.get("/api/repo-work-items", async (req, res) => {
       return;
     }
 
-    const items = repoSource === "github"
-      ? await fetchGitHubOpenIssues(repoFullName)
-      : await fetchGitLabOpenIssuesAndWorkItems(repoFullName);
+    const items = await getForge(repoSource).listWorkItems(repoFullName);
 
     res.json({ items });
   } catch (err) {
@@ -478,9 +462,7 @@ router.get("/api/repo-review-requests", async (req, res) => {
       return;
     }
 
-    const items = repoSource === "github"
-      ? await fetchGitHubOpenPullRequests(repoFullName)
-      : await fetchGitLabOpenMergeRequests(repoFullName);
+    const items = await getForge(repoSource).listReviewRequests(repoFullName);
 
     res.json({ items });
   } catch (err) {

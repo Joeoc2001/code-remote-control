@@ -1,19 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
-import type { ConfigSummary, ManagedContainer, RepoReviewRequest, RepoSource, RepoWorkItem } from "../types";
+import {
+  buildFixCiPrompt,
+  buildIssuePrompt,
+  buildRebasePrompt,
+  buildReviewCommentsPrompt,
+  buildReviewRequestPrompt,
+} from "@crc/shared/prompts";
+import type { ConfigSummary, ManagedContainer } from "../types";
 import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, createContainer, createContainers, fetchRepoReviewRequests, fetchRepoWorkItems } from "../api";
+import RepoPicker, { type RepoEntry } from "./RepoPicker";
 
 interface NewContainerModalProps {
   onClose: () => void;
   onCreated: (containers: ManagedContainer[]) => void;
 }
-
-type RepoEntry = {
-  fullName: string;
-  description: string | null;
-  source: RepoSource;
-};
-
-const ISSUE_PROMPT_SUFFIX = "Ensure your implementation is thoroughly tested and is clearly correct from the test output. If you struggle to complete this in its entirety for any reason, including the task being too large, comment your findings and then stop.";
 
 type SpawnManyMode = "issues" | "reviewRequests" | "reviewComments" | "rebase" | "fixCi" | "text";
 
@@ -28,30 +28,6 @@ const SPAWN_MANY_MODES: Array<{ mode: SpawnManyMode; label: string }> = [
   { mode: "text", label: "Pasted Text" },
 ];
 
-function reviewRequestNoun(item: RepoReviewRequest): string {
-  return item.kind === "merge_request" ? "merge request" : "pull request";
-}
-
-function buildIssuePrompt(item: RepoWorkItem): string {
-  return `Address issue ${item.reference} at ${item.url}. ${ISSUE_PROMPT_SUFFIX}`;
-}
-
-function buildReviewRequestPrompt(item: RepoReviewRequest): string {
-  return `Review ${reviewRequestNoun(item)} ${item.reference} at ${item.url}, leaving comments with suggestions and recommendations.`;
-}
-
-function buildReviewCommentsPrompt(item: RepoReviewRequest): string {
-  return `Address all open comments on ${reviewRequestNoun(item)} ${item.reference} at ${item.url}, closing comments as they are resolved.`;
-}
-
-function buildRebasePrompt(item: RepoReviewRequest): string {
-  return `Rebase ${reviewRequestNoun(item)} ${item.reference} at ${item.url} onto the main branch, resolving any merge conflicts, and force-push the rebased branch.`;
-}
-
-function buildFixCiPrompt(item: RepoReviewRequest): string {
-  return `Investigate the failing CI on ${reviewRequestNoun(item)} ${item.reference} at ${item.url} and push fixes to its branch until CI passes.`;
-}
-
 function referenceLabel(item: { reference: string; title: string }): string {
   return `${item.reference} ${item.title}`;
 }
@@ -65,8 +41,6 @@ export default function NewContainerModal({
   const [gitlabConfigured, setGitlabConfigured] = useState(false);
   const [selectedConfig, setSelectedConfig] = useState("");
   const [selectedRepo, setSelectedRepo] = useState<RepoEntry | null>(null);
-  const [repoSearch, setRepoSearch] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<"all" | RepoSource>("all");
   const [loading, setLoading] = useState(true);
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,12 +89,6 @@ export default function NewContainerModal({
   useEffect(() => {
     setSpawnItems(null);
   }, [spawnManyMode, selectedRepo, pastedText, showSpawnMany]);
-
-  const filteredRepos = repos.filter((r) => {
-    const matchesSearch = r.fullName.toLowerCase().includes(repoSearch.toLowerCase());
-    const matchesSource = sourceFilter === "all" || r.source === sourceFilter;
-    return matchesSearch && matchesSource;
-  });
 
   const handleSpawn = async () => {
     if (!selectedConfig || !selectedRepo) return;
@@ -225,7 +193,7 @@ export default function NewContainerModal({
 
     if (spawnManyMode === "fixCi") {
       return reviewRequests
-        .filter((item) => item.ciFailing)
+        .filter((item) => item.ciState === "failed")
         .map((item) => ({ label: referenceLabel(item), prompt: buildFixCiPrompt(item) }));
     }
 
@@ -318,64 +286,12 @@ export default function NewContainerModal({
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">
-                  Repository
-                </label>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    placeholder="Search repositories..."
-                    value={repoSearch}
-                    onChange={(e) => setRepoSearch(e.target.value)}
-                    className="flex-1 bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
-                  />
-                  {gitlabConfigured && (
-                    <select
-                      value={sourceFilter}
-                      onChange={(e) => setSourceFilter(e.target.value as "all" | RepoSource)}
-                      className="bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
-                    >
-                      <option value="all">All</option>
-                      <option value="github">GitHub</option>
-                      <option value="gitlab">GitLab</option>
-                    </select>
-                  )}
-                </div>
-                <div className="max-h-48 overflow-y-auto border border-slate-700 rounded-lg">
-                  {filteredRepos.length === 0 ? (
-                    <div className="p-3 text-sm text-slate-500">
-                      No repositories found
-                    </div>
-                  ) : (
-                    filteredRepos.map((repo) => (
-                      <button
-                        key={`${repo.source}:${repo.fullName}`}
-                        onClick={() => setSelectedRepo(repo)}
-                        className={`w-full text-left px-3 py-2 text-sm border-b border-slate-800 last:border-0 transition-colors ${selectedRepo?.source === repo.source && selectedRepo?.fullName === repo.fullName
-                          ? "bg-slate-700/40 text-slate-100"
-                          : "text-slate-300 hover:bg-slate-800"
-                          }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${repo.source === "gitlab"
-                              ? "bg-orange-900/40 text-orange-300"
-                              : "bg-slate-700 text-slate-300"
-                             }`}>
-                            {repo.source === "gitlab" ? "GL" : "GH"}
-                          </span>
-                          <span className="font-medium">{repo.fullName}</span>
-                        </div>
-                        {repo.description && (
-                          <div className="text-xs text-slate-500 mt-0.5 truncate ml-8">
-                            {repo.description}
-                          </div>
-                        )}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
+              <RepoPicker
+                repos={repos}
+                gitlabConfigured={gitlabConfigured}
+                selectedRepo={selectedRepo}
+                onSelect={setSelectedRepo}
+              />
 
               {showSpawnMany && (
                 <div className="border border-slate-700 rounded-xl bg-slate-950/40 p-4 space-y-3">

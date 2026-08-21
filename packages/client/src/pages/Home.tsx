@@ -63,8 +63,8 @@ export default function Home() {
   }, [loadContainers]);
 
   useEffect(() => {
-    const unsubscribe = subscribeToEvents(
-      (updated) => {
+    const unsubscribe = subscribeToEvents({
+      onContainerUpdated: (updated) => {
         setContainers((prev) => {
           const index = prev.findIndex((c) => c.id === updated.id);
           if (index >= 0) {
@@ -80,12 +80,12 @@ export default function Home() {
           void refreshInstanceStatuses([updated]);
         }
       },
-      (removedId) => {
+      onContainerRemoved: (removedId) => {
         setContainers((prev) => prev.filter((c) => c.id !== removedId));
       },
-      loadContainers,
-      setConnected,
-    );
+      onReconnect: loadContainers,
+      onConnectionError: setConnected,
+    });
     return unsubscribe;
   }, [loadContainers, refreshContainerMetadata, refreshInstanceStatuses]);
 
@@ -132,8 +132,22 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <Header
-        onNewContainer={() => setShowModal(true)}
-        onDeleteAll={() => setShowDeleteAllModal(true)}
+        actions={
+          <>
+            <button
+              onClick={() => setShowDeleteAllModal(true)}
+              className="px-3.5 py-2 bg-rose-900/70 hover:bg-rose-800 text-rose-100 rounded-lg text-sm font-medium transition-colors border border-rose-800"
+            >
+              Delete All
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="px-3.5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg text-sm font-semibold transition-colors border border-slate-600"
+            >
+              New Container
+            </button>
+          </>
+        }
       />
       {!connected && (
         <div className="bg-amber-900/40 border-b border-amber-700/60 px-4 py-2 text-center text-amber-200 text-sm">

@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { router } from "./routes.js";
 import { runHealthChecks, cleanupAll } from "./docker.js";
+import { runTaskSchedulerTick, TASK_TICK_INTERVAL_MS } from "./tasks/scheduler.js";
+import { schedulerDeps } from "./tasks/runtime.js";
 import { PORT, validateEnvironment, loadConfigurations } from "./config.js";
 import { proxyMiddleware, wsUpgradeHandler } from "./proxy.js";
 import { authMiddleware, isAuthEnabled } from "./auth.js";
@@ -65,6 +67,24 @@ async function healthLoop(): Promise<void> {
 
 void healthLoop();
 
+let taskTimer: NodeJS.Timeout | null = null;
+
+async function taskLoop(): Promise<void> {
+  if (stopping) return;
+  try {
+    await runTaskSchedulerTick(schedulerDeps);
+  } catch (err) {
+    console.error("Task scheduler error:", err);
+  }
+  if (!stopping) {
+    taskTimer = setTimeout(() => {
+      void taskLoop();
+    }, TASK_TICK_INTERVAL_MS);
+  }
+}
+
+void taskLoop();
+
 const server = app.listen(PORT, () => {
   console.log(`Code Remote Control server listening on port ${PORT}`);
 });
@@ -75,6 +95,7 @@ function shutdown() {
   console.log("Shutting down...");
   stopping = true;
   if (healthTimer) clearTimeout(healthTimer);
+  if (taskTimer) clearTimeout(taskTimer);
   cleanupAll();
   server.close(() => {
     process.exit(0);

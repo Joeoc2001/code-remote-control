@@ -16,6 +16,7 @@ export const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 export const GITLAB_TOKEN = process.env.GITLAB_TOKEN || "";
 export const CRC_ENV_IMAGE =
   process.env.CRC_ENV_IMAGE || "ghcr.io/joeoc2001/code-remote-control-env:latest";
+export const CRC_STATE_DIR = process.env.CRC_STATE_DIR || "/data";
 
 export function validateEnvironment(): void {
   const missing: string[] = [];
