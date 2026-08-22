@@ -19,6 +19,7 @@
     "test": "npm run test -w packages/server && node --import tsx --test tests/*.test.js tests/*.test.ts"
   },
   "devDependencies": {
+    "playwright": "^1.62.1",
     "tsx": "^4.19.0"
   }
 }
