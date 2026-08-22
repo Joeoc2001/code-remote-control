@@ -36,6 +36,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Install the Chromium build the header layout tests drive
+        run: npx playwright install --with-deps chromium
+
       - run: npm test
 
   prod-dependency-closure:
