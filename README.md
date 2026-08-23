@@ -168,7 +168,10 @@ seconds and spawns exactly the agent the current state calls for:
    equivalent would create a merge commit).
 4. Merge conflicts → a **rebase** agent.
 5. Head commit changed since the last review → a **review** agent, then an
-   **address comments** agent while unresolved threads remain.
+   **address comments** agent while unresolved threads remain. A moved head is
+   only re-reviewed when the PR/MR's diff actually changed with it, so a clean
+   rebase (server-side or agent-driven) carries the reviewed state forward
+   instead of burning another review.
 6. Green, reviewed, and comment-free → the task waits for a human approval
    (approvals from the bot's own forge account are ignored), then merges via
    the forge API.

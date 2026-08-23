@@ -9,7 +9,8 @@ const REVIEW_CYCLE_STEPS: readonly TaskStep[] = ["review", "address_comments"];
 
 export type TaskDecision =
   | { kind: "noop"; phase: TaskPhase | null }
-  | { kind: "spawn"; step: TaskStep; headShaBefore: string | null }
+  | { kind: "spawn"; step: TaskStep; headShaBefore: string | null; diffHashBefore: string | null }
+  | { kind: "mark_reviewed"; headSha: string; diffHash: string }
   | { kind: "forge_rebase" }
   | { kind: "merge" }
   | { kind: "mark_merged" }
@@ -40,7 +41,12 @@ function reviewCycleExhausted(task: Task, step: TaskStep): boolean {
   return trailingReviewCycles(task) >= REVIEW_CYCLE_CAP;
 }
 
-function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null): TaskDecision {
+function spawn(
+  task: Task,
+  step: TaskStep,
+  headShaBefore: string | null = null,
+  diffHashBefore: string | null = null,
+): TaskDecision {
   if (totalAttempts(task) >= TOTAL_SPAWN_CAP) {
     return {
       kind: "fail",
@@ -59,10 +65,14 @@ function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null):
       reason: `Review and comment-addressing cycled ${REVIEW_CYCLE_CAP} times without the PR/MR becoming ready for approval — resolve the remaining threads by hand, then resume the task`,
     };
   }
-  return { kind: "spawn", step, headShaBefore };
+  return { kind: "spawn", step, headShaBefore, diffHashBefore };
 }
 
-export function decide(task: Task, reviewRequest: RepoReviewRequest | null): TaskDecision {
+export async function decide(
+  task: Task,
+  reviewRequest: RepoReviewRequest | null,
+  getDiffHash: () => Promise<string | null>,
+): Promise<TaskDecision> {
   if (task.phase === "paused" || task.phase === "merged" || task.phase === "failed") {
     return { kind: "noop", phase: null };
   }
@@ -120,7 +130,11 @@ export function decide(task: Task, reviewRequest: RepoReviewRequest | null): Tas
   }
 
   if (reviewRequest.headSha !== task.lastReviewedSha) {
-    return spawn(task, "review", reviewRequest.headSha);
+    const diffHash = await getDiffHash();
+    if (diffHash !== null && diffHash === task.lastReviewedDiffHash) {
+      return { kind: "mark_reviewed", headSha: reviewRequest.headSha, diffHash };
+    }
+    return spawn(task, "review", reviewRequest.headSha, diffHash);
   }
 
   if (reviewRequest.hasUnresolvedComments) {

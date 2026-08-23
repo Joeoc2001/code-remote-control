@@ -6,6 +6,7 @@ import type {
   ReviewRequestState,
 } from "../types.js";
 import { GITLAB_TOKEN, loadConfigurations } from "../config.js";
+import { hashDiffText } from "./diff-hash.js";
 
 const MAX_PAGES = 10;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -363,6 +364,78 @@ export async function fetchMergeRequest(repoFullName: string, id: string): Promi
   const apiBase = await gitlabApiBase();
   const encodedProject = encodeURIComponent(repoFullName);
   return buildMergeRequest(apiBase, encodedProject, parseInt(id, 10));
+}
+
+export interface GitLabMergeRequestDiff {
+  old_path: string;
+  new_path: string;
+  a_mode: string;
+  b_mode: string;
+  new_file: boolean;
+  renamed_file: boolean;
+  deleted_file: boolean;
+  diff: string;
+}
+
+export function hashMergeRequestDiffs(diffs: GitLabMergeRequestDiff[]): string | null {
+  if (diffs.some((file) => file.diff === "")) return null;
+
+  const canonical = diffs
+    .map((file) =>
+      JSON.stringify([
+        file.old_path,
+        file.new_path,
+        file.a_mode,
+        file.b_mode,
+        file.new_file,
+        file.renamed_file,
+        file.deleted_file,
+        file.diff,
+      ]),
+    )
+    .sort()
+    .join("\n");
+  return hashDiffText(canonical);
+}
+
+export async function fetchMergeRequestDiffHash(
+  repoFullName: string,
+  id: string,
+): Promise<string | null> {
+  const apiBase = await gitlabApiBase();
+  const encodedProject = encodeURIComponent(repoFullName);
+  const diffs: GitLabMergeRequestDiff[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  while (page <= MAX_PAGES + 1) {
+    const response = await gitlabRequest(
+      "GET",
+      `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/diffs?per_page=${perPage}&page=${page}`,
+    );
+
+    const data = (await response.json()) as GitLabMergeRequestDiff[];
+    if (data.length === 0) break;
+
+    if (page > MAX_PAGES) {
+      console.warn(
+        `GitLab merge request ${repoFullName}!${id} has more than ${MAX_PAGES * perPage} changed files; treating it as changed`,
+      );
+      return null;
+    }
+
+    diffs.push(...data);
+    if (data.length < perPage) break;
+    page++;
+  }
+
+  const hash = hashMergeRequestDiffs(diffs);
+  if (hash === null) {
+    console.warn(
+      `GitLab merge request ${repoFullName}!${id} reported a file with no diff text; treating it as changed`,
+    );
+  }
+  return hash;
 }
 
 export async function rebaseMergeRequest(repoFullName: string, id: string): Promise<void> {

@@ -44,6 +44,15 @@ export interface SchedulerDeps {
   now(): Date;
 }
 
+function diffHashFetcher(forge: Forge, task: Task): () => Promise<string | null> {
+  return () => {
+    if (!task.reviewRequest) {
+      throw new Error(`Task ${task.id} has no linked PR/MR to fetch a diff for`);
+    }
+    return forge.getDiffHash(task.repoFullName, task.reviewRequest.id);
+  };
+}
+
 function isSchedulable(task: Task): boolean {
   return task.phase !== "merged" && task.phase !== "failed" && task.phase !== "paused";
 }
@@ -100,6 +109,7 @@ function finishAttempt(deps: SchedulerDeps, task: Task, attempt: TaskAttempt, er
   attempt.error = error;
   if (error === null && attempt.step === "review") {
     task.lastReviewedSha = attempt.headShaBefore;
+    task.lastReviewedDiffHash = attempt.diffHashBefore;
   }
   task.activeContainerId = null;
   task.activeStep = null;
@@ -242,6 +252,7 @@ async function spawnAgent(
     step: decision.step,
     containerId: container.id,
     headShaBefore: decision.headShaBefore,
+    diffHashBefore: decision.diffHashBefore,
     startedAt: deps.now().toISOString(),
     finishedAt: null,
     error: null,
@@ -271,6 +282,13 @@ async function executeDecision(
         changed = true;
       }
       if (changed) saveTask(deps, task);
+      return;
+    }
+    case "mark_reviewed": {
+      task.lastReviewedSha = decision.headSha;
+      task.lastReviewedDiffHash = decision.diffHash;
+      clearTaskError(task);
+      saveTask(deps, task);
       return;
     }
     case "mark_merged": {
@@ -334,8 +352,9 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
 
   for (const task of toEvaluate.filter((t) => !t.reviewRequest)) {
     try {
-      const decision = decide(task, null);
-      await executeDecision(deps, deps.getForge(task.repoSource), task, decision, null);
+      const forge = deps.getForge(task.repoSource);
+      const decision = await decide(task, null, diffHashFetcher(forge, task));
+      await executeDecision(deps, forge, task, decision, null);
     } catch (err) {
       await recordTaskError(deps, task, err);
     }
@@ -376,7 +395,7 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
             (await forge.getReviewRequest(repoFullName, linkedId));
         }
         if (!isSchedulable(task)) continue;
-        const decision = decide(task, reviewRequest);
+        const decision = await decide(task, reviewRequest, diffHashFetcher(forge, task));
         await executeDecision(deps, forge, task, decision, reviewRequest);
       } catch (err) {
         await recordTaskError(deps, task, err);
