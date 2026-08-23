@@ -233,6 +233,7 @@ export interface RepoReviewRequest {
   mergeStateKnown: boolean;
   approvedByHuman: boolean;
   hasUnresolvedComments: boolean;
+  hasPlaceholderComment: boolean;
 }
 
 export const TASK_STEPS = ["implement", "fix_ci", "rebase", "review", "address_comments"] as const;

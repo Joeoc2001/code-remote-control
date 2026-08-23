@@ -1,3 +1,4 @@
+import { isMissingBody, isPlaceholderBody, PLACEHOLDER_BODY_MARKERS } from "@crc/shared/bodies";
 import type { RepoReviewRequest, Task, TaskAttempt, TaskPhase, TaskStep } from "../types.js";
 
 export const PER_STEP_SPAWN_CAP = 3;
@@ -62,6 +63,30 @@ function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null):
   return { kind: "spawn", step, headShaBefore };
 }
 
+const PLACEHOLDER_MARKER_LIST = PLACEHOLDER_BODY_MARKERS.map((marker) => `'${marker}'`).join(" or ");
+
+function unusableBodyFailure(reviewRequest: RepoReviewRequest): TaskDecision | null {
+  if (isPlaceholderBody(reviewRequest.body)) {
+    return {
+      kind: "fail",
+      reason: `${reviewRequest.reference} has ${PLACEHOLDER_MARKER_LIST} as its whole description: an agent passed a stdin marker to a flag that posts its value verbatim, so the description it meant to write was lost`,
+    };
+  }
+  if (isMissingBody(reviewRequest.body)) {
+    return {
+      kind: "fail",
+      reason: `${reviewRequest.reference} has an empty description, so the agent that opened it never delivered a body`,
+    };
+  }
+  if (reviewRequest.hasPlaceholderComment) {
+    return {
+      kind: "fail",
+      reason: `${reviewRequest.reference} has a comment whose whole body is ${PLACEHOLDER_MARKER_LIST}: an agent passed a stdin marker to a flag that posts its value verbatim, so the comment it meant to write was lost`,
+    };
+  }
+  return null;
+}
+
 export function decide(task: Task, reviewRequest: RepoReviewRequest | null): TaskDecision {
   if (task.phase === "paused" || task.phase === "merged" || task.phase === "failed") {
     return { kind: "noop", phase: null };
@@ -97,6 +122,11 @@ export function decide(task: Task, reviewRequest: RepoReviewRequest | null): Tas
 
   if (reviewRequest.state === "closed") {
     return { kind: "fail", reason: `${reviewRequest.reference} was closed without being merged` };
+  }
+
+  const unusableBody = unusableBodyFailure(reviewRequest);
+  if (unusableBody) {
+    return unusableBody;
   }
 
   if (reviewRequest.ciState === "pending" || reviewRequest.ciState === "running") {

@@ -185,6 +185,17 @@ after 2 hours (an interrupted agent can otherwise report "working" forever —
 see the known limitation above); repeated forge errors fail the task; paused
 tasks are never evaluated; and each work item can have only one live task.
 
+A task also fails, before spawning anything else, when its PR/MR description is
+empty or when a description or comment body is nothing but `@-` or `-`. Those
+markers mean "read this from stdin" to `gh api -F body=@-` and friends, but the
+porcelain flags agents usually reach for (`glab mr create --description`,
+`glab mr note -m`, `gh pr create --body`) post them verbatim, which loses the
+body the agent meant to write. Every step prompt tells agents to write bodies to
+a file and pass them with `--body-file`, `"$(cat body.md)"`, or
+`-F 'description=@body.md'`; the env image installs the same guidance as agent
+memory (`claude/agent-memory.md` → `/root/.claude/CLAUDE.md`) so interactive
+sessions get it too.
+
 ## Authentication
 
 Set `CRC_ACCESS_TOKEN` to protect the dashboard, the API, and the per-container

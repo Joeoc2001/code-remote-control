@@ -14,6 +14,7 @@ import {
   runTaskSchedulerTick,
   type SchedulerDeps,
 } from "./scheduler.js";
+import { FORGE_BODY_PROMPT_SUFFIX } from "@crc/shared/prompts";
 import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask } from "../testing/fixtures.js";
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
@@ -178,6 +179,7 @@ describe("scheduler: spawning", () => {
     assert.equal(harness.created[0].configName, "default");
     assert.match(harness.created[0].prompt, /#7/);
     assert.match(harness.created[0].prompt, /open a pull\/merge request/);
+    assert.ok(harness.created[0].prompt.includes(FORGE_BODY_PROMPT_SUFFIX));
     assert.equal(task.phase, "agent_running");
     assert.equal(task.activeStep, "implement");
     assert.ok(task.activeContainerId);
@@ -477,6 +479,32 @@ describe("scheduler: forge-state evaluation", () => {
 
     assert.equal(task.phase, "failed");
     assert.match(task.error ?? "", /closed/);
+  });
+
+  it("fails the task instead of spawning an agent when the PR/MR description is the stdin marker", async () => {
+    const task = makeLinkedTask();
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ body: "@-" })] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /whole description/);
+    assert.equal(harness.store.list()[0].phase, "failed");
+  });
+
+  it("fails the task instead of spawning an agent when a comment body is the stdin marker", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ hasPlaceholderComment: true, hasUnresolvedComments: true })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /comment whose whole body/);
   });
 
   it("rebases via the forge API for a GitLab task that is behind without conflicts", async () => {

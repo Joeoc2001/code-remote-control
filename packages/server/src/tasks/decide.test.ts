@@ -77,6 +77,51 @@ describe("decide: rules 2-3 (PR/MR no longer open)", () => {
   });
 });
 
+describe("decide: unusable PR/MR bodies", () => {
+  it("fails when the description is the literal stdin marker", () => {
+    for (const body of ["@-", "-", "  @-\n"]) {
+      const decision = decide(makeLinkedTask(), makeReviewRequest({ body }));
+      assert.equal(decision.kind, "fail", `body=${JSON.stringify(body)}`);
+      assert.match((decision as { reason: string }).reason, /whole description/);
+    }
+  });
+
+  it("fails when the agent opened the PR/MR with no description at all", () => {
+    for (const body of [null, "", "   "]) {
+      const decision = decide(makeLinkedTask(), makeReviewRequest({ body }));
+      assert.equal(decision.kind, "fail", `body=${JSON.stringify(body)}`);
+      assert.match((decision as { reason: string }).reason, /empty description/);
+    }
+  });
+
+  it("fails when a comment body is the literal stdin marker", () => {
+    const decision = decide(makeLinkedTask(), makeReviewRequest({ hasPlaceholderComment: true }));
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /comment whose whole body/);
+  });
+
+  it("names the PR/MR and the markers so the failure is actionable", () => {
+    const decision = decide(makeLinkedTask(), makeReviewRequest({ body: "@-" }));
+    assert.match((decision as { reason: string }).reason, /^#12 has '@-' or '-'/);
+  });
+
+  it("outranks every step decision, so no agent runs against a junk body", () => {
+    const junk = { body: "@-", ciState: "failed" as const, hasConflicts: true };
+    assert.equal(decide(makeLinkedTask(), makeReviewRequest(junk)).kind, "fail");
+  });
+
+  it("does not fire on a real description that merely mentions the markers", () => {
+    const body = "Rework the CLI call:\n- stop passing `@-`\n- pass --body-file instead";
+    const decision = decide(makeLinkedTask(), makeReviewRequest({ body }));
+    assert.deepEqual(decision, { kind: "spawn", step: "review", headShaBefore: "abc123" });
+  });
+
+  it("still marks an already-merged PR/MR merged rather than failing it", () => {
+    const decision = decide(makeLinkedTask(), makeReviewRequest({ body: "@-", state: "merged" }));
+    assert.deepEqual(decision, { kind: "mark_merged" });
+  });
+});
+
 describe("decide: rules 4-5 (CI)", () => {
   it("rule 4: waits while CI is pending", () => {
     assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ ciState: "pending" })), {

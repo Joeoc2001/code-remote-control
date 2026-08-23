@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/types.ts",
+    "./bodies": "./src/bodies.ts",
     "./prompts": "./src/prompts.ts"
   },
   "dependencies": {

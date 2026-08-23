@@ -1,11 +1,20 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  GRAPHQL_NODE_LIMIT,
+  listingQueryNodeCount,
   mapGitHubCiState,
   mapGitHubState,
   mapPullRequestNode,
   type GitHubPullRequestNode,
 } from "./github.js";
+
+function makeThread(
+  isResolved: boolean,
+  bodies: string[],
+): GitHubPullRequestNode["reviewThreads"]["nodes"][number] {
+  return { isResolved, comments: { nodes: bodies.map((body) => ({ body })) } };
+}
 
 function makeNode(overrides: Partial<GitHubPullRequestNode> = {}): GitHubPullRequestNode {
   return {
@@ -23,6 +32,39 @@ function makeNode(overrides: Partial<GitHubPullRequestNode> = {}): GitHubPullReq
     ...overrides,
   };
 }
+
+describe("the open pull request listing query", () => {
+  it("stays inside GitHub's node limit now that it also pulls comment bodies", () => {
+    assert.ok(
+      listingQueryNodeCount() <= GRAPHQL_NODE_LIMIT,
+      `listing query asks for ${listingQueryNodeCount()} nodes, limit is ${GRAPHQL_NODE_LIMIT}`,
+    );
+  });
+});
+
+describe("review comment bodies", () => {
+  it("flags a review comment that is nothing but the stdin marker", () => {
+    for (const marker of ["@-", "-", " @- "]) {
+      const item = mapPullRequestNode(
+        makeNode({ reviewThreads: { nodes: [makeThread(false, ["Real comment", marker])] } }),
+        "bot-login",
+      );
+      assert.equal(item.hasPlaceholderComment, true, `marker=${JSON.stringify(marker)}`);
+    }
+  });
+
+  it("leaves real review comments alone, including ones that merely mention the marker", () => {
+    const item = mapPullRequestNode(
+      makeNode({
+        reviewThreads: {
+          nodes: [makeThread(false, ["Do not pass `@-` here", "- fix the typo\n- add a test"])],
+        },
+      }),
+      "bot-login",
+    );
+    assert.equal(item.hasPlaceholderComment, false);
+  });
+});
 
 describe("mapGitHubCiState", () => {
   it("maps rollup states to CI states", () => {
@@ -65,6 +107,7 @@ describe("mapPullRequestNode", () => {
       mergeStateKnown: true,
       approvedByHuman: false,
       hasUnresolvedComments: false,
+      hasPlaceholderComment: false,
     });
   });
 
@@ -73,7 +116,7 @@ describe("mapPullRequestNode", () => {
       makeNode({
         mergeable: "CONFLICTING",
         mergeStateStatus: "DIRTY",
-        reviewThreads: { nodes: [{ isResolved: true }, { isResolved: false }] },
+        reviewThreads: { nodes: [makeThread(true, ["Looks good"]), makeThread(false, ["Please fix"])] },
       }),
       "bot-login",
     );
