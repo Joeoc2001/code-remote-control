@@ -15,7 +15,8 @@ export function buildTaskImplementPrompt(item: RepoWorkItem): string {
 }
 
 export function buildReviewRequestPrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {
-  return `Review ${reviewRequestNoun(item)} ${item.reference} at ${item.url}, leaving comments with suggestions and recommendations.`;
+  const noun = reviewRequestNoun(item);
+  return `Review ${noun} ${item.reference} at ${item.url}. Only open resolvable discussion threads for changes that genuinely must be made before merge — every unresolved thread blocks the merge automation and spawns a follow-up agent. If changes are required, open threads for the must-fix items only and put any minor non-blocking suggestions in a plain comment alongside them. If the ${noun} is acceptable to merge as-is, post your verdict together with any minor non-blocking suggestions as a single plain comment: not a resolvable thread, and not a review that requires resolution.`;
 }
 
 export function buildReviewCommentsPrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {
