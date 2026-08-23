@@ -74,7 +74,7 @@ interface HarnessOptions {
   listError?: Error;
   getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
-  diffHash?: string;
+  diffHash?: string | null;
   instanceStatus?: Record<string, InstanceStatus>;
   codeStatus?: Record<string, ContainerCodeStatus>;
   now?: Date;
@@ -106,7 +106,7 @@ function makeHarness(options: HarnessOptions) {
       }),
     getDiffHash: async (_repo, id) => {
       diffHashFetches.push(id);
-      return options.diffHash ?? "diff-hash-1";
+      return options.diffHash === undefined ? "diff-hash-1" : options.diffHash;
     },
     rebase: async (_repo, id) => {
       rebased.push(id);
@@ -590,6 +590,44 @@ describe("scheduler: re-review after a history rewrite", () => {
     assert.match(harness.created[0].prompt, /Review pull request #12/);
     assert.equal(task.attempts[0].headShaBefore, "pushed789");
     assert.equal(task.attempts[0].diffHashBefore, "diff-hash-2");
+    assert.equal(task.lastReviewedSha, "abc123");
+  });
+
+  it("reviews the rewritten head when the forge cannot hash its diff", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ headSha: "rebased789" })],
+      diffHash: null,
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.attempts[0].diffHashBefore, null);
+    assert.equal(task.error, null);
+    assert.equal(task.consecutiveErrors, 0);
+  });
+
+  it("does not mark an unhashable diff reviewed just because the last one was unhashable too", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: null,
+      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ headSha: "rebased789" })],
+      diffHash: null,
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
     assert.equal(task.lastReviewedSha, "abc123");
   });
 

@@ -11,6 +11,7 @@ import { hashDiffText } from "./diff-hash.js";
 const MAX_PAGES = 10;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const GRAPHQL_ACCEPT = "application/vnd.github.merge-info-preview+json";
+const DIFF_TOO_LARGE_STATUS = 406;
 
 let repoCache: { repos: GitHubRepo[]; fetchedAt: number } | null = null;
 let viewerLoginPromise: Promise<string> | null = null;
@@ -318,13 +319,23 @@ export async function fetchPullRequest(repoFullName: string, id: string): Promis
   return mapPullRequestNode(data.repository.pullRequest, viewerLogin);
 }
 
-export async function fetchPullRequestDiffHash(repoFullName: string, id: string): Promise<string> {
+export async function fetchPullRequestDiffHash(
+  repoFullName: string,
+  id: string,
+): Promise<string | null> {
   const response = await fetch(`https://api.github.com/repos/${repoFullName}/pulls/${id}`, {
     headers: {
       Authorization: `Bearer ${GITHUB_TOKEN}`,
       Accept: "application/vnd.github.v3.diff",
     },
   });
+
+  if (response.status === DIFF_TOO_LARGE_STATUS) {
+    console.warn(
+      `GitHub refused to render the diff of ${repoFullName}#${id} (${response.status} ${response.statusText}); treating it as changed`,
+    );
+    return null;
+  }
 
   if (!response.ok) {
     const detail = await response.text();

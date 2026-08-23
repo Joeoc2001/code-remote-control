@@ -44,7 +44,7 @@ export interface SchedulerDeps {
   now(): Date;
 }
 
-function diffHashFetcher(forge: Forge, task: Task): () => Promise<string> {
+function diffHashFetcher(forge: Forge, task: Task): () => Promise<string | null> {
   return () => {
     if (!task.reviewRequest) {
       throw new Error(`Task ${task.id} has no linked PR/MR to fetch a diff for`);
@@ -286,6 +286,7 @@ async function executeDecision(
     }
     case "mark_reviewed": {
       task.lastReviewedSha = decision.headSha;
+      task.lastReviewedDiffHash = decision.diffHash;
       clearTaskError(task);
       saveTask(deps, task);
       return;

@@ -377,7 +377,9 @@ export interface GitLabMergeRequestDiff {
   diff: string;
 }
 
-export function hashMergeRequestDiffs(diffs: GitLabMergeRequestDiff[]): string {
+export function hashMergeRequestDiffs(diffs: GitLabMergeRequestDiff[]): string | null {
+  if (diffs.some((file) => file.diff === "")) return null;
+
   const canonical = diffs
     .map((file) =>
       JSON.stringify([
@@ -396,33 +398,44 @@ export function hashMergeRequestDiffs(diffs: GitLabMergeRequestDiff[]): string {
   return hashDiffText(canonical);
 }
 
-export async function fetchMergeRequestDiffHash(repoFullName: string, id: string): Promise<string> {
+export async function fetchMergeRequestDiffHash(
+  repoFullName: string,
+  id: string,
+): Promise<string | null> {
   const apiBase = await gitlabApiBase();
   const encodedProject = encodeURIComponent(repoFullName);
   const diffs: GitLabMergeRequestDiff[] = [];
   let page = 1;
   const perPage = 100;
 
-  while (true) {
-    if (page > MAX_PAGES) {
-      throw new Error(
-        `GitLab merge request ${repoFullName}!${id} has more than ${MAX_PAGES * perPage} changed files`,
-      );
-    }
-
+  while (page <= MAX_PAGES + 1) {
     const response = await gitlabRequest(
       "GET",
       `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/diffs?per_page=${perPage}&page=${page}`,
     );
 
     const data = (await response.json()) as GitLabMergeRequestDiff[];
-    diffs.push(...data);
+    if (data.length === 0) break;
 
+    if (page > MAX_PAGES) {
+      console.warn(
+        `GitLab merge request ${repoFullName}!${id} has more than ${MAX_PAGES * perPage} changed files; treating it as changed`,
+      );
+      return null;
+    }
+
+    diffs.push(...data);
     if (data.length < perPage) break;
     page++;
   }
 
-  return hashMergeRequestDiffs(diffs);
+  const hash = hashMergeRequestDiffs(diffs);
+  if (hash === null) {
+    console.warn(
+      `GitLab merge request ${repoFullName}!${id} reported a file with no diff text; treating it as changed`,
+    );
+  }
+  return hash;
 }
 
 export async function rebaseMergeRequest(repoFullName: string, id: string): Promise<void> {

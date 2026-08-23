@@ -10,7 +10,7 @@ const REVIEW_CYCLE_STEPS: readonly TaskStep[] = ["review", "address_comments"];
 export type TaskDecision =
   | { kind: "noop"; phase: TaskPhase | null }
   | { kind: "spawn"; step: TaskStep; headShaBefore: string | null; diffHashBefore: string | null }
-  | { kind: "mark_reviewed"; headSha: string }
+  | { kind: "mark_reviewed"; headSha: string; diffHash: string }
   | { kind: "forge_rebase" }
   | { kind: "merge" }
   | { kind: "mark_merged" }
@@ -71,7 +71,7 @@ function spawn(
 export async function decide(
   task: Task,
   reviewRequest: RepoReviewRequest | null,
-  getDiffHash: () => Promise<string>,
+  getDiffHash: () => Promise<string | null>,
 ): Promise<TaskDecision> {
   if (task.phase === "paused" || task.phase === "merged" || task.phase === "failed") {
     return { kind: "noop", phase: null };
@@ -131,8 +131,8 @@ export async function decide(
 
   if (reviewRequest.headSha !== task.lastReviewedSha) {
     const diffHash = await getDiffHash();
-    if (diffHash === task.lastReviewedDiffHash) {
-      return { kind: "mark_reviewed", headSha: reviewRequest.headSha };
+    if (diffHash !== null && diffHash === task.lastReviewedDiffHash) {
+      return { kind: "mark_reviewed", headSha: reviewRequest.headSha, diffHash };
     }
     return spawn(task, "review", reviewRequest.headSha, diffHash);
   }

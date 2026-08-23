@@ -173,8 +173,12 @@ describe("hashMergeRequestDiffs", () => {
 
   it("keeps path and diff text unambiguous when either contains the separator", () => {
     assert.notEqual(
-      hashMergeRequestDiffs([makeDiff({ new_path: "a", diff: "b" })]),
-      hashMergeRequestDiffs([makeDiff({ new_path: "a\nb", diff: "" })]),
+      hashMergeRequestDiffs([makeDiff({ new_path: "a", diff: "b\nc" })]),
+      hashMergeRequestDiffs([makeDiff({ new_path: "a\nb", diff: "c" })]),
     );
+  });
+
+  it("refuses to hash a change set in which any file arrived without diff text", () => {
+    assert.equal(hashMergeRequestDiffs([makeDiff(), makeDiff({ diff: "" })]), null);
   });
 });

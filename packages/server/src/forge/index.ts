@@ -20,7 +20,7 @@ export interface Forge {
   listWorkItems(repoFullName: string): Promise<RepoWorkItem[]>;
   listReviewRequests(repoFullName: string): Promise<RepoReviewRequest[]>;
   getReviewRequest(repoFullName: string, id: string): Promise<RepoReviewRequest>;
-  getDiffHash(repoFullName: string, id: string): Promise<string>;
+  getDiffHash(repoFullName: string, id: string): Promise<string | null>;
   rebase(repoFullName: string, id: string): Promise<void>;
   merge(repoFullName: string, id: string): Promise<void>;
 }

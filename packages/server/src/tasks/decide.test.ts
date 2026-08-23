@@ -18,7 +18,7 @@ function diffHash(hash: string) {
   };
 }
 
-const changedDiff = () => diffHash(CHANGED_DIFF).fetch;
+const changedDiff = () => async () => CHANGED_DIFF;
 
 const noDiffFetch = async (): Promise<string> => {
   throw new Error("getDiffHash should not have been called");
@@ -248,6 +248,7 @@ describe("decide: rules 8-11 (review, comments, approval, merge)", () => {
     assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456" }), stub.fetch), {
       kind: "mark_reviewed",
       headSha: "def456",
+      diffHash: REVIEWED_DIFF,
     });
     assert.equal(stub.calls(), 1);
   });
@@ -260,6 +261,28 @@ describe("decide: rules 8-11 (review, comments, approval, merge)", () => {
       step: "review",
       headShaBefore: "def456",
       diffHashBefore: CHANGED_DIFF,
+    });
+  });
+
+  it("rule 8: reviews a rewritten head whose diff could not be hashed", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456" }), async () => null);
+    assert.deepEqual(decision, {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+      diffHashBefore: null,
+    });
+  });
+
+  it("rule 8: reviews a rewritten head when neither diff could be hashed", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: null });
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456" }), async () => null);
+    assert.deepEqual(decision, {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+      diffHashBefore: null,
     });
   });
 
@@ -377,7 +400,7 @@ describe("decide: spawn caps", () => {
       },
     });
     const decision = await decide(task, makeReviewRequest({ headSha: "def456" }), diffHash(REVIEWED_DIFF).fetch);
-    assert.deepEqual(decision, { kind: "mark_reviewed", headSha: "def456" });
+    assert.deepEqual(decision, { kind: "mark_reviewed", headSha: "def456", diffHash: REVIEWED_DIFF });
   });
 });
 
@@ -409,34 +432,36 @@ function cyclingTask(cycles: number, overrides: Partial<Task> = {}): Task {
 }
 
 describe("decide: review/address_comments cycle cap", () => {
-  it("keeps cycling while under the cap", () => {
+  it("keeps cycling while under the cap", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP - 1);
-    assert.deepEqual(decide(task, makeReviewRequest({ headSha: "def456" })), {
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff()), {
       kind: "spawn",
       step: "review",
       headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
     });
   });
 
-  it("still verifies the final fix round, spawning the confirming review at the cap", () => {
+  it("still verifies the final fix round, spawning the confirming review at the cap", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP);
-    assert.deepEqual(decide(task, makeReviewRequest({ headSha: "def456" })), {
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff()), {
       kind: "spawn",
       step: "review",
       headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
     });
   });
 
-  it("fails instead of spawning yet another address_comments once the cap is reached", () => {
+  it("fails instead of spawning yet another address_comments once the cap is reached", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
-    const decision = decide(task, makeReviewRequest({ hasUnresolvedComments: true }));
+    const decision = await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch);
     assert.equal(decision.kind, "fail");
     assert.match((decision as { reason: string }).reason, /cycled 3 times/);
   });
 
-  it("fails well before the total spawn cap, with a reason naming the cycle and the way out", () => {
+  it("fails well before the total spawn cap, with a reason naming the cycle and the way out", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
-    const decision = decide(task, makeReviewRequest({ hasUnresolvedComments: true }));
+    const decision = await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch);
     assert.equal(decision.kind, "fail");
     const reason = (decision as { reason: string }).reason;
     assert.doesNotMatch(reason, /total spawn cap/);
@@ -445,57 +470,74 @@ describe("decide: review/address_comments cycle cap", () => {
     assert.ok(totalAttemptsOf(task) < TOTAL_SPAWN_CAP);
   });
 
-  it("does not count address_comments attempts that failed", () => {
+  it("does not count address_comments attempts that failed", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
     const lastFix = task.attempts[task.attempts.length - 1];
     lastFix.error = "Attempt timed out after 120 minutes";
-    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
-      kind: "spawn",
-      step: "address_comments",
-      headShaBefore: null,
-    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "address_comments",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
   });
 
-  it("does not cap a comment round on a PR/MR the reviewer already declared ready", () => {
+  it("does not cap a comment round on a PR/MR the reviewer already declared ready", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123", phase: "waiting_approval" });
-    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
-      kind: "spawn",
-      step: "address_comments",
-      headShaBefore: null,
-    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "address_comments",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
   });
 
-  it("resuming a failed task clears the cycle, since only attempts since the resume count", () => {
+  it("resuming a failed task clears the cycle, since only attempts since the resume count", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
     task.attemptsByStep = { implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 };
-    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
-      kind: "spawn",
-      step: "address_comments",
-      headShaBefore: null,
-    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "address_comments",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
   });
 
-  it("only counts the trailing run, so an intervening step resets the cycle", () => {
+  it("only counts the trailing run, so an intervening step resets the cycle", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
     task.attempts.push(makeAttempt({ step: "fix_ci" }));
     task.attemptsByStep.fix_ci = 1;
-    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
-      kind: "spawn",
-      step: "address_comments",
-      headShaBefore: null,
-    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "address_comments",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
   });
 
-  it("does not cap steps outside the cycle", () => {
+  it("does not cap steps outside the cycle", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP);
-    assert.deepEqual(decide(task, makeReviewRequest({ hasConflicts: true })), {
+    assert.deepEqual(await decide(task, makeReviewRequest({ hasConflicts: true }), noDiffFetch), {
       kind: "spawn",
       step: "rebase",
       headShaBefore: null,
+      diffHashBefore: null,
     });
   });
 
-  it("back-to-back reviews with no comments addressed do not count as cycles", () => {
+  it("back-to-back reviews with no comments addressed do not count as cycles", async () => {
     const task = makeLinkedTask({
       lastReviewedSha: "abc123",
       attempts: [
@@ -507,10 +549,14 @@ describe("decide: review/address_comments cycle cap", () => {
       ],
       attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 4, address_comments: 0 },
     });
-    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
-      kind: "spawn",
-      step: "address_comments",
-      headShaBefore: null,
-    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "address_comments",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
   });
 });
