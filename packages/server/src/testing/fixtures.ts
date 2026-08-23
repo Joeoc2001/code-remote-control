@@ -63,7 +63,6 @@ export function makeReviewRequest(overrides: Partial<RepoReviewRequest> = {}): R
     mergeStateKnown: true,
     approvedByHuman: false,
     hasUnresolvedComments: false,
-    hasPlaceholderComment: false,
     ...overrides,
   };
 }

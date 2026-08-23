@@ -64,24 +64,22 @@ function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null):
 }
 
 const PLACEHOLDER_MARKER_LIST = PLACEHOLDER_BODY_MARKERS.map((marker) => `'${marker}'`).join(" or ");
+const DESCRIPTION_RECOVERY = "write the description on the forge by hand, then resume the task";
 
-function unusableBodyFailure(reviewRequest: RepoReviewRequest): TaskDecision | null {
+function unusableDescriptionFailure(reviewRequest: RepoReviewRequest): TaskDecision | null {
+  if (reviewRequest.approvedByHuman) {
+    return null;
+  }
   if (isPlaceholderBody(reviewRequest.body)) {
     return {
       kind: "fail",
-      reason: `${reviewRequest.reference} has ${PLACEHOLDER_MARKER_LIST} as its whole description: an agent passed a stdin marker to a flag that posts its value verbatim, so the description it meant to write was lost`,
+      reason: `${reviewRequest.reference} has ${PLACEHOLDER_MARKER_LIST} as its whole description: an agent passed a stdin marker to a flag that posts its value verbatim, so the description it meant to write was lost — ${DESCRIPTION_RECOVERY}`,
     };
   }
   if (isMissingBody(reviewRequest.body)) {
     return {
       kind: "fail",
-      reason: `${reviewRequest.reference} has an empty description, so the agent that opened it never delivered a body`,
-    };
-  }
-  if (reviewRequest.hasPlaceholderComment) {
-    return {
-      kind: "fail",
-      reason: `${reviewRequest.reference} has a comment whose whole body is ${PLACEHOLDER_MARKER_LIST}: an agent passed a stdin marker to a flag that posts its value verbatim, so the comment it meant to write was lost`,
+      reason: `${reviewRequest.reference} has an empty description, so the agent that opened it never delivered a body — ${DESCRIPTION_RECOVERY}`,
     };
   }
   return null;
@@ -124,9 +122,9 @@ export function decide(task: Task, reviewRequest: RepoReviewRequest | null): Tas
     return { kind: "fail", reason: `${reviewRequest.reference} was closed without being merged` };
   }
 
-  const unusableBody = unusableBodyFailure(reviewRequest);
-  if (unusableBody) {
-    return unusableBody;
+  const unusableDescription = unusableDescriptionFailure(reviewRequest);
+  if (unusableDescription) {
+    return unusableDescription;
   }
 
   if (reviewRequest.ciState === "pending" || reviewRequest.ciState === "running") {

@@ -5,6 +5,9 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/forge-body.js" }] }
+    ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/task-description.js" }] },
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/instance-status.js working" }] }

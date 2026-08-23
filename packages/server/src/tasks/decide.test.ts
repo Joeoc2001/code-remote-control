@@ -77,7 +77,7 @@ describe("decide: rules 2-3 (PR/MR no longer open)", () => {
   });
 });
 
-describe("decide: unusable PR/MR bodies", () => {
+describe("decide: unusable PR/MR descriptions", () => {
   it("fails when the description is the literal stdin marker", () => {
     for (const body of ["@-", "-", "  @-\n"]) {
       const decision = decide(makeLinkedTask(), makeReviewRequest({ body }));
@@ -92,12 +92,6 @@ describe("decide: unusable PR/MR bodies", () => {
       assert.equal(decision.kind, "fail", `body=${JSON.stringify(body)}`);
       assert.match((decision as { reason: string }).reason, /empty description/);
     }
-  });
-
-  it("fails when a comment body is the literal stdin marker", () => {
-    const decision = decide(makeLinkedTask(), makeReviewRequest({ hasPlaceholderComment: true }));
-    assert.equal(decision.kind, "fail");
-    assert.match((decision as { reason: string }).reason, /comment whose whole body/);
   });
 
   it("names the PR/MR and the markers so the failure is actionable", () => {
@@ -119,6 +113,19 @@ describe("decide: unusable PR/MR bodies", () => {
   it("still marks an already-merged PR/MR merged rather than failing it", () => {
     const decision = decide(makeLinkedTask(), makeReviewRequest({ body: "@-", state: "merged" }));
     assert.deepEqual(decision, { kind: "mark_merged" });
+  });
+
+  it("defers to a human who approved the PR/MR anyway rather than failing it", () => {
+    for (const body of ["@-", null]) {
+      const task = makeLinkedTask({ lastReviewedSha: "abc123" });
+      const decision = decide(task, makeReviewRequest({ body, approvedByHuman: true }));
+      assert.deepEqual(decision, { kind: "merge" }, `body=${JSON.stringify(body)}`);
+    }
+  });
+
+  it("says how to recover, since the forge state is unchanged when the task is resumed", () => {
+    const decision = decide(makeLinkedTask(), makeReviewRequest({ body: "@-" }));
+    assert.match((decision as { reason: string }).reason, /write the description on the forge by hand/);
   });
 });
 

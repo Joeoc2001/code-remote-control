@@ -185,16 +185,18 @@ after 2 hours (an interrupted agent can otherwise report "working" forever —
 see the known limitation above); repeated forge errors fail the task; paused
 tasks are never evaluated; and each work item can have only one live task.
 
-A task also fails, before spawning anything else, when its PR/MR description is
-empty or when a description or comment body is nothing but `@-` or `-`. Those
-markers mean "read this from stdin" to `gh api -F body=@-` and friends, but the
-porcelain flags agents usually reach for (`glab mr create --description`,
-`glab mr note -m`, `gh pr create --body`) post them verbatim, which loses the
-body the agent meant to write. Every step prompt tells agents to write bodies to
-a file and pass them with `--body-file`, `"$(cat body.md)"`, or
-`-F 'description=@body.md'`; the env image installs the same guidance as agent
-memory (`claude/agent-memory.md` → `/root/.claude/CLAUDE.md`) so interactive
-sessions get it too.
+Agents used to lose PR/MR bodies by passing `@-` or `-` — the "read this from
+stdin" markers a few commands accept — to flags that post their value verbatim.
+A `PreToolUse` hook (`claude/hooks/forge-body.js`) now blocks those commands
+before they run and tells the agent what to use instead, so the mistake fails at
+the moment it is made rather than after the junk is published. The same guidance
+also reaches agents as a step prompt suffix and as agent memory:
+`FORGE_BODY_PROMPT_SUFFIX` in `packages/shared/src/prompts.ts` is the only copy
+anyone edits, and `claude/agent-memory.md` and the hook's message are generated
+from it by `npm run generate:agent-guidance`. As a backstop, a task fails before
+spawning anything else when its PR/MR description is empty or is nothing but a
+marker — unless a human has already approved it, in which case their judgement
+wins and the task merges.
 
 ## Authentication
 

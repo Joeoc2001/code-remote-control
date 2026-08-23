@@ -493,20 +493,6 @@ describe("scheduler: forge-state evaluation", () => {
     assert.equal(harness.store.list()[0].phase, "failed");
   });
 
-  it("fails the task instead of spawning an agent when a comment body is the stdin marker", async () => {
-    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
-    const harness = makeHarness({
-      tasks: [task],
-      snapshot: [makeReviewRequest({ hasPlaceholderComment: true, hasUnresolvedComments: true })],
-    });
-
-    await runTaskSchedulerTick(harness.deps);
-
-    assert.equal(harness.created.length, 0);
-    assert.equal(task.phase, "failed");
-    assert.match(task.error ?? "", /comment whose whole body/);
-  });
-
   it("rebases via the forge API for a GitLab task that is behind without conflicts", async () => {
     const task = makeLinkedTask({ repoSource: "gitlab" });
     const harness = makeHarness({

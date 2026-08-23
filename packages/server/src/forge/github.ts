@@ -1,4 +1,3 @@
-import { isPlaceholderBody } from "@crc/shared/bodies";
 import type {
   GitHubRepo,
   RepoReviewRequest,
@@ -127,25 +126,11 @@ export interface GitHubPullRequestNode {
     nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }>;
   };
   reviewThreads: {
-    nodes: Array<{ isResolved: boolean; comments: { nodes: Array<{ body: string }> } }>;
+    nodes: Array<{ isResolved: boolean }>;
   };
   latestOpinionatedReviews: {
     nodes: Array<{ state: string; author: { login: string } | null }>;
   };
-}
-
-export const GRAPHQL_NODE_LIMIT = 500_000;
-export const PULL_REQUEST_PAGE_SIZE = 100;
-export const REVIEW_THREAD_PAGE_SIZE = 100;
-export const REVIEW_COMMENT_PAGE_SIZE = 20;
-export const OPINIONATED_REVIEW_PAGE_SIZE = 100;
-
-export function listingQueryNodeCount(): number {
-  const perPullRequest =
-    1 +
-    REVIEW_THREAD_PAGE_SIZE * (1 + REVIEW_COMMENT_PAGE_SIZE) +
-    OPINIONATED_REVIEW_PAGE_SIZE;
-  return PULL_REQUEST_PAGE_SIZE * (1 + perPullRequest);
 }
 
 const PULL_REQUEST_FIELDS = `
@@ -160,13 +145,10 @@ const PULL_REQUEST_FIELDS = `
   commits(last: 1) {
     nodes { commit { statusCheckRollup { state } } }
   }
-  reviewThreads(first: ${REVIEW_THREAD_PAGE_SIZE}) {
-    nodes {
-      isResolved
-      comments(first: ${REVIEW_COMMENT_PAGE_SIZE}) { nodes { body } }
-    }
+  reviewThreads(first: 100) {
+    nodes { isResolved }
   }
-  latestOpinionatedReviews(first: ${OPINIONATED_REVIEW_PAGE_SIZE}) {
+  latestOpinionatedReviews(first: 100) {
     nodes { state author { login } }
   }
 `;
@@ -174,7 +156,7 @@ const PULL_REQUEST_FIELDS = `
 const PULL_REQUESTS_QUERY = `
 query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: OPEN, first: ${PULL_REQUEST_PAGE_SIZE}, after: $cursor) {
+    pullRequests(states: OPEN, first: 100, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes { ${PULL_REQUEST_FIELDS} }
     }
@@ -278,9 +260,6 @@ export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: str
       (review) => review.state === "APPROVED" && review.author !== null && review.author.login !== viewerLogin,
     ),
     hasUnresolvedComments: node.reviewThreads.nodes.some((thread) => !thread.isResolved),
-    hasPlaceholderComment: node.reviewThreads.nodes.some((thread) =>
-      thread.comments.nodes.some((comment) => isPlaceholderBody(comment.body)),
-    ),
   };
 }
 
