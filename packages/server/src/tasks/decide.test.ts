@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { decide, PER_STEP_SPAWN_CAP, TOTAL_SPAWN_CAP } from "./decide.js";
-import { makeLinkedTask, makeReviewRequest, makeTask } from "../testing/fixtures.js";
+import type { Task, TaskAttempt } from "../types.js";
+import { decide, PER_STEP_SPAWN_CAP, REVIEW_CYCLE_CAP, TOTAL_SPAWN_CAP } from "./decide.js";
+import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask } from "../testing/fixtures.js";
 
 describe("decide: terminal and guard states", () => {
   it("does nothing for paused tasks", () => {
@@ -246,5 +247,105 @@ describe("decide: spawn caps", () => {
     });
     const decision = decide(task, makeReviewRequest({ headSha: "def456" }));
     assert.equal(decision.kind, "fail");
+  });
+});
+
+function totalAttemptsOf(task: Task): number {
+  return Object.values(task.attemptsByStep).reduce((sum, count) => sum + count, 0);
+}
+
+function reviewCycleAttempts(cycles: number): TaskAttempt[] {
+  const attempts: TaskAttempt[] = [makeAttempt({ step: "implement" })];
+  for (let i = 0; i < cycles; i++) {
+    attempts.push(makeAttempt({ step: "review" }), makeAttempt({ step: "address_comments" }));
+  }
+  return attempts;
+}
+
+function cyclingTask(cycles: number, overrides: Partial<Task> = {}): Task {
+  const attempts = reviewCycleAttempts(cycles);
+  return makeLinkedTask({
+    attempts,
+    attemptsByStep: {
+      implement: 1,
+      fix_ci: 0,
+      rebase: 0,
+      review: cycles,
+      address_comments: cycles,
+    },
+    ...overrides,
+  });
+}
+
+describe("decide: review/address_comments cycle cap", () => {
+  it("keeps cycling while under the cap", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP - 1);
+    assert.deepEqual(decide(task, makeReviewRequest({ headSha: "def456" })), {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+    });
+  });
+
+  it("fails instead of spawning yet another review once the cap is reached", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP);
+    const decision = decide(task, makeReviewRequest({ headSha: "def456" }));
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /cycled 3 times/);
+  });
+
+  it("fails instead of spawning yet another address_comments once the cap is reached", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
+    const decision = decide(task, makeReviewRequest({ hasUnresolvedComments: true }));
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /cycled 3 times/);
+  });
+
+  it("fails well before the total spawn cap, with a reason naming the cycle", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP);
+    const decision = decide(task, makeReviewRequest({ headSha: "def456" }));
+    assert.equal(decision.kind, "fail");
+    const reason = (decision as { reason: string }).reason;
+    assert.doesNotMatch(reason, /total spawn cap/);
+    assert.match(reason, /Review and comment-addressing/);
+    assert.ok(totalAttemptsOf(task) < TOTAL_SPAWN_CAP);
+  });
+
+  it("only counts the trailing run, so an intervening step resets the cycle", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
+    task.attempts.push(makeAttempt({ step: "fix_ci" }));
+    task.attemptsByStep.fix_ci = 1;
+    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
+      kind: "spawn",
+      step: "address_comments",
+      headShaBefore: null,
+    });
+  });
+
+  it("does not cap steps outside the cycle", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP);
+    assert.deepEqual(decide(task, makeReviewRequest({ hasConflicts: true })), {
+      kind: "spawn",
+      step: "rebase",
+      headShaBefore: null,
+    });
+  });
+
+  it("back-to-back reviews with no comments addressed do not count as cycles", () => {
+    const task = makeLinkedTask({
+      attempts: [
+        makeAttempt({ step: "implement" }),
+        makeAttempt({ step: "review" }),
+        makeAttempt({ step: "review" }),
+        makeAttempt({ step: "review" }),
+        makeAttempt({ step: "review" }),
+      ],
+      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 4, address_comments: 0 },
+    });
+    assert.deepEqual(decide(task, makeReviewRequest({ headSha: "def456" })), {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+    });
   });
 });

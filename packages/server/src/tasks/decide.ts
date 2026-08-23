@@ -2,8 +2,10 @@ import type { RepoReviewRequest, Task, TaskPhase, TaskStep } from "../types.js";
 
 export const PER_STEP_SPAWN_CAP = 3;
 export const TOTAL_SPAWN_CAP = 12;
+export const REVIEW_CYCLE_CAP = 3;
 
 const PER_STEP_CAPPED_STEPS: readonly TaskStep[] = ["fix_ci", "rebase"];
+const REVIEW_CYCLE_STEPS: readonly TaskStep[] = ["review", "address_comments"];
 
 export type TaskDecision =
   | { kind: "noop"; phase: TaskPhase | null }
@@ -17,6 +19,16 @@ function totalAttempts(task: Task): number {
   return Object.values(task.attemptsByStep).reduce((sum, count) => sum + count, 0);
 }
 
+function trailingReviewCycles(task: Task): number {
+  let cycles = 0;
+  for (let i = task.attempts.length - 1; i >= 0; i--) {
+    const step = task.attempts[i].step;
+    if (!REVIEW_CYCLE_STEPS.includes(step)) break;
+    if (step === "address_comments") cycles += 1;
+  }
+  return cycles;
+}
+
 function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null): TaskDecision {
   if (totalAttempts(task) >= TOTAL_SPAWN_CAP) {
     return {
@@ -28,6 +40,12 @@ function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null):
     return {
       kind: "fail",
       reason: `Step '${step}' hit its spawn cap of ${PER_STEP_SPAWN_CAP} attempts without the task advancing`,
+    };
+  }
+  if (REVIEW_CYCLE_STEPS.includes(step) && trailingReviewCycles(task) >= REVIEW_CYCLE_CAP) {
+    return {
+      kind: "fail",
+      reason: `Review and comment-addressing cycled ${REVIEW_CYCLE_CAP} times without the PR/MR becoming ready for approval`,
     };
   }
   return { kind: "spawn", step, headShaBefore };

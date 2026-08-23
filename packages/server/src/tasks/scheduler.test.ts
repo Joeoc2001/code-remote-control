@@ -7,6 +7,7 @@ import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadat
 import type { ManagedContainer, RepoReviewRequest, ResolvedConfigFile, Task } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import { TaskStore } from "./store.js";
+import { REVIEW_CYCLE_CAP } from "./decide.js";
 import {
   ATTEMPT_TIMEOUT_MS,
   MAX_CONSECUTIVE_ERRORS,
@@ -201,6 +202,51 @@ describe("scheduler: spawning", () => {
     assert.match(harness.created[0].prompt, /Review pull request #12/);
     assert.equal(task.activeStep, "review");
     assert.equal(task.attempts[0].headShaBefore, "def456");
+  });
+
+  it("tells the review agent to keep merge-ready feedback out of resolvable threads", async () => {
+    const task = makeLinkedTask({ phase: "waiting_ci" });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ headSha: "def456" })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    const prompt = harness.created[0].prompt;
+    assert.match(prompt, /Only open resolvable discussion threads/);
+    assert.match(prompt, /unresolved thread blocks the merge automation/);
+    assert.match(prompt, /single plain comment/);
+  });
+
+  it("fails a task ping-ponging between review and address_comments, naming the cycle", async () => {
+    const attempts = [makeAttempt({ step: "implement" })];
+    for (let i = 0; i < REVIEW_CYCLE_CAP; i++) {
+      attempts.push(makeAttempt({ step: "review" }), makeAttempt({ step: "address_comments" }));
+    }
+    const task = makeLinkedTask({
+      phase: "waiting_approval",
+      lastReviewedSha: "abc123",
+      attempts,
+      attemptsByStep: {
+        implement: 1,
+        fix_ci: 0,
+        rebase: 0,
+        review: REVIEW_CYCLE_CAP,
+        address_comments: REVIEW_CYCLE_CAP,
+      },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ headSha: "def456" })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /Review and comment-addressing cycled 3 times/);
+    assert.doesNotMatch(task.error ?? "", /total spawn cap/);
   });
 
   it("uses the step's configured configuration and fails loudly on an unknown one", async () => {
