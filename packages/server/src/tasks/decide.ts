@@ -1,4 +1,5 @@
 import type { RepoReviewRequest, Task, TaskAttempt, TaskPhase, TaskStep } from "../types.js";
+import { isStdinPlaceholderBody } from "../forge/body.js";
 
 export const PER_STEP_SPAWN_CAP = 3;
 export const TOTAL_SPAWN_CAP = 12;
@@ -68,6 +69,20 @@ function spawn(
   return { kind: "spawn", step, headShaBefore, diffHashBefore };
 }
 
+function unusableBodyReason(reviewRequest: RepoReviewRequest): string | null {
+  const description = reviewRequest.body?.trim() ?? "";
+  if (isStdinPlaceholderBody(description)) {
+    return `${reviewRequest.reference}'s description is the stdin placeholder '${description}': an agent passed it to a command that does not read the body from stdin, so the real description was never posted`;
+  }
+  if (description === "") {
+    return `${reviewRequest.reference} has an empty description: the agent that opened it never posted the body it wrote`;
+  }
+  if (reviewRequest.hasPlaceholderComment) {
+    return `${reviewRequest.reference} has a comment whose whole body is a stdin placeholder ('@-'): an agent passed it to a command that does not read the body from stdin, so the real comment was never posted`;
+  }
+  return null;
+}
+
 export async function decide(
   task: Task,
   reviewRequest: RepoReviewRequest | null,
@@ -107,6 +122,11 @@ export async function decide(
 
   if (reviewRequest.state === "closed") {
     return { kind: "fail", reason: `${reviewRequest.reference} was closed without being merged` };
+  }
+
+  const unusableBody = unusableBodyReason(reviewRequest);
+  if (unusableBody) {
+    return { kind: "fail", reason: `${unusableBody}. Fix it by hand, then resume the task.` };
   }
 
   if (reviewRequest.ciState === "pending" || reviewRequest.ciState === "running") {

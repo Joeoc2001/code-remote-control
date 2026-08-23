@@ -7,6 +7,7 @@ import type {
 } from "../types.js";
 import { GITLAB_TOKEN, loadConfigurations } from "../config.js";
 import { hashDiffText } from "./diff-hash.js";
+import { isStdinPlaceholderBody } from "./body.js";
 
 const MAX_PAGES = 10;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -182,11 +183,38 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-async function fetchHasUnresolvedDiscussions(
+export interface GitLabDiscussionNote {
+  resolvable: boolean;
+  resolved: boolean;
+  system: boolean;
+  body: string;
+}
+
+export interface DiscussionSummary {
+  hasUnresolvedComments: boolean;
+  hasPlaceholderComment: boolean;
+}
+
+export function summariseDiscussions(
+  discussions: Array<{ notes: GitLabDiscussionNote[] }>,
+  seed: DiscussionSummary = { hasUnresolvedComments: false, hasPlaceholderComment: false },
+): DiscussionSummary {
+  const notes = discussions.flatMap((discussion) => discussion.notes);
+  return {
+    hasUnresolvedComments:
+      seed.hasUnresolvedComments || notes.some((note) => note.resolvable && !note.resolved),
+    hasPlaceholderComment:
+      seed.hasPlaceholderComment ||
+      notes.some((note) => !note.system && isStdinPlaceholderBody(note.body)),
+  };
+}
+
+async function fetchDiscussionSummary(
   apiBase: string,
   encodedProject: string,
   mergeRequestIid: number,
-): Promise<boolean> {
+): Promise<DiscussionSummary> {
+  let summary: DiscussionSummary = { hasUnresolvedComments: false, hasPlaceholderComment: false };
   let page = 1;
   const perPage = 100;
 
@@ -196,19 +224,16 @@ async function fetchHasUnresolvedDiscussions(
       `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequestIid}/discussions?per_page=${perPage}&page=${page}`,
     );
 
-    const data = (await response.json()) as Array<{
-      notes: Array<{ resolvable: boolean; resolved: boolean }>;
-    }>;
+    const data = (await response.json()) as Array<{ notes: GitLabDiscussionNote[] }>;
 
-    if (data.some((discussion) => discussion.notes.some((note) => note.resolvable && !note.resolved))) {
-      return true;
-    }
+    summary = summariseDiscussions(data, summary);
+    if (summary.hasUnresolvedComments && summary.hasPlaceholderComment) return summary;
 
     if (data.length < perPage) break;
     page++;
   }
 
-  return false;
+  return summary;
 }
 
 async function fetchApprovedByHuman(
@@ -289,7 +314,7 @@ const UNSETTLED_MERGE_STATUSES = new Set(["checking", "unchecked", "preparing", 
 
 export function mapMergeRequestDetail(
   detail: GitLabMergeRequestDetail,
-  hasUnresolvedComments: boolean,
+  discussions: DiscussionSummary,
   approvedByHuman: boolean,
 ): RepoReviewRequest {
   const mergeStatus = detail.detailed_merge_status ?? detail.merge_status ?? "unchecked";
@@ -307,7 +332,8 @@ export function mapMergeRequestDetail(
     needsRebase: (detail.diverged_commits_count ?? 0) > 0,
     mergeStateKnown: !UNSETTLED_MERGE_STATUSES.has(mergeStatus),
     approvedByHuman,
-    hasUnresolvedComments,
+    hasUnresolvedComments: discussions.hasUnresolvedComments,
+    hasPlaceholderComment: discussions.hasPlaceholderComment,
   };
 }
 
@@ -316,17 +342,17 @@ async function buildMergeRequest(
   encodedProject: string,
   mergeRequestIid: number,
 ): Promise<RepoReviewRequest> {
-  const [detailResponse, hasUnresolvedComments, approvedByHuman] = await Promise.all([
+  const [detailResponse, discussions, approvedByHuman] = await Promise.all([
     gitlabRequest(
       "GET",
       `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequestIid}?include_diverged_commits_count=true`,
     ),
-    fetchHasUnresolvedDiscussions(apiBase, encodedProject, mergeRequestIid),
+    fetchDiscussionSummary(apiBase, encodedProject, mergeRequestIid),
     fetchApprovedByHuman(apiBase, encodedProject, mergeRequestIid),
   ]);
 
   const detail = (await detailResponse.json()) as GitLabMergeRequestDetail;
-  return mapMergeRequestDetail(detail, hasUnresolvedComments, approvedByHuman);
+  return mapMergeRequestDetail(detail, discussions, approvedByHuman);
 }
 
 export async function fetchOpenMergeRequests(repoFullName: string): Promise<RepoReviewRequest[]> {

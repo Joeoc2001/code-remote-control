@@ -227,6 +227,54 @@ describe("scheduler: spawning", () => {
     assert.match(prompt, /single plain comment/);
   });
 
+  it("hands every spawned agent the guidance for the forge it is posting to", async () => {
+    const github = makeHarness({ tasks: [makeTask()] });
+    await runTaskSchedulerTick(github.deps);
+    assert.match(github.created[0].prompt, /gh pr create --body-file body\.md/);
+    assert.doesNotMatch(github.created[0].prompt, /glab/);
+
+    const gitlab = makeHarness({ tasks: [makeTask({ repoSource: "gitlab" })] });
+    await runTaskSchedulerTick(gitlab.deps);
+    assert.match(gitlab.created[0].prompt, /glab mr create --description "\$\(cat body\.md\)"/);
+
+    const review = makeHarness({
+      tasks: [makeLinkedTask({ phase: "waiting_ci" })],
+      snapshot: [makeReviewRequest({ headSha: "def456" })],
+    });
+    await runTaskSchedulerTick(review.deps);
+    assert.match(review.created[0].prompt, /never pass `@-`, `@` or `-` as the body value/);
+  });
+
+  it("fails a task whose PR/MR description is a stdin placeholder, without spawning an agent", async () => {
+    const task = makeLinkedTask({ phase: "waiting_ci" });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ body: "@-", ciState: "failed" })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /stdin placeholder '@-'/);
+    assert.match(task.error ?? "", /Fix it by hand, then resume the task\./);
+    assert.equal(harness.store.list()[0].phase, "failed");
+  });
+
+  it("fails a task whose PR/MR carries a placeholder comment", async () => {
+    const task = makeLinkedTask({ phase: "waiting_ci", lastReviewedSha: "abc123" });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ hasPlaceholderComment: true, hasUnresolvedComments: true })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /comment whose whole body is a stdin placeholder/);
+  });
+
   it("fails a task ping-ponging between review and address_comments, naming the cycle", async () => {
     const attempts = [makeAttempt({ step: "implement" })];
     for (let i = 0; i < REVIEW_CYCLE_CAP; i++) {

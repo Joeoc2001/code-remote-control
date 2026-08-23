@@ -36,6 +36,10 @@ describe("env container wiring", () => {
     assert.match(dockerfile, new RegExp(`RUN chmod \\+x [^\\n]*${installedPath}`));
   });
 
+  test("the agent memory is installed as Claude Code's user memory", () => {
+    assert.equal(copyDestination("docker/claude-memory.md"), "/root/.claude/CLAUDE.md");
+  });
+
   test("the entrypoint no longer launches claude itself", () => {
     assert.ok(!entrypoint.includes("CRC_INITIAL_PROMPT"));
     assert.ok(!/tmux new-session/.test(entrypoint));
