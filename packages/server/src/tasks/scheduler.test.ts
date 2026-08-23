@@ -225,7 +225,7 @@ describe("scheduler: spawning", () => {
       attempts.push(makeAttempt({ step: "review" }), makeAttempt({ step: "address_comments" }));
     }
     const task = makeLinkedTask({
-      phase: "waiting_approval",
+      phase: "agent_running",
       lastReviewedSha: "abc123",
       attempts,
       attemptsByStep: {
@@ -238,7 +238,7 @@ describe("scheduler: spawning", () => {
     });
     const harness = makeHarness({
       tasks: [task],
-      snapshot: [makeReviewRequest({ headSha: "def456" })],
+      snapshot: [makeReviewRequest({ hasUnresolvedComments: true })],
     });
 
     await runTaskSchedulerTick(harness.deps);

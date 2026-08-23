@@ -287,11 +287,13 @@ describe("decide: review/address_comments cycle cap", () => {
     });
   });
 
-  it("fails instead of spawning yet another review once the cap is reached", () => {
+  it("still verifies the final fix round, spawning the confirming review at the cap", () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP);
-    const decision = decide(task, makeReviewRequest({ headSha: "def456" }));
-    assert.equal(decision.kind, "fail");
-    assert.match((decision as { reason: string }).reason, /cycled 3 times/);
+    assert.deepEqual(decide(task, makeReviewRequest({ headSha: "def456" })), {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+    });
   });
 
   it("fails instead of spawning yet another address_comments once the cap is reached", () => {
@@ -301,14 +303,45 @@ describe("decide: review/address_comments cycle cap", () => {
     assert.match((decision as { reason: string }).reason, /cycled 3 times/);
   });
 
-  it("fails well before the total spawn cap, with a reason naming the cycle", () => {
-    const task = cyclingTask(REVIEW_CYCLE_CAP);
-    const decision = decide(task, makeReviewRequest({ headSha: "def456" }));
+  it("fails well before the total spawn cap, with a reason naming the cycle and the way out", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
+    const decision = decide(task, makeReviewRequest({ hasUnresolvedComments: true }));
     assert.equal(decision.kind, "fail");
     const reason = (decision as { reason: string }).reason;
     assert.doesNotMatch(reason, /total spawn cap/);
     assert.match(reason, /Review and comment-addressing/);
+    assert.match(reason, /resume the task/);
     assert.ok(totalAttemptsOf(task) < TOTAL_SPAWN_CAP);
+  });
+
+  it("does not count address_comments attempts that failed", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
+    const lastFix = task.attempts[task.attempts.length - 1];
+    lastFix.error = "Attempt timed out after 120 minutes";
+    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
+      kind: "spawn",
+      step: "address_comments",
+      headShaBefore: null,
+    });
+  });
+
+  it("does not cap a comment round on a PR/MR the reviewer already declared ready", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123", phase: "waiting_approval" });
+    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
+      kind: "spawn",
+      step: "address_comments",
+      headShaBefore: null,
+    });
+  });
+
+  it("resuming a failed task clears the cycle, since only attempts since the resume count", () => {
+    const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
+    task.attemptsByStep = { implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 };
+    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
+      kind: "spawn",
+      step: "address_comments",
+      headShaBefore: null,
+    });
   });
 
   it("only counts the trailing run, so an intervening step resets the cycle", () => {
@@ -333,6 +366,7 @@ describe("decide: review/address_comments cycle cap", () => {
 
   it("back-to-back reviews with no comments addressed do not count as cycles", () => {
     const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
       attempts: [
         makeAttempt({ step: "implement" }),
         makeAttempt({ step: "review" }),
@@ -342,10 +376,10 @@ describe("decide: review/address_comments cycle cap", () => {
       ],
       attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 4, address_comments: 0 },
     });
-    assert.deepEqual(decide(task, makeReviewRequest({ headSha: "def456" })), {
+    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
       kind: "spawn",
-      step: "review",
-      headShaBefore: "def456",
+      step: "address_comments",
+      headShaBefore: null,
     });
   });
 });

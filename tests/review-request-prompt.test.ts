@@ -39,6 +39,12 @@ describe("buildReviewRequestPrompt", () => {
     assert.match(prompt, /unresolved thread blocks the merge automation/);
   });
 
+  test("keeps nits out of threads even when changes are required", () => {
+    const prompt = buildReviewRequestPrompt(pullRequest);
+    assert.match(prompt, /If changes are required, open threads for the must-fix items only/);
+    assert.match(prompt, /minor non-blocking suggestions in a plain comment alongside them/);
+  });
+
   test("routes a merge-ready verdict and its nits into a single plain comment", () => {
     const prompt = buildReviewRequestPrompt(mergeRequest);
     assert.match(prompt, /acceptable to merge as-is/);

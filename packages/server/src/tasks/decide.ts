@@ -1,4 +1,4 @@
-import type { RepoReviewRequest, Task, TaskPhase, TaskStep } from "../types.js";
+import type { RepoReviewRequest, Task, TaskAttempt, TaskPhase, TaskStep } from "../types.js";
 
 export const PER_STEP_SPAWN_CAP = 3;
 export const TOTAL_SPAWN_CAP = 12;
@@ -19,14 +19,25 @@ function totalAttempts(task: Task): number {
   return Object.values(task.attemptsByStep).reduce((sum, count) => sum + count, 0);
 }
 
+function attemptsSinceResume(task: Task): TaskAttempt[] {
+  return task.attempts.slice(task.attempts.length - totalAttempts(task));
+}
+
 function trailingReviewCycles(task: Task): number {
+  const attempts = attemptsSinceResume(task);
   let cycles = 0;
-  for (let i = task.attempts.length - 1; i >= 0; i--) {
-    const step = task.attempts[i].step;
-    if (!REVIEW_CYCLE_STEPS.includes(step)) break;
-    if (step === "address_comments") cycles += 1;
+  for (let i = attempts.length - 1; i >= 0; i--) {
+    const attempt = attempts[i];
+    if (!REVIEW_CYCLE_STEPS.includes(attempt.step)) break;
+    if (attempt.step === "address_comments" && attempt.error === null) cycles += 1;
   }
   return cycles;
+}
+
+function reviewCycleExhausted(task: Task, step: TaskStep): boolean {
+  if (step !== "address_comments") return false;
+  if (task.phase === "waiting_approval") return false;
+  return trailingReviewCycles(task) >= REVIEW_CYCLE_CAP;
 }
 
 function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null): TaskDecision {
@@ -42,10 +53,10 @@ function spawn(task: Task, step: TaskStep, headShaBefore: string | null = null):
       reason: `Step '${step}' hit its spawn cap of ${PER_STEP_SPAWN_CAP} attempts without the task advancing`,
     };
   }
-  if (REVIEW_CYCLE_STEPS.includes(step) && trailingReviewCycles(task) >= REVIEW_CYCLE_CAP) {
+  if (reviewCycleExhausted(task, step)) {
     return {
       kind: "fail",
-      reason: `Review and comment-addressing cycled ${REVIEW_CYCLE_CAP} times without the PR/MR becoming ready for approval`,
+      reason: `Review and comment-addressing cycled ${REVIEW_CYCLE_CAP} times without the PR/MR becoming ready for approval — resolve the remaining threads by hand, then resume the task`,
     };
   }
   return { kind: "spawn", step, headShaBefore };
