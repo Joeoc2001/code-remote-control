@@ -74,6 +74,7 @@ interface HarnessOptions {
   listError?: Error;
   getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
+  diffHash?: string;
   instanceStatus?: Record<string, InstanceStatus>;
   codeStatus?: Record<string, ContainerCodeStatus>;
   now?: Date;
@@ -86,6 +87,7 @@ function makeHarness(options: HarnessOptions) {
   const created: Array<{ configName: string; repoFullName: string; prompt: string }> = [];
   const removed: string[] = [];
   const rebased: string[] = [];
+  const diffHashFetches: string[] = [];
   const merged: string[] = [];
   const broadcasts: Task[] = [];
   const containers = new Map((options.containers ?? []).map((c) => [c.id, c]));
@@ -102,6 +104,10 @@ function makeHarness(options: HarnessOptions) {
       (async (_repo, id) => {
         throw new Error(`No single-item fetch stubbed for ${id}`);
       }),
+    getDiffHash: async (_repo, id) => {
+      diffHashFetches.push(id);
+      return options.diffHash ?? "diff-hash-1";
+    },
     rebase: async (_repo, id) => {
       rebased.push(id);
     },
@@ -145,7 +151,7 @@ function makeHarness(options: HarnessOptions) {
     now: () => options.now ?? NOW,
   };
 
-  return { deps, store, created, removed, rebased, merged, broadcasts };
+  return { deps, store, created, removed, rebased, merged, broadcasts, diffHashFetches };
 }
 
 function makeActiveTask(overrides: Partial<Task> = {}): Task {
@@ -202,6 +208,8 @@ describe("scheduler: spawning", () => {
     assert.match(harness.created[0].prompt, /Review pull request #12/);
     assert.equal(task.activeStep, "review");
     assert.equal(task.attempts[0].headShaBefore, "def456");
+    assert.equal(task.attempts[0].diffHashBefore, "diff-hash-1");
+    assert.deepEqual(harness.diffHashFetches, ["12"]);
   });
 
   it("tells the review agent to keep merge-ready feedback out of resolvable threads", async () => {
@@ -322,10 +330,18 @@ describe("scheduler: watching a running agent", () => {
     assert.match(harness.created[0].prompt, /failing CI/);
   });
 
-  it("copies headShaBefore into lastReviewedSha when a review attempt completes", async () => {
+  it("copies headShaBefore and diffHashBefore into the reviewed state when a review attempt completes", async () => {
     const task = makeActiveTask({
       activeStep: "review",
-      attempts: [makeAttempt({ step: "review", containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "def456" })],
+      attempts: [
+        makeAttempt({
+          step: "review",
+          containerId: CONTAINER_ID,
+          startedAt: RECENT_START,
+          headShaBefore: "def456",
+          diffHashBefore: "diff-hash-1",
+        }),
+      ],
       attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
     });
     const harness = makeHarness({
@@ -338,6 +354,7 @@ describe("scheduler: watching a running agent", () => {
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(task.lastReviewedSha, "def456");
+    assert.equal(task.lastReviewedDiffHash, "diff-hash-1");
   });
 
   it("times out a wedged attempt and kills its container", async () => {
@@ -515,6 +532,108 @@ describe("scheduler: forge-state evaluation", () => {
     assert.equal(task.phase, "waiting_approval");
     assert.deepEqual(harness.merged, []);
     assert.equal(harness.created.length, 0);
+  });
+});
+
+describe("scheduler: re-review after a history rewrite", () => {
+  const SPAWNED_NAME = "crc-spawned-abcd000000000000";
+
+  it("carries the reviewed state across a clean GitLab rebase instead of spawning a review", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", needsRebase: true })],
+      diffHash: "diff-hash-1",
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.rebased, ["12"]);
+    assert.deepEqual(harness.diffHashFetches, []);
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.deepEqual(harness.diffHashFetches, ["12"]);
+    assert.equal(task.lastReviewedSha, "rebased789");
+    assert.equal(task.lastReviewedDiffHash, "diff-hash-1");
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.deepEqual(harness.diffHashFetches, ["12"]);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("spawns a review when the rewritten head carries a different diff", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ headSha: "pushed789" })],
+      diffHash: "diff-hash-2",
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.match(harness.created[0].prompt, /Review pull request #12/);
+    assert.equal(task.attempts[0].headShaBefore, "pushed789");
+    assert.equal(task.attempts[0].diffHashBefore, "diff-hash-2");
+    assert.equal(task.lastReviewedSha, "abc123");
+  });
+
+  it("does not fetch the diff while the head SHA still matches the reviewed one", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: "diff-hash-1" });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest()] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.diffHashFetches, []);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("reviews once, then skips the review a later clean rebase would have triggered", async () => {
+    const task = makeLinkedTask({ phase: "waiting_ci" });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ headSha: "abc123" })],
+      diffHash: "diff-hash-1",
+      instanceStatus: { [SPAWNED_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      codeStatus: { [SPAWNED_NAME]: makeCodeStatus(null) },
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.activeStep, "review");
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.activeContainerId, null);
+    assert.equal(task.lastReviewedSha, "abc123");
+    assert.equal(task.lastReviewedDiffHash, "diff-hash-1");
+
+    options.snapshot = [makeReviewRequest({ headSha: "rebased789" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.attemptsByStep.review, 1);
+    assert.equal(task.lastReviewedSha, "rebased789");
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.phase, "waiting_approval");
   });
 });
 

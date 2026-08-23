@@ -4,47 +4,83 @@ import type { Task, TaskAttempt } from "../types.js";
 import { decide, PER_STEP_SPAWN_CAP, REVIEW_CYCLE_CAP, TOTAL_SPAWN_CAP } from "./decide.js";
 import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask } from "../testing/fixtures.js";
 
+const CHANGED_DIFF = "sha256-of-a-different-diff";
+const REVIEWED_DIFF = "sha256-of-the-reviewed-diff";
+
+function diffHash(hash: string) {
+  let calls = 0;
+  return {
+    fetch: async () => {
+      calls += 1;
+      return hash;
+    },
+    calls: () => calls,
+  };
+}
+
+const changedDiff = () => diffHash(CHANGED_DIFF).fetch;
+
+const noDiffFetch = async (): Promise<string> => {
+  throw new Error("getDiffHash should not have been called");
+};
+
 describe("decide: terminal and guard states", () => {
-  it("does nothing for paused tasks", () => {
-    assert.deepEqual(decide(makeTask({ phase: "paused" }), null), { kind: "noop", phase: null });
+  it("does nothing for paused tasks", async () => {
+    assert.deepEqual(await decide(makeTask({ phase: "paused" }), null, noDiffFetch), {
+      kind: "noop",
+      phase: null,
+    });
   });
 
-  it("does nothing for merged tasks", () => {
-    assert.deepEqual(decide(makeTask({ phase: "merged" }), null), { kind: "noop", phase: null });
+  it("does nothing for merged tasks", async () => {
+    assert.deepEqual(await decide(makeTask({ phase: "merged" }), null, noDiffFetch), {
+      kind: "noop",
+      phase: null,
+    });
   });
 
-  it("does nothing for failed tasks", () => {
-    assert.deepEqual(decide(makeTask({ phase: "failed" }), null), { kind: "noop", phase: null });
+  it("does nothing for failed tasks", async () => {
+    assert.deepEqual(await decide(makeTask({ phase: "failed" }), null, noDiffFetch), {
+      kind: "noop",
+      phase: null,
+    });
   });
 
-  it("throws if called while an agent container is active", () => {
-    assert.throws(() => decide(makeTask({ activeContainerId: "c0ffee0000000000" }), null));
+  it("throws if called while an agent container is active", async () => {
+    await assert.rejects(() =>
+      decide(makeTask({ activeContainerId: "c0ffee0000000000" }), null, noDiffFetch),
+    );
   });
 
-  it("throws if given forge state for a task with no linked PR/MR", () => {
-    assert.throws(() => decide(makeTask(), makeReviewRequest()));
+  it("throws if given forge state for a task with no linked PR/MR", async () => {
+    await assert.rejects(() => decide(makeTask(), makeReviewRequest(), noDiffFetch));
   });
 
-  it("throws if the linked PR/MR's forge state is missing", () => {
-    assert.throws(() => decide(makeLinkedTask(), null));
+  it("throws if the linked PR/MR's forge state is missing", async () => {
+    await assert.rejects(() => decide(makeLinkedTask(), null, noDiffFetch));
   });
 });
 
 describe("decide: rules 0-1 (no PR/MR yet)", () => {
-  it("rule 0: spawns an implement agent for a fresh task", () => {
-    assert.deepEqual(decide(makeTask(), null), { kind: "spawn", step: "implement", headShaBefore: null });
+  it("rule 0: spawns an implement agent for a fresh task", async () => {
+    assert.deepEqual(await decide(makeTask(), null, noDiffFetch), {
+      kind: "spawn",
+      step: "implement",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
   });
 
-  it("rule 1: fails when implement already ran without opening a PR/MR", () => {
+  it("rule 1: fails when implement already ran without opening a PR/MR", async () => {
     const task = makeTask({
       attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
     });
-    const decision = decide(task, null);
+    const decision = await decide(task, null, noDiffFetch);
     assert.equal(decision.kind, "fail");
     assert.match((decision as { reason: string }).reason, /finished without opening/);
   });
 
-  it("rule 1: attributes the failure to the attempt error when implement did not finish cleanly", () => {
+  it("rule 1: attributes the failure to the attempt error when implement did not finish cleanly", async () => {
     const task = makeTask({
       attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
       attempts: [
@@ -52,148 +88,222 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
           step: "implement",
           containerId: "c0ffee0000000000",
           headShaBefore: null,
+          diffHashBefore: null,
           startedAt: "2026-08-20T10:00:00.000Z",
           finishedAt: "2026-08-20T12:00:00.000Z",
           error: "Attempt timed out after 120 minutes",
         },
       ],
     });
-    const decision = decide(task, null);
+    const decision = await decide(task, null, noDiffFetch);
     assert.equal(decision.kind, "fail");
     assert.match((decision as { reason: string }).reason, /timed out after 120 minutes/);
   });
 });
 
 describe("decide: rules 2-3 (PR/MR no longer open)", () => {
-  it("rule 2: marks the task merged when the PR/MR is merged", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ state: "merged" })), {
+  it("rule 2: marks the task merged when the PR/MR is merged", async () => {
+    assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ state: "merged" }), noDiffFetch), {
       kind: "mark_merged",
     });
   });
 
-  it("rule 3: fails when the PR/MR was closed without merging", () => {
-    const decision = decide(makeLinkedTask(), makeReviewRequest({ state: "closed" }));
+  it("rule 3: fails when the PR/MR was closed without merging", async () => {
+    const decision = await decide(makeLinkedTask(), makeReviewRequest({ state: "closed" }), noDiffFetch);
     assert.equal(decision.kind, "fail");
   });
 });
 
 describe("decide: rules 4-5 (CI)", () => {
-  it("rule 4: waits while CI is pending", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ ciState: "pending" })), {
+  it("rule 4: waits while CI is pending", async () => {
+    assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ ciState: "pending" }), noDiffFetch), {
       kind: "noop",
       phase: "waiting_ci",
     });
   });
 
-  it("rule 4: waits while CI is running", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ ciState: "running" })), {
+  it("rule 4: waits while CI is running", async () => {
+    assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ ciState: "running" }), noDiffFetch), {
       kind: "noop",
       phase: "waiting_ci",
     });
   });
 
-  it("rule 5: spawns a fix_ci agent when CI failed", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ ciState: "failed" })), {
+  it("rule 5: spawns a fix_ci agent when CI failed", async () => {
+    assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ ciState: "failed" }), noDiffFetch), {
       kind: "spawn",
       step: "fix_ci",
       headShaBefore: null,
+      diffHashBefore: null,
     });
   });
 
-  it("rule 5 outranks unknown merge state", () => {
-    const decision = decide(
+  it("rule 5 outranks unknown merge state", async () => {
+    const decision = await decide(
       makeLinkedTask(),
       makeReviewRequest({ ciState: "failed", mergeStateKnown: false }),
+      noDiffFetch,
     );
-    assert.deepEqual(decision, { kind: "spawn", step: "fix_ci", headShaBefore: null });
+    assert.deepEqual(decision, {
+      kind: "spawn",
+      step: "fix_ci",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
   });
 
-  it("a repo with no CI falls through to the later rules", () => {
-    const decision = decide(makeLinkedTask(), makeReviewRequest({ ciState: "none", headSha: "def456" }));
-    assert.deepEqual(decision, { kind: "spawn", step: "review", headShaBefore: "def456" });
+  it("a repo with no CI falls through to the later rules", async () => {
+    const decision = await decide(
+      makeLinkedTask(),
+      makeReviewRequest({ ciState: "none", headSha: "def456" }),
+      changedDiff(),
+    );
+    assert.deepEqual(decision, {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
+    });
   });
 });
 
 describe("decide: unknown merge state", () => {
-  it("waits until the forge has computed mergeability", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ mergeStateKnown: false })), {
-      kind: "noop",
-      phase: null,
-    });
+  it("waits until the forge has computed mergeability", async () => {
+    assert.deepEqual(
+      await decide(makeLinkedTask(), makeReviewRequest({ mergeStateKnown: false }), noDiffFetch),
+      { kind: "noop", phase: null },
+    );
   });
 });
 
 describe("decide: rules 6-7 (divergence and conflicts)", () => {
-  it("rule 6: rebases via the forge API on GitLab when behind without conflicts", () => {
+  it("rule 6: rebases via the forge API on GitLab when behind without conflicts", async () => {
     const task = makeLinkedTask({ repoSource: "gitlab" });
-    assert.deepEqual(decide(task, makeReviewRequest({ needsRebase: true, kind: "merge_request" })), {
-      kind: "forge_rebase",
-    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ needsRebase: true, kind: "merge_request" }), noDiffFetch),
+      { kind: "forge_rebase" },
+    );
   });
 
-  it("rule 6: spawns a rebase agent on GitHub when behind without conflicts", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ needsRebase: true })), {
+  it("rule 6: spawns a rebase agent on GitHub when behind without conflicts", async () => {
+    assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ needsRebase: true }), noDiffFetch), {
       kind: "spawn",
       step: "rebase",
       headShaBefore: null,
+      diffHashBefore: null,
     });
   });
 
-  it("rule 7: spawns a rebase agent on conflicts", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ hasConflicts: true })), {
+  it("rule 7: spawns a rebase agent on conflicts", async () => {
+    assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ hasConflicts: true }), noDiffFetch), {
       kind: "spawn",
       step: "rebase",
       headShaBefore: null,
+      diffHashBefore: null,
     });
   });
 
-  it("rule 7: conflicts route to the rebase agent even on GitLab and even when also behind", () => {
+  it("rule 7: conflicts route to the rebase agent even on GitLab and even when also behind", async () => {
     const task = makeLinkedTask({ repoSource: "gitlab" });
-    const decision = decide(task, makeReviewRequest({ needsRebase: true, hasConflicts: true }));
-    assert.deepEqual(decision, { kind: "spawn", step: "rebase", headShaBefore: null });
+    const decision = await decide(
+      task,
+      makeReviewRequest({ needsRebase: true, hasConflicts: true }),
+      noDiffFetch,
+    );
+    assert.deepEqual(decision, {
+      kind: "spawn",
+      step: "rebase",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
   });
 });
 
 describe("decide: rules 8-11 (review, comments, approval, merge)", () => {
-  it("rule 8: spawns a review agent when the head has never been reviewed", () => {
-    assert.deepEqual(decide(makeLinkedTask(), makeReviewRequest({ headSha: "abc123" })), {
-      kind: "spawn",
-      step: "review",
-      headShaBefore: "abc123",
-    });
+  it("rule 8: spawns a review agent when the head has never been reviewed", async () => {
+    assert.deepEqual(
+      await decide(makeLinkedTask(), makeReviewRequest({ headSha: "abc123" }), changedDiff()),
+      {
+        kind: "spawn",
+        step: "review",
+        headShaBefore: "abc123",
+        diffHashBefore: CHANGED_DIFF,
+      },
+    );
   });
 
-  it("rule 8: spawns a review agent when the head moved since the last review", () => {
-    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
-    assert.deepEqual(decide(task, makeReviewRequest({ headSha: "def456" })), {
+  it("rule 8: spawns a review agent when the head moved and the diff changed with it", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff()), {
       kind: "spawn",
       step: "review",
       headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
     });
   });
 
-  it("rule 9: spawns an address_comments agent when reviewed but comments are unresolved", () => {
-    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
-    assert.deepEqual(decide(task, makeReviewRequest({ hasUnresolvedComments: true })), {
+  it("rule 8: marks the rewritten head reviewed when the diff is unchanged", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    const stub = diffHash(REVIEWED_DIFF);
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456" }), stub.fetch), {
+      kind: "mark_reviewed",
+      headSha: "def456",
+    });
+    assert.equal(stub.calls(), 1);
+  });
+
+  it("rule 8: reviews a rewritten head that has no recorded diff to compare against", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: null });
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff());
+    assert.deepEqual(decision, {
       kind: "spawn",
-      step: "address_comments",
-      headShaBefore: null,
+      step: "review",
+      headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
     });
   });
 
-  it("rule 10: waits for a human when reviewed, comment-free, and unapproved", () => {
-    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
-    assert.deepEqual(decide(task, makeReviewRequest()), { kind: "noop", phase: "waiting_approval" });
+  it("rule 8: does not fetch the diff when the head SHA is unchanged", async () => {
+    const stub = diffHash(REVIEWED_DIFF);
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "abc123" }), stub.fetch), {
+      kind: "noop",
+      phase: "waiting_approval",
+    });
+    assert.equal(stub.calls(), 0);
   });
 
-  it("rule 11: merges once a human has approved", () => {
+  it("rule 9: spawns an address_comments agent when reviewed but comments are unresolved", async () => {
     const task = makeLinkedTask({ lastReviewedSha: "abc123" });
-    assert.deepEqual(decide(task, makeReviewRequest({ approvedByHuman: true })), { kind: "merge" });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "address_comments",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
+  });
+
+  it("rule 10: waits for a human when reviewed, comment-free, and unapproved", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
+    assert.deepEqual(await decide(task, makeReviewRequest(), noDiffFetch), {
+      kind: "noop",
+      phase: "waiting_approval",
+    });
+  });
+
+  it("rule 11: merges once a human has approved", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
+    assert.deepEqual(await decide(task, makeReviewRequest({ approvedByHuman: true }), noDiffFetch), {
+      kind: "merge",
+    });
   });
 });
 
 describe("decide: spawn caps", () => {
-  it("fails instead of spawning fix_ci a fourth time", () => {
+  it("fails instead of spawning fix_ci a fourth time", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
         implement: 1,
@@ -203,11 +313,11 @@ describe("decide: spawn caps", () => {
         address_comments: 0,
       },
     });
-    const decision = decide(task, makeReviewRequest({ ciState: "failed" }));
+    const decision = await decide(task, makeReviewRequest({ ciState: "failed" }), noDiffFetch);
     assert.equal(decision.kind, "fail");
   });
 
-  it("fails instead of spawning rebase past its cap", () => {
+  it("fails instead of spawning rebase past its cap", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
         implement: 1,
@@ -217,11 +327,11 @@ describe("decide: spawn caps", () => {
         address_comments: 0,
       },
     });
-    const decision = decide(task, makeReviewRequest({ hasConflicts: true }));
+    const decision = await decide(task, makeReviewRequest({ hasConflicts: true }), noDiffFetch);
     assert.equal(decision.kind, "fail");
   });
 
-  it("review and address_comments are not per-step capped", () => {
+  it("review and address_comments are not per-step capped", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
         implement: 1,
@@ -231,11 +341,16 @@ describe("decide: spawn caps", () => {
         address_comments: 0,
       },
     });
-    const decision = decide(task, makeReviewRequest({ headSha: "def456" }));
-    assert.deepEqual(decision, { kind: "spawn", step: "review", headShaBefore: "def456" });
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff());
+    assert.deepEqual(decision, {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
+    });
   });
 
-  it("fails any spawn once the total cap is reached", () => {
+  it("fails any spawn once the total cap is reached", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
         implement: 1,
@@ -245,8 +360,24 @@ describe("decide: spawn caps", () => {
         address_comments: TOTAL_SPAWN_CAP - 7,
       },
     });
-    const decision = decide(task, makeReviewRequest({ headSha: "def456" }));
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff());
     assert.equal(decision.kind, "fail");
+  });
+
+  it("an unchanged diff carries the review forward instead of burning the last spawn", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: REVIEWED_DIFF,
+      attemptsByStep: {
+        implement: 1,
+        fix_ci: 0,
+        rebase: 0,
+        review: 6,
+        address_comments: TOTAL_SPAWN_CAP - 7,
+      },
+    });
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456" }), diffHash(REVIEWED_DIFF).fetch);
+    assert.deepEqual(decision, { kind: "mark_reviewed", headSha: "def456" });
   });
 });
 

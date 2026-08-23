@@ -6,6 +6,7 @@ import type {
   ReviewRequestState,
 } from "../types.js";
 import { GITHUB_TOKEN, loadConfigurations } from "../config.js";
+import { hashDiffText } from "./diff-hash.js";
 
 const MAX_PAGES = 10;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -315,6 +316,22 @@ export async function fetchPullRequest(repoFullName: string, id: string): Promis
   }
 
   return mapPullRequestNode(data.repository.pullRequest, viewerLogin);
+}
+
+export async function fetchPullRequestDiffHash(repoFullName: string, id: string): Promise<string> {
+  const response = await fetch(`https://api.github.com/repos/${repoFullName}/pulls/${id}`, {
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: "application/vnd.github.v3.diff",
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`GitHub API error: ${response.status} ${response.statusText}: ${detail}`);
+  }
+
+  return hashDiffText(await response.text());
 }
 
 async function githubRest(method: string, path: string, body?: unknown): Promise<void> {

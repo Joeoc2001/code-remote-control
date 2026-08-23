@@ -1,10 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  hashMergeRequestDiffs,
   mapGitLabCiState,
   mapGitLabState,
   mapMergeRequestDetail,
   type GitLabMergeRequestDetail,
+  type GitLabMergeRequestDiff,
 } from "./gitlab.js";
 
 function makeDetail(overrides: Partial<GitLabMergeRequestDetail> = {}): GitLabMergeRequestDetail {
@@ -116,5 +118,63 @@ describe("mapMergeRequestDetail", () => {
     assert.equal(item.hasConflicts, true);
     assert.equal(item.hasUnresolvedComments, true);
     assert.equal(item.approvedByHuman, false);
+  });
+});
+
+function makeDiff(overrides: Partial<GitLabMergeRequestDiff> = {}): GitLabMergeRequestDiff {
+  return {
+    old_path: "src/widget.ts",
+    new_path: "src/widget.ts",
+    a_mode: "100644",
+    b_mode: "100644",
+    new_file: false,
+    renamed_file: false,
+    deleted_file: false,
+    diff: "@@ -1,3 +1,4 @@\n context\n+added\n context\n",
+    ...overrides,
+  };
+}
+
+describe("hashMergeRequestDiffs", () => {
+  const readme = makeDiff({ old_path: "README.md", new_path: "README.md", diff: "@@ -1 +1 @@\n-a\n+b\n" });
+
+  it("hashes the same changes to the same value regardless of the order they arrive in", () => {
+    assert.equal(
+      hashMergeRequestDiffs([makeDiff(), readme]),
+      hashMergeRequestDiffs([readme, makeDiff()]),
+    );
+  });
+
+  it("changes when a hunk changes", () => {
+    assert.notEqual(
+      hashMergeRequestDiffs([makeDiff()]),
+      hashMergeRequestDiffs([makeDiff({ diff: "@@ -1,3 +1,4 @@\n context\n+something else\n context\n" })]),
+    );
+  });
+
+  it("changes when a file is renamed", () => {
+    assert.notEqual(
+      hashMergeRequestDiffs([makeDiff()]),
+      hashMergeRequestDiffs([makeDiff({ new_path: "src/gadget.ts", renamed_file: true })]),
+    );
+  });
+
+  it("changes when a file's mode changes", () => {
+    assert.notEqual(
+      hashMergeRequestDiffs([makeDiff()]),
+      hashMergeRequestDiffs([makeDiff({ b_mode: "100755" })]),
+    );
+  });
+
+  it("changes when a file joins or leaves the change set", () => {
+    assert.notEqual(hashMergeRequestDiffs([makeDiff()]), hashMergeRequestDiffs([makeDiff(), readme]));
+    assert.notEqual(hashMergeRequestDiffs([makeDiff()]), hashMergeRequestDiffs([]));
+  });
+
+  it("keeps path and diff text unambiguous when either contains the separator", () => {
+    assert.notEqual(
+      hashMergeRequestDiffs([makeDiff({ new_path: "a", diff: "b" })]),
+      hashMergeRequestDiffs([makeDiff({ new_path: "a\nb", diff: "" })]),
+    );
   });
 });

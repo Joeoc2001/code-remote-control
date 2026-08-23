@@ -253,6 +253,7 @@ export interface TaskAttempt {
   step: TaskStep;
   containerId: string | null;
   headShaBefore: string | null;
+  diffHashBefore: string | null;
   startedAt: string;
   finishedAt: string | null;
   error: string | null;
@@ -273,6 +274,7 @@ export interface Task {
   phase: TaskPhase;
   reviewRequest: TaskReviewRequestRef | null;
   lastReviewedSha: string | null;
+  lastReviewedDiffHash: string | null;
   activeContainerId: string | null;
   activeStep: TaskStep | null;
   attemptsByStep: Record<TaskStep, number>;
