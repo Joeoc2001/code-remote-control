@@ -18,6 +18,8 @@ function makeNode(overrides: Partial<GitHubPullRequestNode> = {}): GitHubPullReq
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+    comments: { nodes: [] },
+    reviews: { nodes: [] },
     reviewThreads: { nodes: [] },
     latestOpinionatedReviews: { nodes: [] },
     ...overrides,
@@ -65,6 +67,7 @@ describe("mapPullRequestNode", () => {
       mergeStateKnown: true,
       approvedByHuman: false,
       hasUnresolvedComments: false,
+      hasPlaceholderComment: false,
     });
   });
 
@@ -73,7 +76,12 @@ describe("mapPullRequestNode", () => {
       makeNode({
         mergeable: "CONFLICTING",
         mergeStateStatus: "DIRTY",
-        reviewThreads: { nodes: [{ isResolved: true }, { isResolved: false }] },
+        reviewThreads: {
+          nodes: [
+            { isResolved: true, comments: { nodes: [{ body: "looks good" }] } },
+            { isResolved: false, comments: { nodes: [{ body: "please rename this" }] } },
+          ],
+        },
       }),
       "bot-login",
     );
@@ -124,5 +132,51 @@ describe("mapPullRequestNode", () => {
       latestOpinionatedReviews: { nodes: [{ state: "APPROVED", author: null }] },
     });
     assert.equal(mapPullRequestNode(ghostApproved, "bot-login").approvedByHuman, false);
+  });
+
+  it("flags a plain pull request comment whose whole body is a stdin placeholder", () => {
+    const item = mapPullRequestNode(
+      makeNode({ comments: { nodes: [{ body: "Looks good" }, { body: "@-" }] } }),
+      "bot-login",
+    );
+    assert.equal(item.hasPlaceholderComment, true);
+  });
+
+  it("flags a review summary whose whole body is a stdin placeholder", () => {
+    const item = mapPullRequestNode(
+      makeNode({ reviews: { nodes: [{ body: "" }, { body: "@-" }] } }),
+      "bot-login",
+    );
+    assert.equal(item.hasPlaceholderComment, true);
+  });
+
+  it("does not mistake an approval with no summary text for a placeholder", () => {
+    const item = mapPullRequestNode(makeNode({ reviews: { nodes: [{ body: "" }] } }), "bot-login");
+    assert.equal(item.hasPlaceholderComment, false);
+  });
+
+  it("flags a review thread comment whose whole body is a stdin placeholder", () => {
+    const item = mapPullRequestNode(
+      makeNode({
+        reviewThreads: {
+          nodes: [{ isResolved: false, comments: { nodes: [{ body: "rename this" }, { body: "-" }] } }],
+        },
+      }),
+      "bot-login",
+    );
+    assert.equal(item.hasPlaceholderComment, true);
+  });
+
+  it("leaves real comments unflagged", () => {
+    const item = mapPullRequestNode(
+      makeNode({
+        comments: { nodes: [{ body: "Pass the body with `@-` only to `gh api`" }] },
+        reviewThreads: {
+          nodes: [{ isResolved: false, comments: { nodes: [{ body: "- rename this\n- and this" }] } }],
+        },
+      }),
+      "bot-login",
+    );
+    assert.equal(item.hasPlaceholderComment, false);
   });
 });

@@ -201,7 +201,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
 
 function buildStepPrompt(step: TaskStep, task: Task, reviewRequest: RepoReviewRequest | null): string {
   if (step === "implement") {
-    return buildTaskImplementPrompt(task.workItem);
+    return buildTaskImplementPrompt(task.workItem, task.repoSource);
   }
   if (!reviewRequest) {
     throw new Error(`Step '${step}' requires the forge state of the task's PR/MR`);

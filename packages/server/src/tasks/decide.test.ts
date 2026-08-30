@@ -114,6 +114,74 @@ describe("decide: rules 2-3 (PR/MR no longer open)", () => {
   });
 });
 
+describe("decide: unusable PR/MR bodies", () => {
+  for (const placeholder of ["@-", "@", "-", " @- "]) {
+    it(`fails when the description is the stdin placeholder ${JSON.stringify(placeholder)}`, async () => {
+      const decision = await decide(
+        makeLinkedTask(),
+        makeReviewRequest({ body: placeholder }),
+        noDiffFetch,
+      );
+      assert.equal(decision.kind, "fail");
+      assert.match((decision as { reason: string }).reason, /stdin placeholder/);
+      assert.match((decision as { reason: string }).reason, /description/);
+    });
+  }
+
+  it("fails when the description is missing entirely", async () => {
+    const decision = await decide(makeLinkedTask(), makeReviewRequest({ body: null }), noDiffFetch);
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /empty description/);
+  });
+
+  it("fails when the description is only whitespace", async () => {
+    const decision = await decide(makeLinkedTask(), makeReviewRequest({ body: " \n " }), noDiffFetch);
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /empty description/);
+  });
+
+  it("fails when a comment on the PR/MR is a stdin placeholder", async () => {
+    const decision = await decide(
+      makeLinkedTask(),
+      makeReviewRequest({ hasPlaceholderComment: true }),
+      noDiffFetch,
+    );
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /comment/);
+    assert.match((decision as { reason: string }).reason, /stdin placeholder/);
+  });
+
+  it("tells the operator to fix the body by hand and resume", async () => {
+    const decision = await decide(makeLinkedTask(), makeReviewRequest({ body: "@-" }), noDiffFetch);
+    assert.match((decision as { reason: string }).reason, /Fix it by hand, then resume the task\./);
+  });
+
+  it("leaves a description that merely mentions a placeholder alone", async () => {
+    const decision = await decide(
+      makeLinkedTask({ lastReviewedSha: "abc123" }),
+      makeReviewRequest({ body: "Pass the body with `@-` only to `gh api`" }),
+      noDiffFetch,
+    );
+    assert.equal(decision.kind, "noop");
+  });
+
+  it("still marks a merged PR/MR merged, whatever its body looks like", async () => {
+    assert.deepEqual(
+      await decide(makeLinkedTask(), makeReviewRequest({ state: "merged", body: "@-" }), noDiffFetch),
+      { kind: "mark_merged" },
+    );
+  });
+
+  it("checks the body before spawning any agent, so no work is wasted on a broken PR/MR", async () => {
+    const decision = await decide(
+      makeLinkedTask(),
+      makeReviewRequest({ body: "@-", ciState: "failed", hasUnresolvedComments: true }),
+      noDiffFetch,
+    );
+    assert.equal(decision.kind, "fail");
+  });
+});
+
 describe("decide: rules 4-5 (CI)", () => {
   it("rule 4: waits while CI is pending", async () => {
     assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ ciState: "pending" }), noDiffFetch), {

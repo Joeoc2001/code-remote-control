@@ -5,9 +5,13 @@ import {
   mapGitLabCiState,
   mapGitLabState,
   mapMergeRequestDetail,
+  summariseDiscussions,
+  type GitLabDiscussionNote,
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestDiff,
 } from "./gitlab.js";
+
+const noDiscussionFlags = { hasUnresolvedComments: false, hasPlaceholderComment: false };
 
 function makeDetail(overrides: Partial<GitLabMergeRequestDetail> = {}): GitLabMergeRequestDetail {
   return {
@@ -61,14 +65,14 @@ describe("mapGitLabState", () => {
 
 describe("mapMergeRequestDetail", () => {
   it("keys the id off the iid so it matches in-container code-status ids", () => {
-    const item = mapMergeRequestDetail(makeDetail(), false, false);
+    const item = mapMergeRequestDetail(makeDetail(), noDiscussionFlags, false);
     assert.equal(item.id, "34");
     assert.equal(item.reference, "!34");
     assert.equal(item.kind, "merge_request");
   });
 
   it("maps a clean, green merge request", () => {
-    const item = mapMergeRequestDetail(makeDetail(), false, true);
+    const item = mapMergeRequestDetail(makeDetail(), noDiscussionFlags, true);
     assert.deepEqual(item, {
       id: "34",
       reference: "!34",
@@ -84,17 +88,18 @@ describe("mapMergeRequestDetail", () => {
       mergeStateKnown: true,
       approvedByHuman: true,
       hasUnresolvedComments: false,
+      hasPlaceholderComment: false,
     });
   });
 
   it("flags divergence from the target branch as needing rebase", () => {
-    const item = mapMergeRequestDetail(makeDetail({ diverged_commits_count: 3 }), false, false);
+    const item = mapMergeRequestDetail(makeDetail({ diverged_commits_count: 3 }), noDiscussionFlags, false);
     assert.equal(item.needsRebase, true);
   });
 
   it("treats an unsettled merge status as unknown, never as clean", () => {
     for (const status of ["checking", "unchecked", "preparing"]) {
-      const item = mapMergeRequestDetail(makeDetail({ detailed_merge_status: status }), false, false);
+      const item = mapMergeRequestDetail(makeDetail({ detailed_merge_status: status }), noDiscussionFlags, false);
       assert.equal(item.mergeStateKnown, false, `detailed_merge_status=${status}`);
     }
   });
@@ -102,22 +107,75 @@ describe("mapMergeRequestDetail", () => {
   it("falls back to merge_status when detailed_merge_status is absent", () => {
     const item = mapMergeRequestDetail(
       makeDetail({ detailed_merge_status: undefined, merge_status: "checking" }),
-      false,
+      noDiscussionFlags,
       false,
     );
     assert.equal(item.mergeStateKnown, false);
   });
 
   it("treats a missing pipeline as no CI", () => {
-    const item = mapMergeRequestDetail(makeDetail({ head_pipeline: null }), false, false);
+    const item = mapMergeRequestDetail(makeDetail({ head_pipeline: null }), noDiscussionFlags, false);
     assert.equal(item.ciState, "none");
   });
 
+  it("passes through a placeholder comment flagged in the discussions", () => {
+    const item = mapMergeRequestDetail(
+      makeDetail(),
+      { hasUnresolvedComments: false, hasPlaceholderComment: true },
+      false,
+    );
+    assert.equal(item.hasPlaceholderComment, true);
+  });
+
   it("passes through conflict, discussion, and approval state", () => {
-    const item = mapMergeRequestDetail(makeDetail({ has_conflicts: true }), true, false);
+    const item = mapMergeRequestDetail(
+      makeDetail({ has_conflicts: true }),
+      { hasUnresolvedComments: true, hasPlaceholderComment: false },
+      false,
+    );
     assert.equal(item.hasConflicts, true);
     assert.equal(item.hasUnresolvedComments, true);
     assert.equal(item.approvedByHuman, false);
+  });
+});
+
+describe("summariseDiscussions", () => {
+  function makeNote(overrides: Partial<GitLabDiscussionNote> = {}): GitLabDiscussionNote {
+    return { resolvable: false, resolved: false, system: false, body: "looks good", ...overrides };
+  }
+
+  it("reports a clean discussion list as neither unresolved nor placeholder", () => {
+    assert.deepEqual(summariseDiscussions([{ notes: [makeNote({ resolvable: true, resolved: true })] }]), {
+      hasUnresolvedComments: false,
+      hasPlaceholderComment: false,
+    });
+  });
+
+  it("reports an unresolved resolvable note", () => {
+    const summary = summariseDiscussions([{ notes: [makeNote({ resolvable: true, resolved: false })] }]);
+    assert.equal(summary.hasUnresolvedComments, true);
+    assert.equal(summary.hasPlaceholderComment, false);
+  });
+
+  it("reports a note whose whole body is a stdin placeholder", () => {
+    const summary = summariseDiscussions([
+      { notes: [makeNote(), makeNote({ body: "@-" })] },
+    ]);
+    assert.equal(summary.hasPlaceholderComment, true);
+    assert.equal(summary.hasUnresolvedComments, false);
+  });
+
+  it("ignores system notes, which the agent never wrote", () => {
+    const summary = summariseDiscussions([{ notes: [makeNote({ system: true, body: "-" })] }]);
+    assert.equal(summary.hasPlaceholderComment, false);
+  });
+
+  it("keeps flags raised by earlier pages", () => {
+    const summary = summariseDiscussions([{ notes: [makeNote()] }], {
+      hasUnresolvedComments: true,
+      hasPlaceholderComment: true,
+    });
+    assert.deepEqual(summary, { hasUnresolvedComments: true, hasPlaceholderComment: true });
   });
 });
 

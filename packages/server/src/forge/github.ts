@@ -7,6 +7,7 @@ import type {
 } from "../types.js";
 import { GITHUB_TOKEN, loadConfigurations } from "../config.js";
 import { hashDiffText } from "./diff-hash.js";
+import { isStdinPlaceholderBody } from "./body.js";
 
 const MAX_PAGES = 10;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -127,8 +128,14 @@ export interface GitHubPullRequestNode {
   commits: {
     nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }>;
   };
+  comments: {
+    nodes: Array<{ body: string }>;
+  };
+  reviews: {
+    nodes: Array<{ body: string }>;
+  };
   reviewThreads: {
-    nodes: Array<{ isResolved: boolean }>;
+    nodes: Array<{ isResolved: boolean; comments: { nodes: Array<{ body: string }> } }>;
   };
   latestOpinionatedReviews: {
     nodes: Array<{ state: string; author: { login: string } | null }>;
@@ -147,8 +154,17 @@ const PULL_REQUEST_FIELDS = `
   commits(last: 1) {
     nodes { commit { statusCheckRollup { state } } }
   }
+  comments(last: 100) {
+    nodes { body }
+  }
+  reviews(last: 100) {
+    nodes { body }
+  }
   reviewThreads(first: 100) {
-    nodes { isResolved }
+    nodes {
+      isResolved
+      comments(first: 100) { nodes { body } }
+    }
   }
   latestOpinionatedReviews(first: 100) {
     nodes { state author { login } }
@@ -262,6 +278,11 @@ export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: str
       (review) => review.state === "APPROVED" && review.author !== null && review.author.login !== viewerLogin,
     ),
     hasUnresolvedComments: node.reviewThreads.nodes.some((thread) => !thread.isResolved),
+    hasPlaceholderComment: [
+      ...node.comments.nodes,
+      ...node.reviews.nodes,
+      ...node.reviewThreads.nodes.flatMap((thread) => thread.comments.nodes),
+    ].some((comment) => isStdinPlaceholderBody(comment.body)),
   };
 }
 

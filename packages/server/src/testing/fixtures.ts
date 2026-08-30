@@ -54,7 +54,7 @@ export function makeReviewRequest(overrides: Partial<RepoReviewRequest> = {}): R
     reference: "#12",
     title: "Add widgets",
     url: "https://github.com/acme/widgets/pull/12",
-    body: null,
+    body: "Adds widgets",
     kind: "pull_request",
     state: "open",
     headSha: "abc123",
@@ -64,6 +64,7 @@ export function makeReviewRequest(overrides: Partial<RepoReviewRequest> = {}): R
     mergeStateKnown: true,
     approvedByHuman: false,
     hasUnresolvedComments: false,
+    hasPlaceholderComment: false,
     ...overrides,
   };
 }
