@@ -181,18 +181,61 @@ router.post("/api/containers/many", async (req, res) => {
   }
 });
 
-router.delete("/api/containers", async (_req, res) => {
+async function fetchInstanceStatus(container: ManagedContainer): Promise<InstanceStatus | null> {
+  const cached = instanceStatusCache.get(container.id);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  const response = await fetch(
+    `http://${container.name}:${CONTAINER_METADATA_INTERNAL_PORT}/api/instance-status`,
+    { signal: AbortSignal.timeout(3000) },
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = await response.json() as InstanceStatus;
+  instanceStatusCache.set(container.id, { data: payload, expiresAt: Date.now() + INSTANCE_STATUS_CACHE_TTL_MS });
+  return payload;
+}
+
+async function isFinished(container: ManagedContainer): Promise<boolean> {
+  if (container.status !== "running") return false;
   try {
+    const status = await fetchInstanceStatus(container);
+    return status?.state === "finished";
+  } catch {
+    return false;
+  }
+}
+
+router.delete("/api/containers", async (req, res) => {
+  try {
+    const scope = req.query.scope ?? "all";
+    if (scope !== "all" && scope !== "finished") {
+      res.status(400).json({ error: "scope must be 'all' or 'finished'" });
+      return;
+    }
+
     const containers = await listContainers();
+    const targets =
+      scope === "all"
+        ? containers
+        : (await Promise.all(containers.map(async (c) => ((await isFinished(c)) ? c : null)))).filter(
+            (c): c is ManagedContainer => c !== null,
+          );
+
     const results = await Promise.allSettled(
-      containers.map(async (c) => {
+      targets.map(async (c) => {
         await removeContainer(c.id);
         broadcastRemoval(c.id);
       }),
     );
 
     const errors = results
-      .map((result, index) => ({ result, id: containers[index].id }))
+      .map((result, index) => ({ result, id: targets[index].id }))
       .filter((entry): entry is { result: PromiseRejectedResult; id: string } => entry.result.status === "rejected")
       .map((entry) => ({
         id: entry.id,
@@ -201,7 +244,7 @@ router.delete("/api/containers", async (_req, res) => {
 
     if (errors.length > 0) {
       console.error("Some containers failed to remove:", errors);
-      res.status(207).json({ removed: containers.length - errors.length, errors });
+      res.status(207).json({ removed: targets.length - errors.length, errors });
       return;
     }
 
@@ -334,25 +377,13 @@ router.get("/api/containers/:id/instance-status", async (req, res) => {
       return;
     }
 
-    const cached = instanceStatusCache.get(id);
-    if (cached && cached.expiresAt > Date.now()) {
-      res.json(cached.data);
-      return;
-    }
-
-    const response = await fetch(
-      `http://${container.name}:${CONTAINER_METADATA_INTERNAL_PORT}/api/instance-status`,
-      { signal: AbortSignal.timeout(3000) },
-    );
-
-    if (!response.ok) {
+    const status = await fetchInstanceStatus(container);
+    if (!status) {
       res.status(502).json({ error: "Container metadata server returned an error" });
       return;
     }
 
-    const payload = await response.json() as InstanceStatus;
-    instanceStatusCache.set(id, { data: payload, expiresAt: Date.now() + INSTANCE_STATUS_CACHE_TTL_MS });
-    res.json(payload);
+    res.json(status);
   } catch (err) {
     console.error("Error fetching container instance status:", err);
     res.status(500).json({ error: "Failed to fetch container instance status" });

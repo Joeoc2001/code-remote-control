@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ManagedContainer, ReviewRequestStatus } from "../types";
-import { fetchContainers, fetchContainerCodeStatus, fetchContainerInstanceStatus, subscribeToEvents } from "../api";
+import {
+  fetchContainers,
+  fetchContainerCodeStatus,
+  fetchContainerInstanceStatus,
+  subscribeToEvents,
+  deleteAllContainers,
+  deleteFinishedContainers,
+} from "../api";
 import usePolledContainerData from "../hooks/usePolledContainerData";
 import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
@@ -27,7 +34,7 @@ async function fetchContainerTileMetadata(containerId: string): Promise<Containe
 export default function Home() {
   const [containers, setContainers] = useState<ManagedContainer[]>([]);
   const [showModal, setShowModal] = useState(false);
-  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [deleteScope, setDeleteScope] = useState<"all" | "finished" | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
@@ -135,7 +142,13 @@ export default function Home() {
         actions={
           <>
             <button
-              onClick={() => setShowDeleteAllModal(true)}
+              onClick={() => setDeleteScope("finished")}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-rose-200 rounded-lg text-sm font-medium transition-colors border border-slate-700"
+            >
+              Delete Finished
+            </button>
+            <button
+              onClick={() => setDeleteScope("all")}
               className="px-3.5 py-2 bg-rose-900/70 hover:bg-rose-800 text-rose-100 rounded-lg text-sm font-medium transition-colors border border-rose-800"
             >
               Delete All
@@ -192,12 +205,20 @@ export default function Home() {
           onCreated={handleContainersCreated}
         />
       )}
-      {showDeleteAllModal && (
+      {deleteScope && (
         <DeleteAllModal
-          onClose={() => setShowDeleteAllModal(false)}
+          title={deleteScope === "all" ? "Delete All Containers" : "Delete Finished Containers"}
+          message={
+            deleteScope === "all"
+              ? "This will stop and remove all containers. This action cannot be undone."
+              : "This will stop and remove every container whose Claude instance has finished. This action cannot be undone."
+          }
+          confirmLabel={deleteScope === "all" ? "Delete All" : "Delete Finished"}
+          onConfirm={deleteScope === "all" ? deleteAllContainers : deleteFinishedContainers}
+          onClose={() => setDeleteScope(null)}
           onDeleted={() => {
-            setShowDeleteAllModal(false);
-            setContainers([]);
+            setDeleteScope(null);
+            void loadContainers();
           }}
         />
       )}

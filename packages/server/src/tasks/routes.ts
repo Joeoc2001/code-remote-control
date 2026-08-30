@@ -251,6 +251,42 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
   }
 });
 
+tasksRouter.delete("/api/tasks", async (req, res) => {
+  try {
+    if (req.query.phase !== "merged") {
+      res.status(400).json({ error: "phase=merged is required" });
+      return;
+    }
+
+    const merged = taskStore.list().filter((task) => task.phase === "merged");
+    const errors: Array<{ id: string; error: string }> = [];
+
+    for (const task of merged) {
+      try {
+        if (task.activeContainerId) {
+          await removeContainerIfPresent(task.activeContainerId);
+          broadcastRemoval(task.activeContainerId);
+        }
+        taskStore.remove(task.id);
+        broadcastTaskRemoved(task.id);
+      } catch (err) {
+        errors.push({ id: task.id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    if (errors.length > 0) {
+      console.error("Some merged tasks failed to delete:", errors);
+      res.status(207).json({ removed: merged.length - errors.length, errors });
+      return;
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    console.error("Error deleting merged tasks:", err);
+    res.status(500).json({ error: "Failed to delete merged tasks" });
+  }
+});
+
 tasksRouter.delete("/api/tasks/:id", async (req, res) => {
   try {
     const task = taskStore.get(req.params.id);

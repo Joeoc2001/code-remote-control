@@ -63,6 +63,11 @@ export async function deleteAllContainers(): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete all containers");
 }
 
+export async function deleteFinishedContainers(): Promise<void> {
+  const res = await fetch(`${BASE}/containers?scope=finished`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete finished containers");
+}
+
 export async function fetchConfigs(): Promise<ConfigSummary[]> {
   const res = await fetch(`${BASE}/configs`);
   if (!res.ok) throw new Error("Failed to fetch configs");
@@ -159,6 +164,11 @@ export async function updateTask(id: string, patch: UpdateTaskRequest): Promise<
 export async function deleteTask(id: string): Promise<void> {
   const res = await fetch(`${BASE}/tasks/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete task");
+}
+
+export async function deleteMergedTasks(): Promise<void> {
+  const res = await fetch(`${BASE}/tasks?phase=merged`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete merged tasks");
 }
 
 export async function fetchTaskAttemptLog(id: string, attemptIndex: number): Promise<string> {

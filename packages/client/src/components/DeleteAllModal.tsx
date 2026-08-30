@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
-import { deleteAllContainers } from "../api";
 
 interface DeleteAllModalProps {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => Promise<void>;
   onClose: () => void;
   onDeleted: () => void;
 }
 
-export default function DeleteAllModal({ onClose, onDeleted }: DeleteAllModalProps) {
+export default function DeleteAllModal({ title, message, confirmLabel, onConfirm, onClose, onDeleted }: DeleteAllModalProps) {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,10 +36,10 @@ export default function DeleteAllModal({ onClose, onDeleted }: DeleteAllModalPro
     setDeleting(true);
     setError(null);
     try {
-      await deleteAllContainers();
+      await onConfirm();
       onDeleted();
     } catch (err) {
-      setError("Failed to delete containers: " + String(err));
+      setError("Failed to delete: " + String(err));
       setDeleting(false);
     }
   };
@@ -50,7 +53,7 @@ export default function DeleteAllModal({ onClose, onDeleted }: DeleteAllModalPro
     >
       <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md mx-4">
         <div className="flex items-center justify-between p-5 border-b border-slate-800">
-          <h2 className="text-lg font-semibold text-slate-100">Delete All Containers</h2>
+          <h2 className="text-lg font-semibold text-slate-100">{title}</h2>
           <button
             onClick={onClose}
             disabled={deleting}
@@ -61,9 +64,7 @@ export default function DeleteAllModal({ onClose, onDeleted }: DeleteAllModalPro
         </div>
 
         <div className="p-5">
-          <p className="text-slate-300 text-sm">
-            This will stop and remove all containers. This action cannot be undone.
-          </p>
+          <p className="text-slate-300 text-sm">{message}</p>
           {error && (
             <div className="mt-4 text-rose-300 text-sm bg-rose-900/20 border border-rose-800 rounded-lg p-3">
               {error}
@@ -84,7 +85,7 @@ export default function DeleteAllModal({ onClose, onDeleted }: DeleteAllModalPro
             disabled={deleting}
             className="px-4 py-2 bg-rose-700 hover:bg-rose-600 text-rose-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {deleting ? "Deleting..." : "Delete All"}
+            {deleting ? "Deleting..." : confirmLabel}
           </button>
         </div>
       </div>
