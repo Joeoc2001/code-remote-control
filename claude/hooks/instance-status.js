@@ -1,20 +1,36 @@
-const { renameSync, writeFileSync } = require("node:fs");
+const { readFileSync, renameSync, writeFileSync } = require("node:fs");
 
-const INSTANCE_STATUS_PATH = "/run/crc-instance-status.json";
+const INSTANCE_STATES = ["working", "waiting", "finished"];
 
-function writeInstanceStatus(finished) {
-  const payload = { finished, updatedAt: new Date().toISOString() };
-  const stagingPath = `${INSTANCE_STATUS_PATH}.${process.pid}.tmp`;
-  writeFileSync(stagingPath, `${JSON.stringify(payload)}\n`, { encoding: "utf-8", mode: 0o644 });
-  renameSync(stagingPath, INSTANCE_STATUS_PATH);
+function instanceStatusPath() {
+  return process.env.CRC_INSTANCE_STATUS_PATH || "/run/crc-instance-status.json";
 }
 
-module.exports = { INSTANCE_STATUS_PATH, writeInstanceStatus };
+function currentInstanceState(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")).state;
+  } catch {
+    return null;
+  }
+}
+
+function writeInstanceStatus(state) {
+  if (!INSTANCE_STATES.includes(state)) {
+    throw new Error(`instance-status.js expects one of ${INSTANCE_STATES.join(", ")}, got '${state}'`);
+  }
+
+  const path = instanceStatusPath();
+  if (currentInstanceState(path) === state) return false;
+
+  const payload = { state, updatedAt: new Date().toISOString() };
+  const stagingPath = `${path}.${process.pid}.tmp`;
+  writeFileSync(stagingPath, `${JSON.stringify(payload)}\n`, { encoding: "utf-8", mode: 0o644 });
+  renameSync(stagingPath, path);
+  return true;
+}
+
+module.exports = { INSTANCE_STATES, instanceStatusPath, writeInstanceStatus };
 
 if (require.main === module) {
-  const state = process.argv[2];
-  if (state !== "finished" && state !== "working") {
-    throw new Error(`instance-status.js expects 'finished' or 'working', got '${state}'`);
-  }
-  writeInstanceStatus(state === "finished");
+  writeInstanceStatus(process.argv[2]);
 }

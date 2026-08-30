@@ -108,7 +108,7 @@ describe("start-claude-session.sh", () => {
   test("resumes without a prompt when the previous task already finished", () => {
     const result = startSession({
       transcriptFiles: ["session.jsonl"],
-      instanceStatus: { finished: true, updatedAt: "2026-08-16T22:06:47.000Z" },
+      instanceStatus: { state: "finished", updatedAt: "2026-08-16T22:06:47.000Z" },
       initialPrompt: AWKWARD_PROMPT,
     });
 
@@ -119,7 +119,17 @@ describe("start-claude-session.sh", () => {
   test("prompts the agent to carry on when the previous task had not finished", () => {
     const result = startSession({
       transcriptFiles: ["session.jsonl"],
-      instanceStatus: { finished: false, updatedAt: "2026-08-16T22:06:47.000Z" },
+      instanceStatus: { state: "working", updatedAt: "2026-08-16T22:06:47.000Z" },
+    });
+
+    assert.equal(result.claudeArgv[0], "--continue");
+    assert.equal(result.claudeArgv.length, 2);
+  });
+
+  test("prompts the agent to carry on when the previous session was left waiting on the user", () => {
+    const result = startSession({
+      transcriptFiles: ["session.jsonl"],
+      instanceStatus: { state: "waiting", updatedAt: "2026-08-16T22:06:47.000Z" },
     });
 
     assert.equal(result.claudeArgv[0], "--continue");
@@ -135,7 +145,7 @@ describe("start-claude-session.sh", () => {
   test("still replays the initial prompt on a first start that inherited a finished status", () => {
     const result = startSession({
       transcriptFiles: [],
-      instanceStatus: { finished: true, updatedAt: "2026-08-16T22:06:47.000Z" },
+      instanceStatus: { state: "finished", updatedAt: "2026-08-16T22:06:47.000Z" },
       initialPrompt: AWKWARD_PROMPT,
     });
 
@@ -162,7 +172,7 @@ describe("start-claude-session.sh", () => {
     assert.match(
       startSession({
         transcriptFiles: ["session.jsonl"],
-        instanceStatus: { finished: true, updatedAt: "2026-08-16T22:06:47.000Z" },
+        instanceStatus: { state: "finished", updatedAt: "2026-08-16T22:06:47.000Z" },
       }).stdout,
       /already finished/i,
     );

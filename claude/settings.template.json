@@ -9,6 +9,15 @@
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/task-description.js" }] },
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/instance-status.js working" }] }
     ],
+    "PreToolUse": [
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/instance-status.js waiting" }] }
+    ],
+    "Notification": [
+      { "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/instance-status.js waiting" }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/instance-status.js working" }] }
+    ],
     "Stop": [
       { "hooks": [{ "type": "command", "command": "node /opt/crc/claude-hooks/git-hygiene.js", "timeout": 1230 }] }
     ],

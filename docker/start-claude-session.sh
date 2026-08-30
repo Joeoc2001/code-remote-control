@@ -14,7 +14,7 @@ launch() {
 }
 
 previous_task_finished() {
-  [ -f "$INSTANCE_STATUS_PATH" ] && grep -q '"finished"[[:space:]]*:[[:space:]]*true' "$INSTANCE_STATUS_PATH"
+  [ -f "$INSTANCE_STATUS_PATH" ] && grep -q '"state"[[:space:]]*:[[:space:]]*"finished"' "$INSTANCE_STATUS_PATH"
 }
 
 if compgen -G "$TRANSCRIPT_DIR/*.jsonl" >/dev/null; then

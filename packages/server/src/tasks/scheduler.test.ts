@@ -331,7 +331,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: false, updatedAt: RECENT_START } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: RECENT_START } },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -342,12 +342,27 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(task.phase, "agent_running");
   });
 
+  it("leaves an agent that is waiting on the user alone", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "waiting", updatedAt: RECENT_START } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.removed.length, 0);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.phase, "agent_running");
+  });
+
   it("tears down a finished agent, captures the PR link and log tail, and settles for a tick", async () => {
     const task = makeActiveTask({ reviewRequest: null });
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
       codeStatus: {
         [CONTAINER_NAME]: makeCodeStatus({
           id: "12",
@@ -395,7 +410,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -414,7 +429,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: false, updatedAt: startedAt } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: startedAt } },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -483,7 +498,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -695,7 +710,7 @@ describe("scheduler: re-review after a history rewrite", () => {
       tasks: [task],
       snapshot: [makeReviewRequest({ headSha: "abc123" })],
       diffHash: "diff-hash-1",
-      instanceStatus: { [SPAWNED_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      instanceStatus: { [SPAWNED_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
       codeStatus: { [SPAWNED_NAME]: makeCodeStatus(null) },
     };
     const harness = makeHarness(options);
@@ -785,7 +800,7 @@ describe("scheduler: rails", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
     });
 
     for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
