@@ -69,6 +69,15 @@ function spawn(
   return { kind: "spawn", step, headShaBefore, diffHashBefore };
 }
 
+function rebaseDecision(task: Task, reviewRequest: RepoReviewRequest): TaskDecision | null {
+  if (!reviewRequest.mergeStateKnown) return null;
+  if (reviewRequest.hasConflicts) return spawn(task, "rebase");
+  if (reviewRequest.needsRebase) {
+    return task.repoSource === "gitlab" ? { kind: "forge_rebase" } : spawn(task, "rebase");
+  }
+  return null;
+}
+
 function unusableBodyReason(reviewRequest: RepoReviewRequest): string | null {
   const description = reviewRequest.body?.trim() ?? "";
   if (isStdinPlaceholderBody(description)) {
@@ -130,7 +139,7 @@ export async function decide(
   }
 
   if (reviewRequest.ciState === "pending" || reviewRequest.ciState === "running") {
-    return { kind: "noop", phase: "waiting_ci" };
+    return rebaseDecision(task, reviewRequest) ?? { kind: "noop", phase: "waiting_ci" };
   }
 
   if (reviewRequest.ciState === "failed") {
@@ -141,12 +150,9 @@ export async function decide(
     return { kind: "noop", phase: null };
   }
 
-  if (reviewRequest.needsRebase && !reviewRequest.hasConflicts) {
-    return task.repoSource === "gitlab" ? { kind: "forge_rebase" } : spawn(task, "rebase");
-  }
-
-  if (reviewRequest.hasConflicts) {
-    return spawn(task, "rebase");
+  const rebase = rebaseDecision(task, reviewRequest);
+  if (rebase) {
+    return rebase;
   }
 
   if (reviewRequest.headSha !== task.lastReviewedSha) {
