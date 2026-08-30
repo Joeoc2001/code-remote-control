@@ -236,7 +236,7 @@ export interface RepoReviewRequest {
   hasPlaceholderComment: boolean;
 }
 
-export const TASK_STEPS = ["implement", "fix_ci", "rebase", "review", "address_comments"] as const;
+export const TASK_STEPS = ["create_issue", "implement", "fix_ci", "rebase", "review", "address_comments"] as const;
 
 export type TaskStep = (typeof TASK_STEPS)[number];
 
@@ -276,7 +276,9 @@ export interface Task {
   id: string;
   repoFullName: string;
   repoSource: RepoSource;
-  workItem: RepoWorkItem;
+  workItem: RepoWorkItem | null;
+  sourceText: string | null;
+  createdIssueUrl: string | null;
   configByStep: Record<TaskStep, string>;
   phase: TaskPhase;
   reviewRequest: TaskReviewRequestRef | null;
@@ -296,6 +298,14 @@ export interface CreateTasksRequest {
   repoFullName: string;
   repoSource: RepoSource;
   workItemIds: string[];
+  configName: string;
+  configByStep?: Partial<Record<TaskStep, string>>;
+}
+
+export interface CreateTaskFromTextRequest {
+  repoFullName: string;
+  repoSource: RepoSource;
+  text: string;
   configName: string;
   configByStep?: Partial<Record<TaskStep, string>>;
 }

@@ -16,6 +16,7 @@ export type {
   CreateContainerRequestV2,
   CreateContainersRequest,
   CreateContainersResponse,
+  CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,
   GitHubRepo,

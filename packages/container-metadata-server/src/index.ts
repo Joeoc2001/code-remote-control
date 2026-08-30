@@ -8,6 +8,7 @@ import { readInstanceStatus } from "./instance-status.js";
 const execFileAsync = promisify(execFile);
 const METADATA_PORT = parseInt(process.env.CRC_METADATA_PORT || "8081", 10);
 const TASK_DESCRIPTION_PATH = "/run/crc-current-task-description";
+const CREATED_ISSUE_URL_PATH = "/run/crc-created-issue-url";
 
 function respondJson(res: import("node:http").ServerResponse, statusCode: number, body: unknown): void {
   res.statusCode = statusCode;
@@ -29,11 +30,11 @@ async function runJsonCommand(command: string, args: string[]): Promise<unknown>
   return JSON.parse(output);
 }
 
-async function readCurrentTaskDescription(): Promise<string | null> {
+async function readOptionalTrimmedFile(path: string): Promise<string | null> {
   try {
-    const value = await readFile(TASK_DESCRIPTION_PATH, "utf-8");
-    const taskDescription = value.trim();
-    return taskDescription.length > 0 ? taskDescription : null;
+    const value = await readFile(path, "utf-8");
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
@@ -269,7 +270,8 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
   const warnings: string[] = [];
   const branch = await runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
   const commitSha = await runCommand("git", ["rev-parse", "--short", "HEAD"]);
-  const currentTaskDescription = await readCurrentTaskDescription();
+  const currentTaskDescription = await readOptionalTrimmedFile(TASK_DESCRIPTION_PATH);
+  const createdIssueUrl = await readOptionalTrimmedFile(CREATED_ISSUE_URL_PATH);
 
   let orgName: string | null = null;
   let repoName: string | null = null;
@@ -303,6 +305,7 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
     repoName,
     provider,
     currentTaskDescription,
+    createdIssueUrl,
     reviewRequest,
     pipeline,
     warnings,

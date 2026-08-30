@@ -5,6 +5,7 @@ import { deleteTask, updateTask } from "../api";
 import TaskPhaseBadge from "./TaskPhaseBadge";
 import ReviewRequestStatusIcon from "./ReviewRequestStatusIcon";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
+import { taskTitle } from "./taskTitle";
 
 interface TaskCardProps {
   task: Task;
@@ -41,7 +42,7 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
 
   const handleDelete = () =>
     runAction(async () => {
-      if (!confirm(`Delete task "${task.workItem.reference} ${task.workItem.title}"?`)) return;
+      if (!confirm(`Delete task "${taskTitle(task)}"?`)) return;
       await deleteTask(task.id);
       onRemoved(task.id);
     });
@@ -67,8 +68,8 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
       className="relative cursor-pointer rounded-2xl border border-slate-800/80 bg-slate-900/70 p-5 shadow-[0_18px_45px_-28px_rgba(0,0,0,0.9)] backdrop-blur-sm flex flex-col gap-3 transition-colors hover:border-slate-600/80"
     >
       <div className="min-w-0">
-        <h3 className="text-slate-100 font-semibold truncate" title={`${task.workItem.reference} ${task.workItem.title}`}>
-          {task.workItem.reference} {task.workItem.title}
+        <h3 className="text-slate-100 font-semibold truncate" title={taskTitle(task)}>
+          {taskTitle(task)}
         </h3>
         <p className="text-slate-400 text-sm mt-1 truncate" title={task.repoFullName}>
           {task.repoFullName}

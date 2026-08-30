@@ -4,7 +4,7 @@ import { loadConfigurations } from "../config.js";
 import { broadcastRemoval, removeContainerIfPresent } from "../docker.js";
 import { getForge } from "../forge/index.js";
 import { TASK_STEPS } from "../types.js";
-import type { CreateTasksRequest, Task, TaskStep, UpdateTaskRequest } from "../types.js";
+import type { CreateTaskFromTextRequest, CreateTasksRequest, RepoWorkItem, Task, TaskStep, UpdateTaskRequest } from "../types.js";
 import { getRepoNameError, isValidRepoSource } from "../validation.js";
 import { broadcastTaskRemoved, broadcastTaskUpdated, taskStore } from "./runtime.js";
 
@@ -41,6 +41,36 @@ function getConfigByStepError(
     value[step as TaskStep] = configName;
   }
   return { value };
+}
+
+function makeNewTask(
+  repoFullName: string,
+  repoSource: Task["repoSource"],
+  configByStep: Record<TaskStep, string>,
+  origin: { workItem: RepoWorkItem } | { sourceText: string },
+): Task {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    repoFullName,
+    repoSource,
+    workItem: "workItem" in origin ? origin.workItem : null,
+    sourceText: "sourceText" in origin ? origin.sourceText : null,
+    createdIssueUrl: null,
+    configByStep,
+    phase: "spawning",
+    reviewRequest: null,
+    lastReviewedSha: null,
+    lastReviewedDiffHash: null,
+    activeContainerId: null,
+    activeStep: null,
+    attemptsByStep: Object.fromEntries(TASK_STEPS.map((step) => [step, 0])) as Record<TaskStep, number>,
+    attempts: [],
+    consecutiveErrors: 0,
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 tasksRouter.get("/api/tasks", (_req, res) => {
@@ -145,33 +175,14 @@ tasksRouter.post("/api/tasks", async (req, res) => {
             isLive(task) &&
             task.repoSource === repoSource &&
             task.repoFullName === repoFullName &&
-            task.workItem.id === workItemId,
+            task.workItem?.id === workItemId,
         );
       if (existing) {
         errors.push({ workItemId, error: `Work item already has a live task (${existing.id})` });
         continue;
       }
 
-      const now = new Date().toISOString();
-      const task: Task = {
-        id: crypto.randomUUID(),
-        repoFullName,
-        repoSource,
-        workItem,
-        configByStep: resolvedConfigByStep,
-        phase: "spawning",
-        reviewRequest: null,
-        lastReviewedSha: null,
-        lastReviewedDiffHash: null,
-        activeContainerId: null,
-        activeStep: null,
-        attemptsByStep: Object.fromEntries(TASK_STEPS.map((step) => [step, 0])) as Record<TaskStep, number>,
-        attempts: [],
-        consecutiveErrors: 0,
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-      };
+      const task = makeNewTask(repoFullName, repoSource, resolvedConfigByStep, { workItem });
       saveAndBroadcast(task);
       tasks.push(task);
     }
@@ -181,6 +192,58 @@ tasksRouter.post("/api/tasks", async (req, res) => {
   } catch (err) {
     console.error("Error creating tasks:", err);
     res.status(500).json({ error: "Failed to create tasks" });
+  }
+});
+
+tasksRouter.post("/api/tasks/from-text", async (req, res) => {
+  try {
+    const { repoFullName, repoSource, text, configName, configByStep } = req.body as CreateTaskFromTextRequest;
+
+    if (!repoFullName || !configName || typeof text !== "string") {
+      res.status(400).json({ error: "repoFullName, configName, and text are required" });
+      return;
+    }
+
+    if (!isValidRepoSource(repoSource)) {
+      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
+      return;
+    }
+
+    const repoNameError = getRepoNameError(repoFullName, repoSource);
+    if (repoNameError) {
+      res.status(400).json({ error: repoNameError });
+      return;
+    }
+
+    const sourceText = text.trim();
+    if (sourceText === "") {
+      res.status(400).json({ error: "text must not be empty" });
+      return;
+    }
+
+    const configs = await loadConfigurations();
+    const configNames = new Set(configs.configurations.map((c) => c.name));
+    if (!configNames.has(configName)) {
+      res.status(400).json({ error: `Configuration '${configName}' not found` });
+      return;
+    }
+
+    const configByStepResult = getConfigByStepError(configByStep, configNames);
+    if ("error" in configByStepResult) {
+      res.status(400).json({ error: configByStepResult.error });
+      return;
+    }
+
+    const resolvedConfigByStep = Object.fromEntries(
+      TASK_STEPS.map((step) => [step, configByStepResult.value[step] ?? configName]),
+    ) as Record<TaskStep, string>;
+
+    const task = makeNewTask(repoFullName, repoSource, resolvedConfigByStep, { sourceText });
+    saveAndBroadcast(task);
+    res.status(201).json(task);
+  } catch (err) {
+    console.error("Error creating task from text:", err);
+    res.status(500).json({ error: "Failed to create task from text" });
   }
 });
 

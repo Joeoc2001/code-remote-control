@@ -105,6 +105,22 @@ export async function decide(
     throw new Error(`decide() called for task ${task.id} while an agent container is active`);
   }
 
+  if (!task.workItem) {
+    if (reviewRequest) {
+      throw new Error(`decide() received forge state for task ${task.id}, which has no work item yet`);
+    }
+    if (task.attemptsByStep.create_issue === 0) {
+      return spawn(task, "create_issue");
+    }
+    const lastCreateIssueAttempt = [...task.attempts].reverse().find((attempt) => attempt.step === "create_issue");
+    return {
+      kind: "fail",
+      reason: lastCreateIssueAttempt?.error
+        ? `Issue-creation agent did not open an issue (attempt failed: ${lastCreateIssueAttempt.error})`
+        : "Issue-creation agent finished without reporting a created issue URL",
+    };
+  }
+
   if (!task.reviewRequest) {
     if (reviewRequest) {
       throw new Error(`decide() received forge state for task ${task.id}, which has no linked PR/MR`);

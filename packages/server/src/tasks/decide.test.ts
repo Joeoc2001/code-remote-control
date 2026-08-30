@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { Task, TaskAttempt } from "../types.js";
 import { decide, PER_STEP_SPAWN_CAP, REVIEW_CYCLE_CAP, TOTAL_SPAWN_CAP } from "./decide.js";
-import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask } from "../testing/fixtures.js";
+import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask } from "../testing/fixtures.js";
 
 const CHANGED_DIFF = "sha256-of-a-different-diff";
 const REVIEWED_DIFF = "sha256-of-the-reviewed-diff";
@@ -61,6 +61,60 @@ describe("decide: terminal and guard states", () => {
   });
 });
 
+describe("decide: text tasks (no work item yet)", () => {
+  it("spawns a create_issue agent for a fresh text task", async () => {
+    assert.deepEqual(await decide(makeTextTask(), null, noDiffFetch), {
+      kind: "spawn",
+      step: "create_issue",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
+  });
+
+  it("fails when create_issue already ran without reporting an issue URL", async () => {
+    const task = makeTextTask({
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const decision = await decide(task, null, noDiffFetch);
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /finished without reporting a created issue URL/);
+  });
+
+  it("attributes the failure to the attempt error when create_issue did not finish cleanly", async () => {
+    const task = makeTextTask({
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [
+        makeAttempt({
+          step: "create_issue",
+          finishedAt: "2026-08-20T12:00:00.000Z",
+          error: "Attempt timed out after 120 minutes",
+        }),
+      ],
+    });
+    const decision = await decide(task, null, noDiffFetch);
+    assert.equal(decision.kind, "fail");
+    assert.match((decision as { reason: string }).reason, /timed out after 120 minutes/);
+  });
+
+  it("throws if given forge state before the issue exists", async () => {
+    await assert.rejects(() => decide(makeTextTask(), makeReviewRequest(), noDiffFetch));
+  });
+
+  it("spawns an implement agent once the created issue has been adopted", async () => {
+    const task = makeTextTask({
+      workItem: makeTask().workItem,
+      createdIssueUrl: "https://github.com/acme/widgets/issues/7",
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    });
+    assert.deepEqual(await decide(task, null, noDiffFetch), {
+      kind: "spawn",
+      step: "implement",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
+  });
+});
+
 describe("decide: rules 0-1 (no PR/MR yet)", () => {
   it("rule 0: spawns an implement agent for a fresh task", async () => {
     assert.deepEqual(await decide(makeTask(), null, noDiffFetch), {
@@ -73,7 +127,7 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
 
   it("rule 1: fails when implement already ran without opening a PR/MR", async () => {
     const task = makeTask({
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
     });
     const decision = await decide(task, null, noDiffFetch);
     assert.equal(decision.kind, "fail");
@@ -82,7 +136,7 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
 
   it("rule 1: attributes the failure to the attempt error when implement did not finish cleanly", async () => {
     const task = makeTask({
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
       attempts: [
         {
           step: "implement",
@@ -457,6 +511,7 @@ describe("decide: spawn caps", () => {
   it("fails instead of spawning fix_ci a fourth time", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
+        create_issue: 0,
         implement: 1,
         fix_ci: PER_STEP_SPAWN_CAP,
         rebase: 0,
@@ -471,6 +526,7 @@ describe("decide: spawn caps", () => {
   it("fails instead of spawning rebase past its cap", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
+        create_issue: 0,
         implement: 1,
         fix_ci: 0,
         rebase: PER_STEP_SPAWN_CAP,
@@ -485,6 +541,7 @@ describe("decide: spawn caps", () => {
   it("review and address_comments are not per-step capped", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
+        create_issue: 0,
         implement: 1,
         fix_ci: 0,
         rebase: 0,
@@ -504,6 +561,7 @@ describe("decide: spawn caps", () => {
   it("fails any spawn once the total cap is reached", async () => {
     const task = makeLinkedTask({
       attemptsByStep: {
+        create_issue: 0,
         implement: 1,
         fix_ci: 0,
         rebase: 0,
@@ -520,6 +578,7 @@ describe("decide: spawn caps", () => {
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: REVIEWED_DIFF,
       attemptsByStep: {
+        create_issue: 0,
         implement: 1,
         fix_ci: 0,
         rebase: 0,
@@ -549,6 +608,7 @@ function cyclingTask(cycles: number, overrides: Partial<Task> = {}): Task {
   return makeLinkedTask({
     attempts,
     attemptsByStep: {
+      create_issue: 0,
       implement: 1,
       fix_ci: 0,
       rebase: 0,
@@ -628,7 +688,7 @@ describe("decide: review/address_comments cycle cap", () => {
 
   it("resuming a failed task clears the cycle, since only attempts since the resume count", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
-    task.attemptsByStep = { implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 };
+    task.attemptsByStep = { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 };
     assert.deepEqual(
       await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
       {
@@ -675,7 +735,7 @@ describe("decide: review/address_comments cycle cap", () => {
         makeAttempt({ step: "review" }),
         makeAttempt({ step: "review" }),
       ],
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 4, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 4, address_comments: 0 },
     });
     assert.deepEqual(
       await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),

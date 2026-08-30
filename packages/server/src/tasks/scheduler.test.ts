@@ -4,7 +4,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
-import type { ManagedContainer, RepoReviewRequest, ResolvedConfigFile, Task, TaskContainer, TaskSpawn } from "../types.js";
+import type {
+  ManagedContainer,
+  RepoReviewRequest,
+  RepoWorkItem,
+  ResolvedConfigFile,
+  Task,
+  TaskContainer,
+  TaskSpawn,
+} from "../types.js";
 import type { Forge } from "../forge/index.js";
 import { TaskStore } from "./store.js";
 import { REVIEW_CYCLE_CAP } from "./decide.js";
@@ -14,7 +22,7 @@ import {
   runTaskSchedulerTick,
   type SchedulerDeps,
 } from "./scheduler.js";
-import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask } from "../testing/fixtures.js";
+import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask } from "../testing/fixtures.js";
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
 const RECENT_START = "2026-08-20T11:30:00.000Z";
@@ -42,6 +50,7 @@ function makeContainer(id: string, name: string, status = "running"): ManagedCon
 
 function makeCodeStatus(
   reviewRequest: { id: string; url: string; sourceBranch: string } | null,
+  createdIssueUrl: string | null = null,
 ): ContainerCodeStatus {
   return {
     branch: "feature",
@@ -50,6 +59,7 @@ function makeCodeStatus(
     repoName: "widgets",
     provider: "github",
     currentTaskDescription: null,
+    createdIssueUrl,
     reviewRequest: reviewRequest
       ? {
           id: reviewRequest.id,
@@ -72,6 +82,7 @@ interface HarnessOptions {
   containers?: ManagedContainer[];
   taskContainers?: TaskContainer[];
   snapshot?: RepoReviewRequest[];
+  workItems?: RepoWorkItem[];
   listError?: Error;
   getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
@@ -97,7 +108,7 @@ function makeHarness(options: HarnessOptions) {
   let nextContainer = 0;
 
   const forge: Forge = {
-    listWorkItems: async () => [],
+    listWorkItems: async () => options.workItems ?? [],
     listReviewRequests: async () => {
       if (options.listError) throw options.listError;
       return options.snapshot ?? [];
@@ -164,7 +175,7 @@ function makeActiveTask(overrides: Partial<Task> = {}): Task {
     phase: "agent_running",
     activeContainerId: CONTAINER_ID,
     activeStep: "fix_ci",
-    attemptsByStep: { implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
     attempts: [
       makeAttempt({
         step: "implement",
@@ -296,6 +307,7 @@ describe("scheduler: spawning", () => {
       lastReviewedSha: "abc123",
       attempts,
       attemptsByStep: {
+        create_issue: 0,
         implement: 1,
         fix_ci: 0,
         rebase: 0,
@@ -319,6 +331,7 @@ describe("scheduler: spawning", () => {
   it("uses the step's configured configuration and fails loudly on an unknown one", async () => {
     const task = makeTask({
       configByStep: {
+        create_issue: "default",
         implement: "missing-config",
         fix_ci: "default",
         rebase: "default",
@@ -508,7 +521,7 @@ describe("scheduler: watching a running agent", () => {
           diffHashBefore: "diff-hash-1",
         }),
       ],
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -528,7 +541,7 @@ describe("scheduler: watching a running agent", () => {
     const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
     const task = makeActiveTask({
       attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
-      attemptsByStep: { implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -597,7 +610,7 @@ describe("scheduler: watching a running agent", () => {
       reviewRequest: null,
       activeStep: "implement",
       attempts: [makeAttempt({ step: "implement", containerId: CONTAINER_ID, startedAt: RECENT_START })],
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -615,6 +628,103 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(task.phase, "failed");
     assert.match(task.error ?? "", /without opening a PR\/MR/);
     assert.equal(harness.created.length, 0);
+  });
+});
+
+describe("scheduler: text tasks", () => {
+  const ISSUE_URL = "https://github.com/acme/widgets/issues/42";
+  const createdIssue: RepoWorkItem = {
+    id: "42",
+    reference: "#42",
+    title: "Add a widget dashboard",
+    url: ISSUE_URL,
+    body: "Findings and plan",
+    kind: "issue",
+  };
+
+  function makeActiveCreateIssueTask(): Task {
+    return makeTextTask({
+      phase: "agent_running",
+      activeContainerId: CONTAINER_ID,
+      activeStep: "create_issue",
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [makeAttempt({ step: "create_issue", containerId: CONTAINER_ID, startedAt: RECENT_START })],
+    });
+  }
+
+  it("spawns a create_issue agent whose prompt carries the pasted text", async () => {
+    const task = makeTextTask();
+    const harness = makeHarness({ tasks: [task] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.match(harness.created[0].prompt, /Explore the codebase and open an issue/);
+    assert.match(harness.created[0].prompt, /Add a widget dashboard with usage charts/);
+    assert.match(harness.created[0].prompt, /\/run\/crc-created-issue-url/);
+    assert.match(harness.created[0].prompt, /gh issue create --body-file body\.md/);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.activeStep, "create_issue");
+    assert.equal(task.attemptsByStep.create_issue, 1);
+  });
+
+  it("captures the reported issue URL, adopts the work item, and moves on to implement", async () => {
+    const task = makeActiveCreateIssueTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null, ISSUE_URL) },
+      workItems: [createdIssue],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.createdIssueUrl, ISSUE_URL);
+    assert.equal(task.attempts[0].error, null);
+    assert.equal(harness.created.length, 0);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(task.workItem, createdIssue);
+    assert.equal(task.activeStep, "implement");
+    assert.match(harness.created[0].prompt, /#42/);
+    assert.match(harness.created[0].prompt, /open a pull\/merge request/);
+  });
+
+  it("fails a text task whose create_issue agent finished without reporting a URL", async () => {
+    const task = makeActiveCreateIssueTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /finished without reporting a created issue URL/);
+  });
+
+  it("fails when the reported issue is not among the repository's open work items", async () => {
+    const task = makeTextTask({
+      createdIssueUrl: ISSUE_URL,
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [
+        makeAttempt({ step: "create_issue", startedAt: RECENT_START, finishedAt: NOW.toISOString() }),
+      ],
+    });
+    const harness = makeHarness({ tasks: [task], workItems: [] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /not among the repository's open work items/);
   });
 });
 
@@ -711,7 +821,7 @@ describe("scheduler: re-review after a history rewrite", () => {
       repoSource: "gitlab",
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: "diff-hash-1",
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
     });
     const options: HarnessOptions = {
       tasks: [task],
@@ -744,7 +854,7 @@ describe("scheduler: re-review after a history rewrite", () => {
     const task = makeLinkedTask({
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: "diff-hash-1",
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -765,7 +875,7 @@ describe("scheduler: re-review after a history rewrite", () => {
     const task = makeLinkedTask({
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: "diff-hash-1",
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -785,7 +895,7 @@ describe("scheduler: re-review after a history rewrite", () => {
     const task = makeLinkedTask({
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: null,
-      attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
     });
     const harness = makeHarness({
       tasks: [task],

@@ -1,6 +1,7 @@
 import type {
   ManagedContainer,
   ConfigSummary,
+  CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,
   GitHubRepo,
@@ -159,6 +160,16 @@ export async function createTasks(request: CreateTasksRequest): Promise<CreateTa
     body: JSON.stringify(request),
   });
   if (!res.ok && res.status !== 207 && res.status !== 409) throw new Error("Failed to create tasks");
+  return res.json();
+}
+
+export async function createTaskFromText(request: CreateTaskFromTextRequest): Promise<Task> {
+  const res = await fetch(`${BASE}/tasks/from-text`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) throw new Error("Failed to create task from text");
   return res.json();
 }
 

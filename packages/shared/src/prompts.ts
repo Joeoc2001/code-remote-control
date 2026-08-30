@@ -22,6 +22,15 @@ export function buildIssuePrompt(item: RepoWorkItem): string {
   return `Address issue ${item.reference} at ${item.url}. ${ISSUE_PROMPT_SUFFIX}`;
 }
 
+export const CREATED_ISSUE_URL_PATH = "/run/crc-created-issue-url";
+
+export function buildCreateIssuePrompt(text: string, source: RepoSource): string {
+  const noun = source === "gitlab" ? "issue or work item" : "issue";
+  const bodyCommand =
+    source === "gitlab" ? '`glab issue create --description "$(cat body.md)"`' : "`gh issue create --body-file body.md`";
+  return `Explore the codebase and open an ${noun} with your findings and a plan for the request below. Do not implement the request — the deliverable is the open ${noun}, containing what you learned from the codebase and a concrete implementation plan. Once it is open, write its URL (and nothing else) to ${CREATED_ISSUE_URL_PATH}; the task is incomplete until that file holds the URL. Write the ${noun} body to a temporary file and pass it with ${bodyCommand} — never pass \`@-\`, \`@\` or \`-\` as the body value, never leave the body empty, and re-read what you posted to confirm the body arrived intact.\n\nRequest:\n${text}`;
+}
+
 export function buildTaskImplementPrompt(item: RepoWorkItem, source: RepoSource): string {
   return `Address issue ${item.reference} at ${item.url}. Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. ${ISSUE_PROMPT_SUFFIX} ${forgeBodyGuidance(source)}`;
 }

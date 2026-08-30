@@ -33,6 +33,7 @@ export interface ContainerCodeStatus {
   repoName: string | null;
   provider: ForgeProvider;
   currentTaskDescription: string | null;
+  createdIssueUrl: string | null;
   reviewRequest: ReviewRequestStatus | null;
   pipeline: PipelineStatus | null;
   warnings: string[];
