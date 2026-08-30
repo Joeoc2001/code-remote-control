@@ -17,6 +17,7 @@ function makeNode(overrides: Partial<GitHubPullRequestNode> = {}): GitHubPullReq
     headRefOid: "abc123",
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
+    viewerCanUpdateBranch: false,
     commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
     comments: { nodes: [] },
     reviews: { nodes: [] },
@@ -94,6 +95,23 @@ describe("mapPullRequestNode", () => {
     const item = mapPullRequestNode(makeNode({ mergeStateStatus: "BEHIND" }), "bot-login");
     assert.equal(item.needsRebase, true);
     assert.equal(item.hasConflicts, false);
+  });
+
+  it("flags a behind PR as needing rebase even when protection reports BLOCKED instead of BEHIND", () => {
+    const item = mapPullRequestNode(
+      makeNode({ mergeStateStatus: "BLOCKED", viewerCanUpdateBranch: true }),
+      "bot-login",
+    );
+    assert.equal(item.needsRebase, true);
+    assert.equal(item.hasConflicts, false);
+  });
+
+  it("flags a behind PR as needing rebase even when it reports CLEAN without strict protection", () => {
+    const item = mapPullRequestNode(
+      makeNode({ mergeStateStatus: "CLEAN", viewerCanUpdateBranch: true }),
+      "bot-login",
+    );
+    assert.equal(item.needsRebase, true);
   });
 
   it("treats UNKNOWN mergeability as unsettled, never as clean", () => {

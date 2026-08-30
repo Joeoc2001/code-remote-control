@@ -197,6 +197,53 @@ describe("decide: rules 4-5 (CI)", () => {
     });
   });
 
+  it("rule 4: rebases eagerly instead of waiting on CI when behind without conflicts", async () => {
+    assert.deepEqual(
+      await decide(makeLinkedTask(), makeReviewRequest({ ciState: "pending", needsRebase: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "rebase",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
+  });
+
+  it("rule 4: rebases eagerly via the forge API on GitLab while CI is running", async () => {
+    const task = makeLinkedTask({ repoSource: "gitlab" });
+    assert.deepEqual(
+      await decide(
+        task,
+        makeReviewRequest({ ciState: "running", needsRebase: true, kind: "merge_request" }),
+        noDiffFetch,
+      ),
+      { kind: "forge_rebase" },
+    );
+  });
+
+  it("rule 4: rebases eagerly instead of waiting on CI when conflicted", async () => {
+    assert.deepEqual(
+      await decide(makeLinkedTask(), makeReviewRequest({ ciState: "running", hasConflicts: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "rebase",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
+  });
+
+  it("rule 4: keeps waiting on CI while mergeability is still unknown", async () => {
+    assert.deepEqual(
+      await decide(
+        makeLinkedTask(),
+        makeReviewRequest({ ciState: "pending", needsRebase: true, mergeStateKnown: false }),
+        noDiffFetch,
+      ),
+      { kind: "noop", phase: "waiting_ci" },
+    );
+  });
+
   it("rule 5: spawns a fix_ci agent when CI failed", async () => {
     assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ ciState: "failed" }), noDiffFetch), {
       kind: "spawn",
@@ -204,6 +251,18 @@ describe("decide: rules 4-5 (CI)", () => {
       headShaBefore: null,
       diffHashBefore: null,
     });
+  });
+
+  it("rule 5: failed CI still routes to fix_ci, not an eager rebase", async () => {
+    assert.deepEqual(
+      await decide(makeLinkedTask(), makeReviewRequest({ ciState: "failed", needsRebase: true }), noDiffFetch),
+      {
+        kind: "spawn",
+        step: "fix_ci",
+        headShaBefore: null,
+        diffHashBefore: null,
+      },
+    );
   });
 
   it("rule 5 outranks unknown merge state", async () => {

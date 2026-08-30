@@ -162,7 +162,9 @@ seconds and spawns exactly the agent the current state calls for:
 
 1. No PR/MR yet → an **implement** agent (its deliverable is an open PR/MR; if
    it finishes without opening one, the task fails rather than retrying).
-2. CI failing → a **fix CI** agent; CI in flight → wait.
+2. CI failing → a **fix CI** agent; CI in flight → wait, unless the PR/MR is
+   already known to need rebasing, in which case the rebase happens eagerly
+   instead of waiting for a CI result the rebase would invalidate anyway.
 3. Behind the target branch without conflicts → a fast-forward rebase via the
    forge API on GitLab, or a **rebase** agent on GitHub (where the API
    equivalent would create a merge commit).

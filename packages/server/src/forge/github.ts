@@ -125,6 +125,7 @@ export interface GitHubPullRequestNode {
   headRefOid: string;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   mergeStateStatus: string;
+  viewerCanUpdateBranch: boolean;
   commits: {
     nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }>;
   };
@@ -151,6 +152,7 @@ const PULL_REQUEST_FIELDS = `
   headRefOid
   mergeable
   mergeStateStatus
+  viewerCanUpdateBranch
   commits(last: 1) {
     nodes { commit { statusCheckRollup { state } } }
   }
@@ -272,7 +274,7 @@ export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: str
     headSha: node.headRefOid,
     ciState: mapGitHubCiState(rollupState),
     hasConflicts: node.mergeable === "CONFLICTING",
-    needsRebase: node.mergeStateStatus === "BEHIND",
+    needsRebase: node.mergeStateStatus === "BEHIND" || node.viewerCanUpdateBranch,
     mergeStateKnown: node.mergeable !== "UNKNOWN" && node.mergeStateStatus !== "UNKNOWN",
     approvedByHuman: node.latestOpinionatedReviews.nodes.some(
       (review) => review.state === "APPROVED" && review.author !== null && review.author.login !== viewerLogin,
