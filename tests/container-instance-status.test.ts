@@ -34,7 +34,7 @@ describe("container metadata server: instance status", () => {
     assert.deepEqual(await readInstanceStatus(), { state: "working", updatedAt: null });
   });
 
-  for (const state of ["working", "waiting", "finished"] as const) {
+  for (const state of ["working", "waiting", "awaiting-background", "finished"] as const) {
     test(`round-trips the '${state}' state written by the hook`, async () => {
       writeInstanceStatus(state);
 

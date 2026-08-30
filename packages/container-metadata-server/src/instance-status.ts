@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { InstanceState, InstanceStatus } from "../../container-metadata-types/src/index.js";
 
-const INSTANCE_STATES: readonly InstanceState[] = ["working", "waiting", "finished"];
+const INSTANCE_STATES: readonly InstanceState[] = ["working", "waiting", "awaiting-background", "finished"];
 
 export function instanceStatusPath(): string {
   return process.env.CRC_INSTANCE_STATUS_PATH || "/run/crc-instance-status.json";

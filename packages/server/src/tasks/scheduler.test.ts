@@ -357,6 +357,97 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(task.phase, "agent_running");
   });
 
+  it("leaves an agent waiting on its background agents alone", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "awaiting-background", updatedAt: NOW.toISOString() } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.removed.length, 0);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[1].finishedAt, null);
+  });
+
+  it("waits for a second consecutive finished tick before tearing the container down", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.removed.length, 0);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.deepEqual(task.attempts[1].finishedObservation, {
+      headSha: "abc123",
+      observedAt: NOW.toISOString(),
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.activeContainerId, null);
+  });
+
+  it("restarts the confirmation when the agent goes back to work between ticks", async () => {
+    const task = makeActiveTask();
+    const options: HarnessOptions = {
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.ok(task.attempts[1].finishedObservation);
+
+    options.instanceStatus = { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } };
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.attempts[1].finishedObservation, null);
+    assert.equal(harness.removed.length, 0);
+
+    options.instanceStatus = { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } };
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(harness.removed.length, 0);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+  });
+
+  it("restarts the confirmation when the head moves between finished ticks", async () => {
+    const task = makeActiveTask();
+    const options: HarnessOptions = {
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.attempts[1].finishedObservation?.headSha, "abc123");
+
+    options.codeStatus = { [CONTAINER_NAME]: { ...makeCodeStatus(null), commitSha: "pushed456" } };
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.removed.length, 0);
+    assert.equal(task.attempts[1].finishedObservation?.headSha, "pushed456");
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+  });
+
   it("tears down a finished agent, captures the PR link and log tail, and settles for a tick", async () => {
     const task = makeActiveTask({ reviewRequest: null });
     const harness = makeHarness({
@@ -373,6 +464,7 @@ describe("scheduler: watching a running agent", () => {
       snapshot: [makeReviewRequest({ ciState: "failed" })],
     });
 
+    await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
 
     assert.deepEqual(harness.removed, [CONTAINER_ID]);
@@ -414,6 +506,7 @@ describe("scheduler: watching a running agent", () => {
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
+    await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(task.lastReviewedSha, "def456");
@@ -502,6 +595,7 @@ describe("scheduler: watching a running agent", () => {
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
+    await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.phase, "agent_running");
     assert.equal(task.reviewRequest, null);
@@ -719,6 +813,7 @@ describe("scheduler: re-review after a history rewrite", () => {
     assert.equal(harness.created.length, 1);
     assert.equal(task.activeStep, "review");
 
+    await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.activeContainerId, null);
     assert.equal(task.lastReviewedSha, "abc123");

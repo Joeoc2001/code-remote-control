@@ -74,14 +74,27 @@ The optional `claude` block is merged into the container's `~/.claude/settings.j
 (the server force-injects the git-hygiene/task/instance-status hooks and an
 autonomous permission mode). Put any Claude Code settings here, e.g. `model`.
 
-The instance-status hooks record whether Claude is still working: submitting a
-prompt marks the instance as working, the Stop hook marks it as finished once it
-lets Claude stop (it stays working while the git-hygiene hook blocks the stop), and
-a SessionEnd hook marks it finished when the session goes away without a Stop event.
+The instance-status hooks record what Claude is doing, as one of four states:
+`working`, `waiting`, `awaiting-background`, or `finished`. Submitting a prompt
+marks the instance as working; an AskUserQuestion or permission prompt marks it
+`waiting` until the answer resumes the turn; the Stop hook marks it finished once
+it lets Claude stop (it stays working while the git-hygiene hook blocks the
+stop); and a SessionEnd hook marks it finished when the session goes away without
+a Stop event.
+
+Claude Code fires Stop at the end of every turn, including the turn in which the
+agent launches background work (background subagents, `run_in_background` Bash)
+and ends its response to wait for the results. So before allowing a stop, the
+git-hygiene hook scans the session transcript it is handed for background tasks
+that have been launched but have not notified yet, and records
+`awaiting-background` instead of `finished` when any are still outstanding — the
+stop itself is still allowed, so the notification wakes the agent as usual, and
+the next Stop after the work lands records `finished`.
+
 The state lives in `/run/crc-instance-status.json` inside the container, is served
 by the container metadata server on `/api/instance-status`, proxied by the app on
-`/api/containers/:id/instance-status`, and shown as a Working/Finished badge in the
-UI.
+`/api/containers/:id/instance-status`, and shown as a
+Working/Waiting/Waiting-on-agents/Finished badge in the UI.
 
 Known limitation: interrupting a turn from the terminal (Esc) fires no hook, so the
 badge keeps reading "Working" until the next stop or session end. The badge tooltip
@@ -178,9 +191,12 @@ seconds and spawns exactly the agent the current state calls for:
    (approvals from the bot's own forge account are ignored), then merges via
    the forge API.
 
-Each step runs under a per-step configuration chosen at task creation. When an
-agent finishes, its container's log tail and PR/MR link are captured, the
-container is removed, and the task settles for one tick before deciding again.
+Each step runs under a per-step configuration chosen at task creation. An agent
+counts as done only once its container reports `finished` on two consecutive
+ticks with an unchanged HEAD; anything else — including `awaiting-background` —
+leaves it running. When an agent finishes, its container's log tail and PR/MR
+link are captured, the container is removed, and the task settles for one tick
+before deciding again.
 The task detail page shows the full attempt timeline with the captured logs.
 
 Safety rails: fix-CI and rebase each spawn at most 3 times, an implement agent

@@ -1,6 +1,6 @@
 const { readFileSync, renameSync, writeFileSync } = require("node:fs");
 
-const INSTANCE_STATES = ["working", "waiting", "finished"];
+const INSTANCE_STATES = ["working", "waiting", "awaiting-background", "finished"];
 
 function instanceStatusPath() {
   return process.env.CRC_INSTANCE_STATUS_PATH || "/run/crc-instance-status.json";

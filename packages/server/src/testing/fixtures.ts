@@ -77,6 +77,7 @@ export function makeAttempt(overrides: Partial<TaskAttempt> = {}): TaskAttempt {
     diffHashBefore: null,
     startedAt: "2026-08-20T10:00:00.000Z",
     finishedAt: null,
+    finishedObservation: null,
     error: null,
     ...overrides,
   };

@@ -187,10 +187,22 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   }
 
   if (status.state !== "finished") {
+    if (attempt.finishedObservation) {
+      attempt.finishedObservation = null;
+      saveTask(deps, task);
+    }
     return "settle";
   }
 
-  captureReviewRequestLink(task, await deps.fetchCodeStatus(container.name));
+  const codeStatus = await deps.fetchCodeStatus(container.name);
+  const previousObservation = attempt.finishedObservation ?? null;
+  if (previousObservation === null || previousObservation.headSha !== codeStatus.commitSha) {
+    attempt.finishedObservation = { headSha: codeStatus.commitSha, observedAt: deps.now().toISOString() };
+    saveTask(deps, task);
+    return "settle";
+  }
+
+  captureReviewRequestLink(task, codeStatus);
   deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
   await deps.removeContainer(containerId);
   finishAttempt(deps, task, attempt, null);
@@ -255,6 +267,7 @@ async function spawnAgent(
     diffHashBefore: decision.diffHashBefore,
     startedAt: deps.now().toISOString(),
     finishedAt: null,
+    finishedObservation: null,
     error: null,
   });
   task.attemptsByStep[decision.step] += 1;
