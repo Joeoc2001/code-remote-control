@@ -250,6 +250,11 @@ export type TaskPhase =
   | "failed"
   | "paused";
 
+export interface FinishedObservation {
+  headSha: string;
+  observedAt: string;
+}
+
 export interface TaskAttempt {
   step: TaskStep;
   containerId: string | null;
@@ -257,6 +262,7 @@ export interface TaskAttempt {
   diffHashBefore: string | null;
   startedAt: string;
   finishedAt: string | null;
+  finishedObservation: FinishedObservation | null;
   error: string | null;
 }
 

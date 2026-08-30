@@ -17,6 +17,12 @@ const VARIANTS: Record<InstanceState, { label: string; idle: string; pill: strin
     pill: "border-amber-800/80 bg-amber-500/10 text-amber-300",
     dot: "bg-amber-300 animate-pulse",
   },
+  "awaiting-background": {
+    label: "Waiting on agents",
+    idle: "Claude is waiting on background agents",
+    pill: "border-violet-800/80 bg-violet-500/10 text-violet-300",
+    dot: "bg-violet-300 animate-pulse",
+  },
   finished: {
     label: "Finished",
     idle: "Claude has finished",

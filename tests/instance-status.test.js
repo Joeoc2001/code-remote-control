@@ -35,11 +35,11 @@ describe("instance-status hook", () => {
     assert.equal(instanceStatusPath(), "/run/crc-instance-status.json");
   });
 
-  test("accepts exactly the three states the UI renders", () => {
-    assert.deepEqual(INSTANCE_STATES, ["working", "waiting", "finished"]);
+  test("accepts exactly the states the UI renders", () => {
+    assert.deepEqual(INSTANCE_STATES, ["working", "waiting", "awaiting-background", "finished"]);
   });
 
-  for (const state of ["working", "waiting", "finished"]) {
+  for (const state of INSTANCE_STATES) {
     test(`writes { state: "${state}", updatedAt }`, () => {
       assert.equal(writeInstanceStatus(state), true);
 
@@ -52,7 +52,7 @@ describe("instance-status hook", () => {
 
   test("rejects any other state, including the booleans of the old schema", () => {
     for (const bad of ["finished!", "true", true, false, undefined, "idle_prompt"]) {
-      assert.throws(() => writeInstanceStatus(bad), /expects one of working, waiting, finished/);
+      assert.throws(() => writeInstanceStatus(bad), /expects one of working, waiting, awaiting-background, finished/);
     }
     assert.equal(existsSync(statusPath), false);
   });
@@ -102,8 +102,36 @@ describe("instance-status hook", () => {
         env: { ...process.env, CRC_INSTANCE_STATUS_PATH: statusPath },
         stdio: ["ignore", "ignore", "pipe"],
       }),
-      (err) => err.status !== 0 && /expects one of working, waiting, finished/.test(String(err.stderr)),
+      (err) => err.status !== 0 && /expects one of working, waiting, awaiting-background, finished/.test(String(err.stderr)),
     );
     assert.equal(existsSync(statusPath), false);
+  });
+});
+
+describe("instance status states", () => {
+  const readRepoFile = (...segments) => readFileSync(path.join(__dirname, "..", ...segments), "utf-8");
+
+  test("the hook writes exactly the states the shared type declares", () => {
+    const types = readRepoFile("packages", "container-metadata-types", "src", "index.ts");
+    const union = types.match(/export type InstanceState =([^;]+);/);
+    assert.ok(union, "InstanceState union not found");
+    const declared = [...union[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+
+    assert.deepEqual(INSTANCE_STATES, declared);
+  });
+
+  test("the metadata server accepts exactly the states the shared type declares", () => {
+    const server = readRepoFile("packages", "container-metadata-server", "src", "instance-status.ts");
+    const list = server.match(/const INSTANCE_STATES: readonly InstanceState\[\] = \[([^\]]+)\]/);
+    assert.ok(list, "metadata server state list not found");
+    const accepted = [...list[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+
+    assert.deepEqual(accepted, INSTANCE_STATES);
+  });
+
+  test("the session script treats only the finished state as a finished task", () => {
+    const script = readRepoFile("docker", "start-claude-session.sh");
+
+    assert.match(script, /grep -q '"state"\[\[:space:\]\]\*:\[\[:space:\]\]\*"finished"'/);
   });
 });

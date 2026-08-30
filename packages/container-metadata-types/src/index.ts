@@ -15,7 +15,11 @@ export interface PipelineStatus {
   url: string | null;
 }
 
-export type InstanceState = "working" | "waiting" | "finished";
+export type InstanceState =
+  | "working"
+  | "waiting"
+  | "awaiting-background"
+  | "finished";
 
 export interface InstanceStatus {
   state: InstanceState;

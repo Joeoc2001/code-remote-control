@@ -1,8 +1,10 @@
 const { spawnSync } = require("node:child_process");
 const { readFileSync, writeFileSync } = require("node:fs");
 const { writeInstanceStatus } = require("./instance-status.js");
+const { readPendingBackgroundTaskIds } = require("./background-tasks.js");
 
-const CWD = "/workspace";
+const CWD = process.env.CRC_WORKSPACE_DIR || "/workspace";
+const RUN_DIR = process.env.CRC_RUN_DIR || "/run";
 const POLL_INTERVAL_MS = 60_000;
 const WATCH_TIMEOUT_MS = parseInt(process.env.CRC_CI_WATCH_TIMEOUT_MS || "1200000", 10);
 const GITHUB_CHECK_BUCKETS = new Set(["pass", "fail", "pending", "cancel", "skipping"]);
@@ -34,6 +36,12 @@ function allowStop() {
   process.exit(0);
 }
 
+function awaitBackgroundWork(pendingTaskIds) {
+  process.stderr.write(`git-hygiene hook: waiting on background tasks ${pendingTaskIds.join(", ")}\n`);
+  writeInstanceStatus("awaiting-background");
+  process.exit(0);
+}
+
 function blockStop(reason) {
   writeInstanceStatus("working");
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
@@ -53,7 +61,7 @@ function readStdin() {
 
 function fingerprintPath(sessionId) {
   const safeId = String(sessionId || "default").replace(/[^a-zA-Z0-9_-]/g, "-");
-  return `/run/crc-git-hygiene-${safeId}.json`;
+  return `${RUN_DIR}/crc-git-hygiene-${safeId}.json`;
 }
 
 function readFingerprint(sessionId) {
@@ -87,7 +95,7 @@ function getGitState() {
     aheadCount = parseInt(run("git", ["rev-list", "--count", `${upstream}..HEAD`]) || "0", 10);
     hasUnpushedCommits = aheadCount > 0;
   } else {
-    hasUnpushedCommits = run("git", ["log", "--not", "--remotes", "--max-count=1", "--format=%H", "HEAD"]).length > 0;
+    hasUnpushedCommits = run("git", ["log", "HEAD", "--not", "--remotes", "--max-count=1", "--format=%H"]).length > 0;
   }
 
   return { hasUncommittedChanges, hasUnpushedCommits, upstream, aheadCount, branch, headSha };
@@ -192,6 +200,9 @@ function watchGitlab(branch, headSha) {
 async function main() {
   const payload = tryParseJson(await readStdin()) || {};
   const sessionId = payload.session_id;
+
+  const pendingTaskIds = readPendingBackgroundTaskIds(payload.transcript_path);
+  if (pendingTaskIds.length > 0) awaitBackgroundWork(pendingTaskIds);
 
   const state = getGitState();
   if (!state) allowStop();

@@ -9,7 +9,13 @@ const UPDATED_AT = "2026-08-30T10:00:00.000Z";
 const CASES: Array<{ id: string; status: InstanceStatus; label: string; colour: string }> = [
   { id: "aaaa000000000000", status: { state: "working", updatedAt: UPDATED_AT }, label: "Working", colour: "sky" },
   { id: "bbbb000000000000", status: { state: "waiting", updatedAt: UPDATED_AT }, label: "Waiting", colour: "amber" },
-  { id: "cccc000000000000", status: { state: "finished", updatedAt: UPDATED_AT }, label: "Finished", colour: "emerald" },
+  {
+    id: "cccc000000000000",
+    status: { state: "awaiting-background", updatedAt: UPDATED_AT },
+    label: "Waiting on agents",
+    colour: "violet",
+  },
+  { id: "dddd000000000000", status: { state: "finished", updatedAt: UPDATED_AT }, label: "Finished", colour: "emerald" },
 ];
 
 function makeContainer(id: string): ManagedContainer {
@@ -83,11 +89,11 @@ describe("instance status badge", () => {
     });
   }
 
-  test("the three states are styled distinctly rather than sharing a fallback colour", async () => {
+  test("every state is styled distinctly rather than sharing a fallback colour", async () => {
     const colors = [];
     for (const entry of CASES) colors.push((await badgeFor(entry.id)).color);
 
-    assert.equal(new Set(colors).size, CASES.length, `expected three distinct colours, got ${colors.join(", ")}`);
+    assert.equal(new Set(colors).size, CASES.length, `expected distinct colours, got ${colors.join(", ")}`);
     for (const color of colors) assert.notEqual(color, "rgb(0, 0, 0)");
   });
 
@@ -96,6 +102,29 @@ describe("instance status badge", () => {
 
     assert.match(badge.title, /^Waiting for your input since /);
     assert.ok(badge.title.includes(new Date(UPDATED_AT).toLocaleString()));
+  });
+
+  test("the awaiting-background pill distinguishes agents from user input", async () => {
+    const badge = await badgeFor("cccc000000000000");
+
+    assert.match(badge.title, /^Waiting on agents since /);
+    assert.ok(badge.title.includes(new Date(UPDATED_AT).toLocaleString()));
+  });
+
+  test("labels one badge per container on the containers list, in the order they are listed", async () => {
+    const page = await harness.browser.newPage();
+    try {
+      await page.goto(`${harness.origin}/`, { waitUntil: "networkidle" });
+      const badges = page.locator("article span[title]").filter({ hasText: /Working|Waiting|Finished/ });
+      await badges.first().waitFor({ state: "visible", timeout: 10_000 });
+
+      assert.deepEqual(
+        (await badges.allTextContents()).map((text) => text.trim()),
+        CASES.map((entry) => entry.label),
+      );
+    } finally {
+      await page.close();
+    }
   });
 
   test("no unstubbed requests were made", () => {

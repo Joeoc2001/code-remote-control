@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "typecheck": "node --check hooks/task-description.js && node --check hooks/git-hygiene.js && node --check hooks/instance-status.js"
+    "typecheck": "node --check hooks/task-description.js && node --check hooks/git-hygiene.js && node --check hooks/instance-status.js && node --check hooks/background-tasks.js"
   }
 }

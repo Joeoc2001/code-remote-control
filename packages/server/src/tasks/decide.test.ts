@@ -91,6 +91,7 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
           diffHashBefore: null,
           startedAt: "2026-08-20T10:00:00.000Z",
           finishedAt: "2026-08-20T12:00:00.000Z",
+          finishedObservation: null,
           error: "Attempt timed out after 120 minutes",
         },
       ],

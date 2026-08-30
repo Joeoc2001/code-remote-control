@@ -136,6 +136,16 @@ describe("start-claude-session.sh", () => {
     assert.equal(result.claudeArgv.length, 2);
   });
 
+  test("prompts the agent to carry on when the restart killed the background agents it was waiting on", () => {
+    const result = startSession({
+      transcriptFiles: ["session.jsonl"],
+      instanceStatus: { state: "awaiting-background", updatedAt: "2026-08-16T22:06:47.000Z" },
+    });
+
+    assert.equal(result.claudeArgv[0], "--continue");
+    assert.equal(result.claudeArgv.length, 2);
+  });
+
   test("prompts the agent to carry on when there is no instance status to say otherwise", () => {
     const result = startSession({ transcriptFiles: ["session.jsonl"] });
 
