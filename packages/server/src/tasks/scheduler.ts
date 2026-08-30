@@ -186,7 +186,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     return "settle";
   }
 
-  if (!status.finished) {
+  if (status.state !== "finished") {
     return "settle";
   }
 

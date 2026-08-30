@@ -30,12 +30,12 @@ function isRecord(value) {
 }
 
 function allowStop() {
-  writeInstanceStatus(true);
+  writeInstanceStatus("finished");
   process.exit(0);
 }
 
 function blockStop(reason) {
-  writeInstanceStatus(false);
+  writeInstanceStatus("working");
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
   process.exit(0);
 }
@@ -217,7 +217,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  writeInstanceStatus(true);
+  writeInstanceStatus("finished");
   process.stderr.write(`git-hygiene hook failed: ${error && error.stack ? error.stack : error}\n`);
   process.exit(1);
 });

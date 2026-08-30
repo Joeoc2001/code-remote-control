@@ -71,7 +71,11 @@ function buildClient(): void {
   execFileSync("npm", ["run", "build", "-w", "packages/client"], { cwd: repoRoot, stdio: "pipe" });
 }
 
-function startStubServer(unstubbedRequests: string[]): Promise<{ server: Server; origin: string }> {
+function startStubServer(
+  unstubbedRequests: string[],
+  extraStubs: Record<string, unknown>,
+): Promise<{ server: Server; origin: string }> {
+  const stubs = { ...apiStubs, ...extraStubs };
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
@@ -83,7 +87,7 @@ function startStubServer(unstubbedRequests: string[]): Promise<{ server: Server;
     }
 
     if (path.startsWith("/api/")) {
-      const stub = apiStubs[path];
+      const stub = stubs[path];
       if (stub === undefined) {
         unstubbedRequests.push(path);
         res.writeHead(500).end(`no stub for ${path}`);
@@ -109,10 +113,10 @@ function startStubServer(unstubbedRequests: string[]): Promise<{ server: Server;
   });
 }
 
-export async function startClientApp(): Promise<ClientAppHarness> {
+export async function startClientApp(extraStubs: Record<string, unknown> = {}): Promise<ClientAppHarness> {
   buildClient();
   const unstubbedRequests: string[] = [];
-  const { server, origin } = await startStubServer(unstubbedRequests);
+  const { server, origin } = await startStubServer(unstubbedRequests, extraStubs);
   const browser = await chromium.launch();
 
   return {

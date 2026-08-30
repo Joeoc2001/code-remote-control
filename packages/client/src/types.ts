@@ -21,6 +21,7 @@ export { TASK_STEPS } from "@crc/shared";
 
 export type {
   ContainerCodeStatus,
+  InstanceState,
   InstanceStatus,
   ReviewRequestStatus,
   PipelineStatus,
