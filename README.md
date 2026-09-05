@@ -139,6 +139,14 @@ tails) so tasks survive server restarts. Override the location with
 `CRC_STATE_DIR`. Without the volume, tasks are lost whenever the container is
 recreated.
 
+Agent containers outlive the server too. Each one is labelled with the task and
+step it was spawned for, and every scheduler tick reconciles the labelled
+containers against `tasks.json`: a container whose spawn the server never got to
+record (it was restarted mid-spawn) is adopted as the task's active attempt, and
+a container whose task was deleted, already finished that attempt, or moved on
+is removed. On SIGTERM the server lets the in-flight scheduler tick finish
+before exiting so the state on disk matches what it did.
+
 ## Restarts
 
 When a container restarts — a host reboot, a `docker restart`, or a restart policy

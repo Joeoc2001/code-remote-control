@@ -6,6 +6,7 @@ import {
   createContainer,
   findManagedContainer,
   getContainerLogTail,
+  listTaskContainers,
   removeContainer,
   CONTAINER_METADATA_INTERNAL_PORT,
 } from "../docker.js";
@@ -40,6 +41,7 @@ export const schedulerDeps: SchedulerDeps = {
   loadConfigurations,
   getContainer: findManagedContainer,
   createContainer,
+  listTaskContainers,
   removeContainer: async (id) => {
     await removeContainer(id);
     broadcastRemoval(id);

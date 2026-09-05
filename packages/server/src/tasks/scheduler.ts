@@ -14,6 +14,8 @@ import type {
   ResolvedEnvironmentConfig,
   Task,
   TaskAttempt,
+  TaskContainer,
+  TaskSpawn,
   TaskStep,
 } from "../types.js";
 import type { Forge } from "../forge/index.js";
@@ -34,8 +36,9 @@ export interface SchedulerDeps {
     config: ResolvedEnvironmentConfig,
     repoFullName: string,
     repoSource: RepoSource,
-    options: { initialPrompt: string },
+    options: { initialPrompt: string; task: TaskSpawn },
   ): Promise<ManagedContainer>;
+  listTaskContainers(): Promise<TaskContainer[]>;
   removeContainer(id: string): Promise<void>;
   getContainerLogTail(id: string): Promise<string>;
   fetchInstanceStatus(containerName: string): Promise<InstanceStatus>;
@@ -53,8 +56,12 @@ function diffHashFetcher(forge: Forge, task: Task): () => Promise<string | null>
   };
 }
 
+function isLive(task: Task): boolean {
+  return task.phase !== "merged" && task.phase !== "failed";
+}
+
 function isSchedulable(task: Task): boolean {
-  return task.phase !== "merged" && task.phase !== "failed" && task.phase !== "paused";
+  return isLive(task) && task.phase !== "paused";
 }
 
 function saveTask(deps: SchedulerDeps, task: Task): void {
@@ -250,34 +257,79 @@ async function spawnAgent(
     saveTask(deps, task);
   }
 
+  const spawn: TaskSpawn = {
+    taskId: task.id,
+    step: decision.step,
+    headShaBefore: decision.headShaBefore,
+    diffHashBefore: decision.diffHashBefore,
+  };
   const container = await deps.createContainer(configs, config, task.repoFullName, task.repoSource, {
     initialPrompt: prompt,
+    task: spawn,
   });
 
-  const current = deps.store.get(task.id);
-  if (!current) {
+  if (!deps.store.get(task.id)) {
     await deps.removeContainer(container.id);
     return;
   }
 
+  recordSpawnedAgent(deps, task, container, spawn, deps.now().toISOString());
+}
+
+function recordSpawnedAgent(
+  deps: SchedulerDeps,
+  task: Task,
+  container: ManagedContainer,
+  spawn: TaskSpawn,
+  startedAt: string,
+): void {
   task.attempts.push({
-    step: decision.step,
+    step: spawn.step,
     containerId: container.id,
-    headShaBefore: decision.headShaBefore,
-    diffHashBefore: decision.diffHashBefore,
-    startedAt: deps.now().toISOString(),
+    headShaBefore: spawn.headShaBefore,
+    diffHashBefore: spawn.diffHashBefore,
+    startedAt,
     finishedAt: null,
     finishedObservation: null,
     error: null,
   });
-  task.attemptsByStep[decision.step] += 1;
+  task.attemptsByStep[spawn.step] += 1;
   task.activeContainerId = container.id;
-  task.activeStep = decision.step;
-  if (current.phase !== "paused") {
+  task.activeStep = spawn.step;
+  if (task.phase !== "paused") {
     task.phase = "agent_running";
   }
   clearTaskError(task);
   saveTask(deps, task);
+}
+
+async function reconcileTaskContainers(deps: SchedulerDeps): Promise<void> {
+  for (const { container, spawn } of await deps.listTaskContainers()) {
+    const task = deps.store.get(spawn.taskId);
+    const attempt = task?.attempts.find((a) => a.containerId === container.id);
+
+    if (task && attempt && task.activeContainerId === container.id) continue;
+
+    if (task && !attempt && !task.activeContainerId && isLive(task)) {
+      console.warn(
+        `Task ${task.id}: adopting agent container ${container.name} for step '${spawn.step}' whose spawn was not recorded`,
+      );
+      recordSpawnedAgent(deps, task, container, spawn, container.createdAt);
+      continue;
+    }
+
+    const reason = !task
+      ? `task ${spawn.taskId} no longer exists`
+      : attempt
+        ? `its attempt already finished`
+        : `task ${task.id} is ${task.activeContainerId ? "running another agent" : task.phase}`;
+    console.warn(`Removing orphaned agent container ${container.name}: ${reason}`);
+    try {
+      await deps.removeContainer(container.id);
+    } catch (err) {
+      console.error(`Failed to remove orphaned agent container ${container.name}:`, err);
+    }
+  }
 }
 
 async function executeDecision(
@@ -342,6 +394,8 @@ async function executeDecision(
 }
 
 export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
+  await reconcileTaskContainers(deps);
+
   const liveTasks = deps.store.list().filter(isSchedulable);
 
   const toEvaluate: Task[] = [];
