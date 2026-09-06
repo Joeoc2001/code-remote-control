@@ -331,16 +331,25 @@ export async function listContainers(): Promise<ManagedContainer[]> {
     .map(parseContainerInfo);
 }
 
+function parseTaskSpawnLabel(containerName: string, raw: string): TaskSpawn | null {
+  try {
+    return taskSpawnSchema.parse(JSON.parse(raw));
+  } catch (err) {
+    console.error(`Container ${containerName} has an unreadable ${LABEL_TASK_SPAWN} label ${JSON.stringify(raw)}:`, err);
+    return null;
+  }
+}
+
 export async function listTaskContainers(): Promise<TaskContainer[]> {
   const containers = await docker.listContainers({
     all: true,
     filters: { label: [LABEL_TASK_SPAWN] },
   });
 
-  return containers.map((c) => ({
-    container: parseContainerInfo(c),
-    spawn: taskSpawnSchema.parse(JSON.parse(c.Labels[LABEL_TASK_SPAWN])),
-  }));
+  return containers.map((c) => {
+    const container = parseContainerInfo(c);
+    return { container, spawn: parseTaskSpawnLabel(container.name, c.Labels[LABEL_TASK_SPAWN]) };
+  });
 }
 
 export async function getContainer(id: string): Promise<ManagedContainer | null> {

@@ -54,5 +54,5 @@ export type TaskSpawn = z.infer<typeof taskSpawnSchema>;
 
 export interface TaskContainer {
   container: ManagedContainer;
-  spawn: TaskSpawn;
+  spawn: TaskSpawn | null;
 }

@@ -303,32 +303,49 @@ function recordSpawnedAgent(
   saveTask(deps, task);
 }
 
+function orphanReason(container: ManagedContainer, task: Task, attempt: TaskAttempt | undefined): string | null {
+  if (attempt) return "its attempt already finished";
+  if (task.activeContainerId) return `task ${task.id} is running another agent`;
+  if (!isLive(task)) return `task ${task.id} is ${task.phase}`;
+  if (container.status === "created") return "it never started";
+  return null;
+}
+
+async function removeOrphanedContainer(deps: SchedulerDeps, container: ManagedContainer, reason: string): Promise<void> {
+  console.warn(`Removing orphaned agent container ${container.name}: ${reason}`);
+  try {
+    await deps.removeContainer(container.id);
+  } catch (err) {
+    console.error(`Failed to remove orphaned agent container ${container.name}:`, err);
+  }
+}
+
 async function reconcileTaskContainers(deps: SchedulerDeps): Promise<void> {
   for (const { container, spawn } of await deps.listTaskContainers()) {
-    const task = deps.store.get(spawn.taskId);
-    const attempt = task?.attempts.find((a) => a.containerId === container.id);
-
-    if (task && attempt && task.activeContainerId === container.id) continue;
-
-    if (task && !attempt && !task.activeContainerId && isLive(task)) {
-      console.warn(
-        `Task ${task.id}: adopting agent container ${container.name} for step '${spawn.step}' whose spawn was not recorded`,
-      );
-      recordSpawnedAgent(deps, task, container, spawn, container.createdAt);
+    if (!spawn) {
+      await removeOrphanedContainer(deps, container, "its task label is unreadable");
       continue;
     }
 
-    const reason = !task
-      ? `task ${spawn.taskId} no longer exists`
-      : attempt
-        ? `its attempt already finished`
-        : `task ${task.id} is ${task.activeContainerId ? "running another agent" : task.phase}`;
-    console.warn(`Removing orphaned agent container ${container.name}: ${reason}`);
-    try {
-      await deps.removeContainer(container.id);
-    } catch (err) {
-      console.error(`Failed to remove orphaned agent container ${container.name}:`, err);
+    const task = deps.store.get(spawn.taskId);
+    if (!task) {
+      await removeOrphanedContainer(deps, container, `task ${spawn.taskId} no longer exists`);
+      continue;
     }
+
+    const attempt = task.attempts.find((a) => a.containerId === container.id);
+    if (attempt && task.activeContainerId === container.id) continue;
+
+    const reason = orphanReason(container, task, attempt);
+    if (reason !== null) {
+      await removeOrphanedContainer(deps, container, reason);
+      continue;
+    }
+
+    console.warn(
+      `Task ${task.id}: adopting agent container ${container.name} for step '${spawn.step}' whose spawn was not recorded`,
+    );
+    recordSpawnedAgent(deps, task, container, spawn, container.createdAt);
   }
 }
 

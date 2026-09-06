@@ -848,7 +848,7 @@ describe("scheduler: recovering agent containers after a restart", () => {
   const ORPHAN_ID = "0a0a0a0a0a0a0a0a";
   const ORPHAN_NAME = "crc-orphan-0a0a0a";
 
-  function makeTaskContainer(spawn: TaskSpawn, status = "running"): TaskContainer {
+  function makeTaskContainer(spawn: TaskSpawn | null, status = "running"): TaskContainer {
     return { container: makeContainer(ORPHAN_ID, ORPHAN_NAME, status), spawn };
   }
 
@@ -903,6 +903,39 @@ describe("scheduler: recovering agent containers after a restart", () => {
     assert.equal(task.phase, "failed");
     assert.match(task.error ?? "", /did not open a PR\/MR/);
     assert.equal(harness.created.length, 0);
+  });
+
+  it("removes a container that never started instead of adopting it, so the attempt is not counted", async () => {
+    const task = makeTask();
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [
+        makeTaskContainer({ taskId: task.id, step: "implement", headShaBefore: null, diffHashBefore: null }, "created"),
+      ],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.attempts.length, 1);
+    assert.notEqual(task.attempts[0].containerId, ORPHAN_ID);
+    assert.equal(task.attemptsByStep.implement, 1);
+    assert.equal(task.phase, "agent_running");
+  });
+
+  it("removes a container whose task label is unreadable", async () => {
+    const task = makeTask();
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [makeTaskContainer(null)],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(harness.created.length, 1);
+    assert.notEqual(task.attempts[0].containerId, ORPHAN_ID);
   });
 
   it("keeps an adopted container's task paused", async () => {

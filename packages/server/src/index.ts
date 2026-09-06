@@ -11,6 +11,7 @@ import { proxyMiddleware, wsUpgradeHandler } from "./proxy.js";
 import { authMiddleware, isAuthEnabled } from "./auth.js";
 
 const HEALTH_CHECK_INTERVAL_MS = 1000;
+const SHUTDOWN_DEADLINE_MS = 25_000;
 
 validateEnvironment();
 
@@ -102,7 +103,7 @@ function shutdown() {
       process.exit(0);
     });
   });
-  setTimeout(() => process.exit(1), 5000);
+  setTimeout(() => process.exit(1), SHUTDOWN_DEADLINE_MS);
 }
 
 process.on("SIGTERM", shutdown);
