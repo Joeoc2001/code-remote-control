@@ -133,22 +133,44 @@ function captureReviewRequestLink(task: Task, codeStatus: ContainerCodeStatus): 
 }
 
 function captureCreatedIssueUrl(task: Task, codeStatus: ContainerCodeStatus): void {
-  if (task.workItem || task.createdIssueUrl || !codeStatus.createdIssueUrl) return;
+  if (task.createdIssueUrl || !codeStatus.createdIssueUrl) return;
   task.createdIssueUrl = codeStatus.createdIssueUrl;
 }
 
-function captureContainerLinks(task: Task, codeStatus: ContainerCodeStatus): void {
+function captureContainerLinks(task: Task, attempt: TaskAttempt, codeStatus: ContainerCodeStatus): void {
+  if (attempt.step === "create_issue") {
+    captureCreatedIssueUrl(task, codeStatus);
+    return;
+  }
   captureReviewRequestLink(task, codeStatus);
-  captureCreatedIssueUrl(task, codeStatus);
 }
 
-async function adoptCreatedIssue(deps: SchedulerDeps, forge: Forge, task: Task): Promise<void> {
+function normaliseWorkItemUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  return `${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+$/, "")}`;
+}
+
+function failTask(deps: SchedulerDeps, task: Task, reason: string): void {
+  task.phase = "failed";
+  task.error = reason;
+  saveTask(deps, task);
+}
+
+async function adoptCreatedIssue(deps: SchedulerDeps, forge: Forge, task: Task, createdIssueUrl: string): Promise<void> {
+  const wanted = normaliseWorkItemUrl(createdIssueUrl);
+  if (wanted === null) {
+    failTask(deps, task, `Issue-creation agent reported '${createdIssueUrl}', which is not a URL`);
+    return;
+  }
   const items = await forge.listWorkItems(task.repoFullName);
-  const item = items.find((candidate) => candidate.url === task.createdIssueUrl);
+  const item = items.find((candidate) => normaliseWorkItemUrl(candidate.url) === wanted);
   if (!item) {
-    task.phase = "failed";
-    task.error = `Created issue ${task.createdIssueUrl} is not among the repository's open work items`;
-    saveTask(deps, task);
+    failTask(deps, task, `Created issue ${createdIssueUrl} is not among the repository's open work items`);
     return;
   }
   task.workItem = item;
@@ -190,7 +212,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   const elapsedMs = deps.now().getTime() - Date.parse(attempt.startedAt);
   if (elapsedMs > ATTEMPT_TIMEOUT_MS) {
     try {
-      captureContainerLinks(task, await deps.fetchCodeStatus(container.name));
+      captureContainerLinks(task, attempt, await deps.fetchCodeStatus(container.name));
     } catch (err) {
       console.error(`Task ${task.id}: could not capture code status before timing out attempt:`, err);
     }
@@ -234,7 +256,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     return "settle";
   }
 
-  captureContainerLinks(task, codeStatus);
+  captureContainerLinks(task, attempt, codeStatus);
   deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
   await deps.removeContainer(containerId);
   finishAttempt(deps, task, attempt, null);
@@ -414,9 +436,7 @@ async function executeDecision(
       return;
     }
     case "fail": {
-      task.phase = "failed";
-      task.error = decision.reason;
-      saveTask(deps, task);
+      failTask(deps, task, decision.reason);
       return;
     }
     case "forge_rebase": {
@@ -472,7 +492,7 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
     try {
       const forge = deps.getForge(task.repoSource);
       if (!task.workItem && task.createdIssueUrl) {
-        await adoptCreatedIssue(deps, forge, task);
+        await adoptCreatedIssue(deps, forge, task, task.createdIssueUrl);
         if (!isSchedulable(task)) continue;
       }
       const decision = await decide(task, null, diffHashFetcher(forge, task));

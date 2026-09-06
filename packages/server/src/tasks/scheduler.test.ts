@@ -673,11 +673,12 @@ describe("scheduler: text tasks", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null, ISSUE_URL) },
       workItems: [createdIssue],
     });
 
+    await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
 
     assert.deepEqual(harness.removed, [CONTAINER_ID]);
@@ -698,16 +699,72 @@ describe("scheduler: text tasks", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { finished: true, updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
+    await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(harness.created.length, 0);
     assert.equal(task.phase, "failed");
     assert.match(task.error ?? "", /finished without reporting a created issue URL/);
+  });
+
+  it("does not link a PR/MR that a create_issue agent happened to open", async () => {
+    const task = makeActiveCreateIssueTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: {
+        [CONTAINER_NAME]: makeCodeStatus(
+          { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+          ISSUE_URL,
+        ),
+      },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.createdIssueUrl, ISSUE_URL);
+    assert.equal(task.reviewRequest, null);
+  });
+
+  it("matches the reported issue URL regardless of scheme, host casing, and trailing slashes", async () => {
+    const task = makeTextTask({
+      createdIssueUrl: "http://GitHub.com/acme/widgets/issues/42/",
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [
+        makeAttempt({ step: "create_issue", startedAt: RECENT_START, finishedAt: NOW.toISOString() }),
+      ],
+    });
+    const harness = makeHarness({ tasks: [task], workItems: [createdIssue] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(task.workItem, createdIssue);
+    assert.equal(task.activeStep, "implement");
+  });
+
+  it("fails when the reported issue URL is not a URL at all", async () => {
+    const task = makeTextTask({
+      createdIssueUrl: "issue 42",
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [
+        makeAttempt({ step: "create_issue", startedAt: RECENT_START, finishedAt: NOW.toISOString() }),
+      ],
+    });
+    const harness = makeHarness({ tasks: [task], workItems: [createdIssue] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /reported 'issue 42', which is not a URL/);
   });
 
   it("fails when the reported issue is not among the repository's open work items", async () => {

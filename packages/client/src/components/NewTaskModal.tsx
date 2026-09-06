@@ -30,6 +30,11 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
   const [pastedText, setPastedText] = useState("");
   const [customisePerStep, setCustomisePerStep] = useState(false);
   const [configByStep, setConfigByStep] = useState<Partial<Record<TaskStep, string>>>({});
+  const stepsForMode = mode === "text" ? TASK_STEPS : TASK_STEPS.filter((step) => step !== "create_issue");
+  const configByStepForMode = () =>
+    customisePerStep
+      ? Object.fromEntries(stepsForMode.flatMap((step) => (configByStep[step] ? [[step, configByStep[step]]] : [])))
+      : undefined;
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,7 +125,7 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
         repoSource: selectedRepo.source,
         workItemIds,
         configName: selectedConfig,
-        configByStep: customisePerStep ? configByStep : undefined,
+        configByStep: configByStepForMode(),
       });
 
       if (result.tasks.length > 0) {
@@ -159,7 +164,7 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
         repoSource: selectedRepo.source,
         text,
         configName: selectedConfig,
-        configByStep: customisePerStep ? configByStep : undefined,
+        configByStep: configByStepForMode(),
       });
       onCreated([task]);
       onClose();
@@ -224,7 +229,7 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
                 </button>
                 {customisePerStep && (
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 border border-slate-700 rounded-lg p-3">
-                    {TASK_STEPS.map((step) => (
+                    {stepsForMode.map((step) => (
                       <label key={step} className="text-xs text-slate-400">
                         {TASK_STEP_LABELS[step]}
                         <select

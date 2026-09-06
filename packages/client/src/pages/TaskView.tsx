@@ -9,6 +9,14 @@ import ReviewRequestStatusIcon from "../components/ReviewRequestStatusIcon";
 import { TASK_STEP_LABELS } from "../components/taskStepLabels";
 import { taskTitle } from "../components/taskTitle";
 
+function SourceText({ text }: { text: string }) {
+  return (
+    <pre className="mt-3 max-h-48 overflow-auto rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs text-slate-300 whitespace-pre-wrap break-words">
+      {text}
+    </pre>
+  );
+}
+
 function formatTimestamp(value: string): string {
   return new Date(value).toLocaleString();
 }
@@ -262,10 +270,14 @@ export default function TaskView() {
                   </a>
                 )}
               </div>
-              {!task.workItem && task.sourceText && (
-                <pre className="mt-3 max-h-48 overflow-auto rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs text-slate-300 whitespace-pre-wrap break-words">
-                  {task.sourceText}
-                </pre>
+              {task.sourceText && !task.workItem && <SourceText text={task.sourceText} />}
+              {task.sourceText && task.workItem && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                    Original request
+                  </summary>
+                  <SourceText text={task.sourceText} />
+                </details>
               )}
               {task.error && (
                 <p className="mt-3 text-sm text-rose-300 bg-rose-900/20 border border-rose-800 rounded-lg px-3 py-2 break-words">
