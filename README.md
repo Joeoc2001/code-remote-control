@@ -130,6 +130,7 @@ services:
     networks:
       - runner-network
     restart: always
+    stop_grace_period: 30s
 ```
 
 Note that the runners must be accessible from the CRC server, so must share at least one docker network.
@@ -138,6 +139,17 @@ The `/data` volume holds Task state (`tasks.json` plus captured per-attempt log
 tails) so tasks survive server restarts. Override the location with
 `CRC_STATE_DIR`. Without the volume, tasks are lost whenever the container is
 recreated.
+
+Agent containers outlive the server too. Each one is labelled with the task and
+step it was spawned for, and every scheduler tick reconciles the labelled
+containers against `tasks.json`: a container whose spawn the server never got to
+record (it was restarted mid-spawn) is adopted as the task's active attempt, and
+a container whose task was deleted, already finished that attempt, never
+started, or moved on is removed. On SIGTERM the server lets the in-flight
+scheduler tick finish before exiting so the state on disk matches what it did;
+a tick can spend a while pulling an image, so give the server up to 25 seconds
+to stop (hence `stop_grace_period: 30s` above, which is longer than Docker's
+10 second default).
 
 ## Restarts
 

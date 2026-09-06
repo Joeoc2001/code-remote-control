@@ -11,6 +11,7 @@ import { proxyMiddleware, wsUpgradeHandler } from "./proxy.js";
 import { authMiddleware, isAuthEnabled } from "./auth.js";
 
 const HEALTH_CHECK_INTERVAL_MS = 1000;
+const SHUTDOWN_DEADLINE_MS = 25_000;
 
 validateEnvironment();
 
@@ -68,14 +69,14 @@ async function healthLoop(): Promise<void> {
 void healthLoop();
 
 let taskTimer: NodeJS.Timeout | null = null;
+let taskTick: Promise<void> = Promise.resolve();
 
 async function taskLoop(): Promise<void> {
   if (stopping) return;
-  try {
-    await runTaskSchedulerTick(schedulerDeps);
-  } catch (err) {
+  taskTick = runTaskSchedulerTick(schedulerDeps).catch((err) => {
     console.error("Task scheduler error:", err);
-  }
+  });
+  await taskTick;
   if (!stopping) {
     taskTimer = setTimeout(() => {
       void taskLoop();
@@ -97,10 +98,12 @@ function shutdown() {
   if (healthTimer) clearTimeout(healthTimer);
   if (taskTimer) clearTimeout(taskTimer);
   cleanupAll();
-  server.close(() => {
-    process.exit(0);
+  void taskTick.then(() => {
+    server.close(() => {
+      process.exit(0);
+    });
   });
-  setTimeout(() => process.exit(1), 5000);
+  setTimeout(() => process.exit(1), SHUTDOWN_DEADLINE_MS);
 }
 
 process.on("SIGTERM", shutdown);

@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
-import type { ManagedContainer, RepoReviewRequest, ResolvedConfigFile, Task } from "../types.js";
+import type { ManagedContainer, RepoReviewRequest, ResolvedConfigFile, Task, TaskContainer, TaskSpawn } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import { TaskStore } from "./store.js";
 import { REVIEW_CYCLE_CAP } from "./decide.js";
@@ -70,6 +70,7 @@ function makeCodeStatus(
 interface HarnessOptions {
   tasks: Task[];
   containers?: ManagedContainer[];
+  taskContainers?: TaskContainer[];
   snapshot?: RepoReviewRequest[];
   listError?: Error;
   getContainerError?: Error;
@@ -84,13 +85,15 @@ function makeHarness(options: HarnessOptions) {
   const store = new TaskStore(mkdtempSync(join(tmpdir(), "crc-scheduler-")));
   for (const task of options.tasks) store.save(task);
 
-  const created: Array<{ configName: string; repoFullName: string; prompt: string }> = [];
+  const created: Array<{ configName: string; repoFullName: string; prompt: string; spawn: TaskSpawn }> = [];
   const removed: string[] = [];
   const rebased: string[] = [];
   const diffHashFetches: string[] = [];
   const merged: string[] = [];
   const broadcasts: Task[] = [];
-  const containers = new Map((options.containers ?? []).map((c) => [c.id, c]));
+  const containers = new Map(
+    [...(options.containers ?? []), ...(options.taskContainers ?? []).map((tc) => tc.container)].map((c) => [c.id, c]),
+  );
   let nextContainer = 0;
 
   const forge: Forge = {
@@ -127,11 +130,13 @@ function makeHarness(options: HarnessOptions) {
     createContainer: async (_appConfig, config, repoFullName, _repoSource, opts) => {
       const id = `abcd00000000000${nextContainer}`;
       nextContainer += 1;
-      created.push({ configName: config.name, repoFullName, prompt: opts.initialPrompt });
+      created.push({ configName: config.name, repoFullName, prompt: opts.initialPrompt, spawn: opts.task });
       const container = makeContainer(id, `crc-spawned-${id}`);
       containers.set(id, container);
       return container;
     },
+    listTaskContainers: async () =>
+      (options.taskContainers ?? []).filter((tc) => containers.has(tc.container.id)),
     removeContainer: async (id) => {
       removed.push(id);
       containers.delete(id);
@@ -189,6 +194,12 @@ describe("scheduler: spawning", () => {
     assert.ok(task.activeContainerId);
     assert.equal(task.attemptsByStep.implement, 1);
     assert.deepEqual(task.attempts[0].headShaBefore, null);
+    assert.deepEqual(harness.created[0].spawn, {
+      taskId: task.id,
+      step: "implement",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
     assert.ok(harness.broadcasts.length > 0);
 
     const persisted = harness.store.list()[0];
@@ -830,6 +841,210 @@ describe("scheduler: re-review after a history rewrite", () => {
 
     assert.equal(harness.created.length, 1);
     assert.equal(task.phase, "waiting_approval");
+  });
+});
+
+describe("scheduler: recovering agent containers after a restart", () => {
+  const ORPHAN_ID = "0a0a0a0a0a0a0a0a";
+  const ORPHAN_NAME = "crc-orphan-0a0a0a";
+
+  function makeTaskContainer(spawn: TaskSpawn | null, status = "running"): TaskContainer {
+    return { container: makeContainer(ORPHAN_ID, ORPHAN_NAME, status), spawn };
+  }
+
+  it("adopts a running container whose spawn was never recorded and keeps watching it", async () => {
+    const task = makeLinkedTask({ phase: "spawning" });
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [
+        makeTaskContainer({ taskId: task.id, step: "review", headShaBefore: "abc123", diffHashBefore: "diff-hash-1" }),
+      ],
+      snapshot: [makeReviewRequest()],
+      instanceStatus: { [ORPHAN_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 0);
+    assert.equal(harness.removed.length, 0);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.activeContainerId, ORPHAN_ID);
+    assert.equal(task.activeStep, "review");
+    assert.equal(task.attemptsByStep.review, 1);
+    assert.equal(task.attempts.length, 1);
+    assert.deepEqual(task.attempts[0], {
+      step: "review",
+      containerId: ORPHAN_ID,
+      headShaBefore: "abc123",
+      diffHashBefore: "diff-hash-1",
+      startedAt: RECENT_START,
+      finishedAt: null,
+      finishedObservation: null,
+      error: null,
+    });
+    assert.equal(harness.store.list()[0].activeContainerId, ORPHAN_ID);
+  });
+
+  it("adopts an exited container so the attempt is counted, then tears it down as usual", async () => {
+    const task = makeTask();
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [
+        makeTaskContainer({ taskId: task.id, step: "implement", headShaBefore: null, diffHashBefore: null }, "exited"),
+      ],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(task.attempts[0].containerId, ORPHAN_ID);
+    assert.match(task.attempts[0].error ?? "", /stopped unexpectedly/);
+    assert.equal(harness.store.readAttemptLog(task.id, 0), "captured log tail");
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /did not open a PR\/MR/);
+    assert.equal(harness.created.length, 0);
+  });
+
+  it("removes a container that never started instead of adopting it, so the attempt is not counted", async () => {
+    const task = makeTask();
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [
+        makeTaskContainer({ taskId: task.id, step: "implement", headShaBefore: null, diffHashBefore: null }, "created"),
+      ],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.attempts.length, 1);
+    assert.notEqual(task.attempts[0].containerId, ORPHAN_ID);
+    assert.equal(task.attemptsByStep.implement, 1);
+    assert.equal(task.phase, "agent_running");
+  });
+
+  it("removes a container whose task label is unreadable", async () => {
+    const task = makeTask();
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [makeTaskContainer(null)],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(harness.created.length, 1);
+    assert.notEqual(task.attempts[0].containerId, ORPHAN_ID);
+  });
+
+  it("keeps an adopted container's task paused", async () => {
+    const task = makeTask({ phase: "paused" });
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [makeTaskContainer({ taskId: task.id, step: "implement", headShaBefore: null, diffHashBefore: null })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "paused");
+    assert.equal(task.activeContainerId, ORPHAN_ID);
+    assert.equal(harness.removed.length, 0);
+  });
+
+  it("leaves a tracked active container alone", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [
+        {
+          container: makeContainer(CONTAINER_ID, CONTAINER_NAME),
+          spawn: { taskId: task.id, step: "fix_ci", headShaBefore: null, diffHashBefore: null },
+        },
+      ],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.attempts.length, 2);
+    assert.equal(harness.removed.length, 0);
+    assert.equal(harness.broadcasts.length, 0);
+  });
+
+  it("removes a container whose task was deleted", async () => {
+    const harness = makeHarness({
+      tasks: [],
+      taskContainers: [makeTaskContainer({ taskId: "gone", step: "implement", headShaBefore: null, diffHashBefore: null })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+  });
+
+  it("removes a container left behind by an attempt that already finished", async () => {
+    const task = makeLinkedTask({
+      phase: "waiting_ci",
+      attempts: [makeAttempt({ containerId: ORPHAN_ID, finishedAt: RECENT_START })],
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [makeTaskContainer({ taskId: task.id, step: "implement", headShaBefore: null, diffHashBefore: null })],
+      snapshot: [makeReviewRequest({ ciState: "running" })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(task.attempts.length, 1);
+    assert.equal(task.activeContainerId, null);
+  });
+
+  it("removes a container belonging to a task that already runs another agent", async () => {
+    const task = makeActiveTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      taskContainers: [makeTaskContainer({ taskId: task.id, step: "fix_ci", headShaBefore: null, diffHashBefore: null })],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.attempts.length, 2);
+  });
+
+  it("removes a container belonging to a finished task", async () => {
+    const task = makeLinkedTask({ phase: "merged" });
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [makeTaskContainer({ taskId: task.id, step: "review", headShaBefore: null, diffHashBefore: null })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [ORPHAN_ID]);
+    assert.equal(task.attempts.length, 0);
+    assert.equal(task.phase, "merged");
+  });
+
+  it("keeps scheduling when an orphaned container cannot be removed", async () => {
+    const task = makeTask();
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [makeTaskContainer({ taskId: "gone", step: "implement", headShaBefore: null, diffHashBefore: null })],
+    });
+    harness.deps.removeContainer = async () => {
+      throw new Error("docker is having a moment");
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.phase, "agent_running");
   });
 });
 

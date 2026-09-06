@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { TASK_STEPS, type ManagedContainer } from "@crc/shared";
+
 export type {
   EnvironmentConfig,
   ResolvedEnvironmentConfig,
@@ -39,3 +42,17 @@ export {
   resolveConfigFile,
   TASK_STEPS,
 } from "@crc/shared";
+
+export const taskSpawnSchema = z.object({
+  taskId: z.string().min(1),
+  step: z.enum(TASK_STEPS),
+  headShaBefore: z.string().nullable(),
+  diffHashBefore: z.string().nullable(),
+});
+
+export type TaskSpawn = z.infer<typeof taskSpawnSchema>;
+
+export interface TaskContainer {
+  container: ManagedContainer;
+  spawn: TaskSpawn | null;
+}

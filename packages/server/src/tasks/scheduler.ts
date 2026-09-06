@@ -14,6 +14,8 @@ import type {
   ResolvedEnvironmentConfig,
   Task,
   TaskAttempt,
+  TaskContainer,
+  TaskSpawn,
   TaskStep,
 } from "../types.js";
 import type { Forge } from "../forge/index.js";
@@ -34,8 +36,9 @@ export interface SchedulerDeps {
     config: ResolvedEnvironmentConfig,
     repoFullName: string,
     repoSource: RepoSource,
-    options: { initialPrompt: string },
+    options: { initialPrompt: string; task: TaskSpawn },
   ): Promise<ManagedContainer>;
+  listTaskContainers(): Promise<TaskContainer[]>;
   removeContainer(id: string): Promise<void>;
   getContainerLogTail(id: string): Promise<string>;
   fetchInstanceStatus(containerName: string): Promise<InstanceStatus>;
@@ -53,8 +56,12 @@ function diffHashFetcher(forge: Forge, task: Task): () => Promise<string | null>
   };
 }
 
+function isLive(task: Task): boolean {
+  return task.phase !== "merged" && task.phase !== "failed";
+}
+
 function isSchedulable(task: Task): boolean {
-  return task.phase !== "merged" && task.phase !== "failed" && task.phase !== "paused";
+  return isLive(task) && task.phase !== "paused";
 }
 
 function saveTask(deps: SchedulerDeps, task: Task): void {
@@ -250,34 +257,96 @@ async function spawnAgent(
     saveTask(deps, task);
   }
 
+  const spawn: TaskSpawn = {
+    taskId: task.id,
+    step: decision.step,
+    headShaBefore: decision.headShaBefore,
+    diffHashBefore: decision.diffHashBefore,
+  };
   const container = await deps.createContainer(configs, config, task.repoFullName, task.repoSource, {
     initialPrompt: prompt,
+    task: spawn,
   });
 
-  const current = deps.store.get(task.id);
-  if (!current) {
+  if (!deps.store.get(task.id)) {
     await deps.removeContainer(container.id);
     return;
   }
 
+  recordSpawnedAgent(deps, task, container, spawn, deps.now().toISOString());
+}
+
+function recordSpawnedAgent(
+  deps: SchedulerDeps,
+  task: Task,
+  container: ManagedContainer,
+  spawn: TaskSpawn,
+  startedAt: string,
+): void {
   task.attempts.push({
-    step: decision.step,
+    step: spawn.step,
     containerId: container.id,
-    headShaBefore: decision.headShaBefore,
-    diffHashBefore: decision.diffHashBefore,
-    startedAt: deps.now().toISOString(),
+    headShaBefore: spawn.headShaBefore,
+    diffHashBefore: spawn.diffHashBefore,
+    startedAt,
     finishedAt: null,
     finishedObservation: null,
     error: null,
   });
-  task.attemptsByStep[decision.step] += 1;
+  task.attemptsByStep[spawn.step] += 1;
   task.activeContainerId = container.id;
-  task.activeStep = decision.step;
-  if (current.phase !== "paused") {
+  task.activeStep = spawn.step;
+  if (task.phase !== "paused") {
     task.phase = "agent_running";
   }
   clearTaskError(task);
   saveTask(deps, task);
+}
+
+function orphanReason(container: ManagedContainer, task: Task, attempt: TaskAttempt | undefined): string | null {
+  if (attempt) return "its attempt already finished";
+  if (task.activeContainerId) return `task ${task.id} is running another agent`;
+  if (!isLive(task)) return `task ${task.id} is ${task.phase}`;
+  if (container.status === "created") return "it never started";
+  return null;
+}
+
+async function removeOrphanedContainer(deps: SchedulerDeps, container: ManagedContainer, reason: string): Promise<void> {
+  console.warn(`Removing orphaned agent container ${container.name}: ${reason}`);
+  try {
+    await deps.removeContainer(container.id);
+  } catch (err) {
+    console.error(`Failed to remove orphaned agent container ${container.name}:`, err);
+  }
+}
+
+async function reconcileTaskContainers(deps: SchedulerDeps): Promise<void> {
+  for (const { container, spawn } of await deps.listTaskContainers()) {
+    if (!spawn) {
+      await removeOrphanedContainer(deps, container, "its task label is unreadable");
+      continue;
+    }
+
+    const task = deps.store.get(spawn.taskId);
+    if (!task) {
+      await removeOrphanedContainer(deps, container, `task ${spawn.taskId} no longer exists`);
+      continue;
+    }
+
+    const attempt = task.attempts.find((a) => a.containerId === container.id);
+    if (attempt && task.activeContainerId === container.id) continue;
+
+    const reason = orphanReason(container, task, attempt);
+    if (reason !== null) {
+      await removeOrphanedContainer(deps, container, reason);
+      continue;
+    }
+
+    console.warn(
+      `Task ${task.id}: adopting agent container ${container.name} for step '${spawn.step}' whose spawn was not recorded`,
+    );
+    recordSpawnedAgent(deps, task, container, spawn, container.createdAt);
+  }
 }
 
 async function executeDecision(
@@ -342,6 +411,8 @@ async function executeDecision(
 }
 
 export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
+  await reconcileTaskContainers(deps);
+
   const liveTasks = deps.store.list().filter(isSchedulable);
 
   const toEvaluate: Task[] = [];

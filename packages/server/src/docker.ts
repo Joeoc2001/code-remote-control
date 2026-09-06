@@ -9,7 +9,10 @@ import type {
   ResolvedConfigFile,
   DockerConfig,
   ClaudeOauth,
+  TaskContainer,
+  TaskSpawn,
 } from "./types.js";
+import { taskSpawnSchema } from "./types.js";
 import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
 
 
@@ -23,6 +26,7 @@ const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
 const LABEL_REPO_NAME = "crc.repo-name";
 const LABEL_SUBDOMAIN = "crc.subdomain";
+const LABEL_TASK_SPAWN = "crc.task-spawn";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
 const CLAUDE_SETTINGS_RELATIVE_PATH = "root/.claude/settings.json";
 const CLAUDE_CREDENTIALS_RELATIVE_PATH = "root/.claude/.credentials.json";
@@ -39,6 +43,7 @@ type DockerUlimit = NonNullable<DockerConfig["ulimits"]>[number];
 interface CreateContainerOptions {
   initialPrompt?: string;
   pullImage?: boolean;
+  task?: TaskSpawn;
 }
 
 const DEFAULT_RESTART_MAX_RETRIES = 3;
@@ -326,6 +331,27 @@ export async function listContainers(): Promise<ManagedContainer[]> {
     .map(parseContainerInfo);
 }
 
+function parseTaskSpawnLabel(containerName: string, raw: string): TaskSpawn | null {
+  try {
+    return taskSpawnSchema.parse(JSON.parse(raw));
+  } catch (err) {
+    console.error(`Container ${containerName} has an unreadable ${LABEL_TASK_SPAWN} label ${JSON.stringify(raw)}:`, err);
+    return null;
+  }
+}
+
+export async function listTaskContainers(): Promise<TaskContainer[]> {
+  const containers = await docker.listContainers({
+    all: true,
+    filters: { label: [LABEL_TASK_SPAWN] },
+  });
+
+  return containers.map((c) => {
+    const container = parseContainerInfo(c);
+    return { container, spawn: parseTaskSpawnLabel(container.name, c.Labels[LABEL_TASK_SPAWN]) };
+  });
+}
+
 export async function getContainer(id: string): Promise<ManagedContainer | null> {
   try {
     const container = docker.getContainer(id);
@@ -397,6 +423,7 @@ export async function createContainer(
       [LABEL_CONFIG_NAME]: config.name,
       [LABEL_REPO_NAME]: repoFullName,
       [LABEL_SUBDOMAIN]: subdomain,
+      ...(options.task ? { [LABEL_TASK_SPAWN]: JSON.stringify(options.task) } : {}),
     },
     HostConfig: hostConfig,
   });
