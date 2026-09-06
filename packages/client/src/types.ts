@@ -2,6 +2,7 @@ export type {
   ContainerHealth,
   ManagedContainer,
   ConfigSummary,
+  CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,
   GitHubRepo,

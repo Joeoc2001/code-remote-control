@@ -1,5 +1,6 @@
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
 import {
+  buildCreateIssuePrompt,
   buildFixCiPrompt,
   buildRebasePrompt,
   buildReviewCommentsPrompt,
@@ -131,6 +132,52 @@ function captureReviewRequestLink(task: Task, codeStatus: ContainerCodeStatus): 
   };
 }
 
+function captureCreatedIssueUrl(task: Task, codeStatus: ContainerCodeStatus): void {
+  if (task.createdIssueUrl || !codeStatus.createdIssueUrl) return;
+  task.createdIssueUrl = codeStatus.createdIssueUrl;
+}
+
+function captureContainerLinks(task: Task, attempt: TaskAttempt, codeStatus: ContainerCodeStatus): void {
+  if (attempt.step === "create_issue") {
+    captureCreatedIssueUrl(task, codeStatus);
+    return;
+  }
+  captureReviewRequestLink(task, codeStatus);
+}
+
+function normaliseWorkItemUrl(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  return `${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+$/, "")}`;
+}
+
+function failTask(deps: SchedulerDeps, task: Task, reason: string): void {
+  task.phase = "failed";
+  task.error = reason;
+  saveTask(deps, task);
+}
+
+async function adoptCreatedIssue(deps: SchedulerDeps, forge: Forge, task: Task, createdIssueUrl: string): Promise<void> {
+  const wanted = normaliseWorkItemUrl(createdIssueUrl);
+  if (wanted === null) {
+    failTask(deps, task, `Issue-creation agent reported '${createdIssueUrl}', which is not a URL`);
+    return;
+  }
+  const items = await forge.listWorkItems(task.repoFullName);
+  const item = items.find((candidate) => normaliseWorkItemUrl(candidate.url) === wanted);
+  if (!item) {
+    failTask(deps, task, `Created issue ${createdIssueUrl} is not among the repository's open work items`);
+    return;
+  }
+  task.workItem = item;
+  clearTaskError(task);
+  saveTask(deps, task);
+}
+
 async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"settle" | "evaluate"> {
   const attemptIndex = task.attempts.length - 1;
   const attempt = task.attempts[attemptIndex];
@@ -165,7 +212,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   const elapsedMs = deps.now().getTime() - Date.parse(attempt.startedAt);
   if (elapsedMs > ATTEMPT_TIMEOUT_MS) {
     try {
-      captureReviewRequestLink(task, await deps.fetchCodeStatus(container.name));
+      captureContainerLinks(task, attempt, await deps.fetchCodeStatus(container.name));
     } catch (err) {
       console.error(`Task ${task.id}: could not capture code status before timing out attempt:`, err);
     }
@@ -209,7 +256,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     return "settle";
   }
 
-  captureReviewRequestLink(task, codeStatus);
+  captureContainerLinks(task, attempt, codeStatus);
   deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
   await deps.removeContainer(containerId);
   finishAttempt(deps, task, attempt, null);
@@ -219,7 +266,16 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
 }
 
 function buildStepPrompt(step: TaskStep, task: Task, reviewRequest: RepoReviewRequest | null): string {
+  if (step === "create_issue") {
+    if (task.sourceText === null) {
+      throw new Error(`Task ${task.id} has no source text to create an issue from`);
+    }
+    return buildCreateIssuePrompt(task.sourceText, task.repoSource);
+  }
   if (step === "implement") {
+    if (!task.workItem) {
+      throw new Error(`Task ${task.id} has no work item to implement`);
+    }
     return buildTaskImplementPrompt(task.workItem, task.repoSource);
   }
   if (!reviewRequest) {
@@ -380,9 +436,7 @@ async function executeDecision(
       return;
     }
     case "fail": {
-      task.phase = "failed";
-      task.error = decision.reason;
-      saveTask(deps, task);
+      failTask(deps, task, decision.reason);
       return;
     }
     case "forge_rebase": {
@@ -437,6 +491,10 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
   for (const task of toEvaluate.filter((t) => !t.reviewRequest)) {
     try {
       const forge = deps.getForge(task.repoSource);
+      if (!task.workItem && task.createdIssueUrl) {
+        await adoptCreatedIssue(deps, forge, task, task.createdIssueUrl);
+        if (!isSchedulable(task)) continue;
+      }
       const decision = await decide(task, null, diffHashFetcher(forge, task));
       await executeDecision(deps, forge, task, decision, null);
     } catch (err) {

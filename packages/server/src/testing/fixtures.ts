@@ -13,7 +13,10 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
       body: null,
       kind: "issue",
     },
+    sourceText: null,
+    createdIssueUrl: null,
     configByStep: {
+      create_issue: "default",
       implement: "default",
       fix_ci: "default",
       rebase: "default",
@@ -26,7 +29,7 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     lastReviewedDiffHash: null,
     activeContainerId: null,
     activeStep: null,
-    attemptsByStep: { implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    attemptsByStep: { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
     attempts: [],
     consecutiveErrors: 0,
     error: null,
@@ -36,6 +39,14 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+export function makeTextTask(overrides: Partial<Task> = {}): Task {
+  return makeTask({
+    workItem: null,
+    sourceText: "Add a widget dashboard with usage charts",
+    ...overrides,
+  });
+}
+
 export function makeLinkedTask(overrides: Partial<Task> = {}): Task {
   return makeTask({
     reviewRequest: {
@@ -43,7 +54,7 @@ export function makeLinkedTask(overrides: Partial<Task> = {}): Task {
       url: "https://github.com/acme/widgets/pull/12",
       sourceBranch: "feature",
     },
-    attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
     ...overrides,
   });
 }

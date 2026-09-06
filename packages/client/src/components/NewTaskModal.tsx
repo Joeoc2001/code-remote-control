@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ConfigSummary, RepoWorkItem, Task, TaskStep } from "../types";
 import { TASK_STEPS } from "../types";
-import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, fetchRepoWorkItems, createTasks } from "../api";
+import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, fetchRepoWorkItems, createTasks, createTaskFromText } from "../api";
 import RepoPicker, { type RepoEntry } from "./RepoPicker";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
 
@@ -12,6 +12,13 @@ interface NewTaskModalProps {
 
 type WorkItemChoice = { item: RepoWorkItem; selected: boolean };
 
+type TaskMode = "work_items" | "text";
+
+const TASK_MODES: Array<{ mode: TaskMode; label: string }> = [
+  { mode: "work_items", label: "From work items" },
+  { mode: "text", label: "From pasted text" },
+];
+
 export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
   const [configs, setConfigs] = useState<ConfigSummary[]>([]);
   const [repos, setRepos] = useState<RepoEntry[]>([]);
@@ -19,8 +26,15 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
   const [selectedConfig, setSelectedConfig] = useState("");
   const [selectedRepo, setSelectedRepo] = useState<RepoEntry | null>(null);
   const [workItems, setWorkItems] = useState<WorkItemChoice[] | null>(null);
+  const [mode, setMode] = useState<TaskMode>("work_items");
+  const [pastedText, setPastedText] = useState("");
   const [customisePerStep, setCustomisePerStep] = useState(false);
   const [configByStep, setConfigByStep] = useState<Partial<Record<TaskStep, string>>>({});
+  const stepsForMode = mode === "text" ? TASK_STEPS : TASK_STEPS.filter((step) => step !== "create_issue");
+  const configByStepForMode = () =>
+    customisePerStep
+      ? Object.fromEntries(stepsForMode.flatMap((step) => (configByStep[step] ? [[step, configByStep[step]]] : [])))
+      : undefined;
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +125,7 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
         repoSource: selectedRepo.source,
         workItemIds,
         configName: selectedConfig,
-        configByStep: customisePerStep ? configByStep : undefined,
+        configByStep: configByStepForMode(),
       });
 
       if (result.tasks.length > 0) {
@@ -134,6 +148,33 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
     }
   };
 
+  const handleCreateFromText = async () => {
+    if (!selectedConfig || !selectedRepo) return;
+    const text = pastedText.trim();
+    if (text === "") {
+      setError("Paste a description of the work first");
+      return;
+    }
+
+    setWorking(true);
+    setError(null);
+    try {
+      const task = await createTaskFromText({
+        repoFullName: selectedRepo.fullName,
+        repoSource: selectedRepo.source,
+        text,
+        configName: selectedConfig,
+        configByStep: configByStepForMode(),
+      });
+      onCreated([task]);
+      onClose();
+    } catch (err) {
+      setError("Failed to create task: " + String(err));
+    } finally {
+      setWorking(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm"
@@ -146,7 +187,7 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
           <div>
             <h2 className="text-lg font-semibold text-slate-100">New Task</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Shepherds each selected work item from issue to merged PR/MR without further input.
+              Shepherds work from issue to merged PR/MR without further input.
             </p>
           </div>
           <button
@@ -188,7 +229,7 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
                 </button>
                 {customisePerStep && (
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 border border-slate-700 rounded-lg p-3">
-                    {TASK_STEPS.map((step) => (
+                    {stepsForMode.map((step) => (
                       <label key={step} className="text-xs text-slate-400">
                         {TASK_STEP_LABELS[step]}
                         <select
@@ -217,7 +258,34 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
                 onSelect={setSelectedRepo}
               />
 
-              {workItems === null ? (
+              <div className="grid grid-cols-2 gap-px bg-slate-700 border border-slate-700 rounded-lg overflow-hidden">
+                {TASK_MODES.map(({ mode: taskMode, label }) => (
+                  <button
+                    key={taskMode}
+                    type="button"
+                    onClick={() => setMode(taskMode)}
+                    className={`px-3 py-1.5 text-xs ${mode === taskMode ? "bg-slate-700 text-slate-100" : "bg-slate-900 text-slate-400 hover:bg-slate-800"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {mode === "text" ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-500">
+                    An agent first explores the repository and opens an issue from your text; the task then shepherds
+                    that issue to a merged PR/MR.
+                  </p>
+                  <textarea
+                    value={pastedText}
+                    onChange={(e) => setPastedText(e.target.value)}
+                    placeholder="Describe the feature or fix..."
+                    rows={8}
+                    className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm resize-y"
+                  />
+                </div>
+              ) : workItems === null ? (
                 <button
                   type="button"
                   onClick={handleLoadWorkItems}
@@ -287,11 +355,21 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
             Cancel
           </button>
           <button
-            onClick={handleCreate}
-            disabled={!selectedConfig || !selectedRepo || working || loading || selectedCount === 0}
+            onClick={mode === "text" ? handleCreateFromText : handleCreate}
+            disabled={
+              !selectedConfig ||
+              !selectedRepo ||
+              working ||
+              loading ||
+              (mode === "text" ? pastedText.trim() === "" : selectedCount === 0)
+            }
             className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {working ? "Working..." : `Create ${selectedCount} Task${selectedCount === 1 ? "" : "s"}`}
+            {working
+              ? "Working..."
+              : mode === "text"
+                ? "Create Task"
+                : `Create ${selectedCount} Task${selectedCount === 1 ? "" : "s"}`}
           </button>
         </div>
       </div>

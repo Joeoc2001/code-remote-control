@@ -7,6 +7,15 @@ import Footer from "../components/Footer";
 import TaskPhaseBadge from "../components/TaskPhaseBadge";
 import ReviewRequestStatusIcon from "../components/ReviewRequestStatusIcon";
 import { TASK_STEP_LABELS } from "../components/taskStepLabels";
+import { taskTitle } from "../components/taskTitle";
+
+function SourceText({ text }: { text: string }) {
+  return (
+    <pre className="mt-3 max-h-48 overflow-auto rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs text-slate-300 whitespace-pre-wrap break-words">
+      {text}
+    </pre>
+  );
+}
 
 function formatTimestamp(value: string): string {
   return new Date(value).toLocaleString();
@@ -189,14 +198,18 @@ export default function TaskView() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h1 className="text-lg font-semibold text-slate-100">
-                    <a
-                      href={task.workItem.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="hover:underline"
-                    >
-                      {task.workItem.reference} {task.workItem.title}
-                    </a>
+                    {task.workItem ? (
+                      <a
+                        href={task.workItem.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline"
+                      >
+                        {taskTitle(task)}
+                      </a>
+                    ) : (
+                      taskTitle(task)
+                    )}
                   </h1>
                   <p className="text-sm text-slate-400 mt-1">{task.repoFullName}</p>
                 </div>
@@ -226,7 +239,7 @@ export default function TaskView() {
                   <button
                     onClick={() =>
                       runAction(async () => {
-                        if (!confirm(`Delete task "${task.workItem.reference} ${task.workItem.title}"?`)) return;
+                        if (!confirm(`Delete task "${taskTitle(task)}"?`)) return;
                         await deleteTask(task.id);
                         navigate("/tasks");
                       })
@@ -257,6 +270,15 @@ export default function TaskView() {
                   </a>
                 )}
               </div>
+              {task.sourceText && !task.workItem && <SourceText text={task.sourceText} />}
+              {task.sourceText && task.workItem && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+                    Original request
+                  </summary>
+                  <SourceText text={task.sourceText} />
+                </details>
+              )}
               {task.error && (
                 <p className="mt-3 text-sm text-rose-300 bg-rose-900/20 border border-rose-800 rounded-lg px-3 py-2 break-words">
                   {task.error}
