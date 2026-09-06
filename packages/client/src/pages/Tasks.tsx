@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Task } from "../types";
-import { fetchTasks, subscribeToEvents } from "../api";
+import { fetchTasks, subscribeToEvents, deleteMergedTasks } from "../api";
 import Header from "../components/Header";
 import TaskCard from "../components/TaskCard";
 import NewTaskModal from "../components/NewTaskModal";
+import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import Footer from "../components/Footer";
 
 export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [showDeleteMergedModal, setShowDeleteMergedModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
@@ -69,12 +71,20 @@ export default function Tasks() {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <Header
         actions={
-          <button
-            onClick={() => setShowModal(true)}
-            className="px-3.5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg text-sm font-semibold transition-colors border border-slate-600"
-          >
-            New Task
-          </button>
+          <>
+            <button
+              onClick={() => setShowDeleteMergedModal(true)}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-rose-200 rounded-lg text-sm font-medium transition-colors border border-slate-700"
+            >
+              Delete Merged
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="px-3.5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg text-sm font-semibold transition-colors border border-slate-600"
+            >
+              New Task
+            </button>
+          </>
         }
       />
       {!connected && (
@@ -114,6 +124,19 @@ export default function Tasks() {
       </main>
       {showModal && (
         <NewTaskModal onClose={() => setShowModal(false)} onCreated={handleTasksCreated} />
+      )}
+      {showDeleteMergedModal && (
+        <ConfirmDeleteModal
+          title="Delete Merged Tasks"
+          message="This will delete all merged tasks. This action cannot be undone."
+          confirmLabel="Delete Merged"
+          onConfirm={deleteMergedTasks}
+          onClose={() => setShowDeleteMergedModal(false)}
+          onDeleted={() => {
+            setShowDeleteMergedModal(false);
+            void loadTasks();
+          }}
+        />
       )}
       <Footer />
     </div>
