@@ -58,14 +58,25 @@ export async function deleteContainer(id: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete container");
 }
 
+async function assertBulkDeleteSucceeded(res: Response, what: string): Promise<void> {
+  if (res.status === 204) return;
+  if (res.status === 207) {
+    const { errors } = (await res.json()) as { errors: Array<{ id: string; error: string }> };
+    throw new Error(
+      `Failed to delete ${errors.length} ${what}: ` + errors.map((e) => `${e.id}: ${e.error}`).join("; "),
+    );
+  }
+  throw new Error(`Failed to delete ${what}`);
+}
+
 export async function deleteAllContainers(): Promise<void> {
   const res = await fetch(`${BASE}/containers`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete all containers");
+  await assertBulkDeleteSucceeded(res, "containers");
 }
 
 export async function deleteFinishedContainers(): Promise<void> {
   const res = await fetch(`${BASE}/containers?scope=finished`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete finished containers");
+  await assertBulkDeleteSucceeded(res, "finished containers");
 }
 
 export async function fetchConfigs(): Promise<ConfigSummary[]> {
@@ -168,7 +179,7 @@ export async function deleteTask(id: string): Promise<void> {
 
 export async function deleteMergedTasks(): Promise<void> {
   const res = await fetch(`${BASE}/tasks?phase=merged`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete merged tasks");
+  await assertBulkDeleteSucceeded(res, "merged tasks");
 }
 
 export async function fetchTaskAttemptLog(id: string, attemptIndex: number): Promise<string> {

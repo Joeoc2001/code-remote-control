@@ -12,7 +12,7 @@ import usePolledContainerData from "../hooks/usePolledContainerData";
 import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
 import NewContainerModal from "../components/NewContainerModal";
-import DeleteAllModal from "../components/DeleteAllModal";
+import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import Footer from "../components/Footer";
 
 const TASK_DESCRIPTION_REFRESH_INTERVAL_MS = 15000;
@@ -206,7 +206,7 @@ export default function Home() {
         />
       )}
       {deleteScope && (
-        <DeleteAllModal
+        <ConfirmDeleteModal
           title={deleteScope === "all" ? "Delete All Containers" : "Delete Finished Containers"}
           message={
             deleteScope === "all"

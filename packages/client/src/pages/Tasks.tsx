@@ -4,7 +4,7 @@ import { fetchTasks, subscribeToEvents, deleteMergedTasks } from "../api";
 import Header from "../components/Header";
 import TaskCard from "../components/TaskCard";
 import NewTaskModal from "../components/NewTaskModal";
-import DeleteAllModal from "../components/DeleteAllModal";
+import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import Footer from "../components/Footer";
 
 export default function Tasks() {
@@ -126,7 +126,7 @@ export default function Tasks() {
         <NewTaskModal onClose={() => setShowModal(false)} onCreated={handleTasksCreated} />
       )}
       {showDeleteMergedModal && (
-        <DeleteAllModal
+        <ConfirmDeleteModal
           title="Delete Merged Tasks"
           message="This will delete all merged tasks. This action cannot be undone."
           confirmLabel="Delete Merged"

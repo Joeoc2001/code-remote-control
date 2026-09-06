@@ -20,6 +20,7 @@ import { getForge } from "./forge/index.js";
 import { fetchRepos as fetchGitHubRepos } from "./forge/github.js";
 import { fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./forge/gitlab.js";
 import { tasksRouter } from "./tasks/routes.js";
+import { taskStore } from "./tasks/runtime.js";
 import type { ConfigSummaryFile, CreateContainerRequestV2, CreateContainersRequest, ManagedContainer } from "./types.js";
 import { getRepoNameError, isValidContainerId, isValidRepoSource } from "./validation.js";
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
@@ -206,9 +207,21 @@ async function isFinished(container: ManagedContainer): Promise<boolean> {
   try {
     const status = await fetchInstanceStatus(container);
     return status?.state === "finished";
-  } catch {
+  } catch (err) {
+    console.error(`Could not fetch instance status for container ${container.name}:`, err);
     return false;
   }
+}
+
+function listTaskContainerIds(): Set<string> {
+  return new Set(taskStore.list().flatMap((task) => (task.activeContainerId ? [task.activeContainerId] : [])));
+}
+
+async function listFinishedContainers(containers: ManagedContainer[]): Promise<ManagedContainer[]> {
+  const taskContainerIds = listTaskContainerIds();
+  const candidates = containers.filter((c) => !taskContainerIds.has(c.id));
+  const finished = await Promise.all(candidates.map(async (c) => ((await isFinished(c)) ? c : null)));
+  return finished.filter((c): c is ManagedContainer => c !== null);
 }
 
 router.delete("/api/containers", async (req, res) => {
@@ -220,12 +233,7 @@ router.delete("/api/containers", async (req, res) => {
     }
 
     const containers = await listContainers();
-    const targets =
-      scope === "all"
-        ? containers
-        : (await Promise.all(containers.map(async (c) => ((await isFinished(c)) ? c : null)))).filter(
-            (c): c is ManagedContainer => c !== null,
-          );
+    const targets = scope === "all" ? containers : await listFinishedContainers(containers);
 
     const results = await Promise.allSettled(
       targets.map(async (c) => {

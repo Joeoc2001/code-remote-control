@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-interface DeleteAllModalProps {
+interface ConfirmDeleteModalProps {
   title: string;
   message: string;
   confirmLabel: string;
@@ -9,7 +9,7 @@ interface DeleteAllModalProps {
   onDeleted: () => void;
 }
 
-export default function DeleteAllModal({ title, message, confirmLabel, onConfirm, onClose, onDeleted }: DeleteAllModalProps) {
+export default function ConfirmDeleteModal({ title, message, confirmLabel, onConfirm, onClose, onDeleted }: ConfirmDeleteModalProps) {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +39,7 @@ export default function DeleteAllModal({ title, message, confirmLabel, onConfirm
       await onConfirm();
       onDeleted();
     } catch (err) {
-      setError("Failed to delete: " + String(err));
+      setError(err instanceof Error ? err.message : String(err));
       setDeleting(false);
     }
   };
