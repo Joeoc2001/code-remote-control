@@ -4,6 +4,8 @@ import {
   mapGitHubCiState,
   mapGitHubState,
   mapPullRequestNode,
+  PULL_REQUEST_QUERY,
+  PULL_REQUESTS_QUERY,
   type GitHubPullRequestNode,
 } from "./github.js";
 
@@ -196,5 +198,40 @@ describe("mapPullRequestNode", () => {
       "bot-login",
     );
     assert.equal(item.hasPlaceholderComment, false);
+  });
+});
+
+const GITHUB_MAX_QUERY_NODES = 500_000;
+
+function countRequestedNodes(query: string): number {
+  const multipliers: number[] = [1];
+  let pending = 1;
+  let total = 0;
+  const tokens = query.matchAll(/\((?:[^()]*\b(?:first|last):\s*(\d+))?[^()]*\)|[{}]/g);
+  for (const token of tokens) {
+    if (token[0] === "{") {
+      multipliers.push(multipliers[multipliers.length - 1] * pending);
+      pending = 1;
+    } else if (token[0] === "}") {
+      multipliers.pop();
+    } else if (token[1] !== undefined) {
+      pending = Number(token[1]);
+      total += multipliers[multipliers.length - 1] * pending;
+    }
+  }
+  return total;
+}
+
+describe("GitHub GraphQL queries", () => {
+  it("counts nested connection nodes the way GitHub does", () => {
+    assert.equal(countRequestedNodes(`query { a(first: 10) { nodes { b(last: 20) { nodes { c } } } } }`), 210);
+  });
+
+  it("keep the pull request list within GitHub's node limit", () => {
+    assert.ok(countRequestedNodes(PULL_REQUESTS_QUERY) < GITHUB_MAX_QUERY_NODES);
+  });
+
+  it("keep the single pull request lookup within GitHub's node limit", () => {
+    assert.ok(countRequestedNodes(PULL_REQUEST_QUERY) < GITHUB_MAX_QUERY_NODES);
   });
 });

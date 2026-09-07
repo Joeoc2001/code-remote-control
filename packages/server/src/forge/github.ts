@@ -10,6 +10,7 @@ import { hashDiffText } from "./diff-hash.js";
 import { isStdinPlaceholderBody } from "./body.js";
 
 const MAX_PAGES = 10;
+const PULL_REQUESTS_PER_PAGE = 25;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const GRAPHQL_ACCEPT = "application/vnd.github.merge-info-preview+json";
 const DIFF_TOO_LARGE_STATUS = 406;
@@ -173,17 +174,17 @@ const PULL_REQUEST_FIELDS = `
   }
 `;
 
-const PULL_REQUESTS_QUERY = `
+export const PULL_REQUESTS_QUERY = `
 query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: OPEN, first: 100, after: $cursor) {
+    pullRequests(states: OPEN, first: ${PULL_REQUESTS_PER_PAGE}, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes { ${PULL_REQUEST_FIELDS} }
     }
   }
 }`;
 
-const PULL_REQUEST_QUERY = `
+export const PULL_REQUEST_QUERY = `
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) { ${PULL_REQUEST_FIELDS} }
