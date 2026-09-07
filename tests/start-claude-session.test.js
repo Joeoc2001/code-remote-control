@@ -162,6 +162,24 @@ describe("start-claude-session.sh", () => {
     assert.deepEqual(result.claudeArgv, [AWKWARD_PROMPT]);
   });
 
+  test("records when the claude process was launched so hooks can ignore older transcript entries", () => {
+    for (const options of [
+      { transcriptFiles: [] },
+      { transcriptFiles: [], initialPrompt: "task" },
+      { transcriptFiles: ["session.jsonl"] },
+      { transcriptFiles: ["session.jsonl"], instanceStatus: { state: "finished", updatedAt: "2026-08-16T22:06:47.000Z" } },
+    ]) {
+      const before = Math.floor(Date.now() / 1000) * 1000;
+      const result = startSession(options);
+      const after = Date.now();
+
+      assert.equal(result.error, null);
+      assert.match(result.sessionStartedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\n$/);
+      const startedAt = Date.parse(result.sessionStartedAt.trim());
+      assert.ok(startedAt >= before && startedAt <= after, `${result.sessionStartedAt.trim()} is not between ${before} and ${after}`);
+    }
+  });
+
   test("holds the terminal open with the exit status when claude fails to start", () => {
     const result = startSession({ transcriptFiles: ["session.jsonl"], claudeExitStatus: 7 });
 

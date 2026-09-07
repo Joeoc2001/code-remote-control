@@ -4,12 +4,14 @@ set -euo pipefail
 SESSION_NAME="${1:?usage: start-claude-session.sh <tmux-session-name>}"
 TRANSCRIPT_DIR="${CRC_TRANSCRIPT_DIR:-/root/.claude/projects/-workspace}"
 INSTANCE_STATUS_PATH="${CRC_INSTANCE_STATUS_PATH:-/run/crc-instance-status.json}"
+SESSION_STARTED_AT_PATH="${CRC_RUN_DIR:-/run}/crc-session-started-at"
 
 export CRC_RESUME_PROMPT="The container running this session was restarted and the previous conversation has been resumed. Re-read the conversation above, inspect the current state of /workspace (current branch, uncommitted changes, work already pushed), then continue the task from where it left off."
 
 HOLD_PANE_ON_FAILURE='status=$?; echo; echo "claude exited with status $status -- the session could not be started. Press Ctrl-D to close this terminal."; exec cat'
 
 launch() {
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$SESSION_STARTED_AT_PATH"
   exec tmux new-session -d -s "$SESSION_NAME" sh -c "$1 || { $HOLD_PANE_ON_FAILURE; }"
 }
 

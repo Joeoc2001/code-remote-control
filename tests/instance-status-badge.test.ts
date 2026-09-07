@@ -11,7 +11,7 @@ const CASES: Array<{ id: string; status: InstanceStatus; label: string; colour: 
   { id: "bbbb000000000000", status: { state: "waiting", updatedAt: UPDATED_AT }, label: "Waiting", colour: "amber" },
   {
     id: "cccc000000000000",
-    status: { state: "awaiting-background", updatedAt: UPDATED_AT },
+    status: { state: "awaiting-background", pendingTaskIds: ["bq17zaptz", "agent-a1b"], updatedAt: UPDATED_AT },
     label: "Waiting on agents",
     colour: "violet",
   },
@@ -109,6 +109,12 @@ describe("instance status badge", () => {
 
     assert.match(badge.title, /^Waiting on agents since /);
     assert.ok(badge.title.includes(new Date(UPDATED_AT).toLocaleString()));
+  });
+
+  test("the awaiting-background pill names the tasks the agent is waiting on", async () => {
+    const badge = await badgeFor("cccc000000000000");
+
+    assert.match(badge.title, /\(bq17zaptz, agent-a1b\)$/);
   });
 
   test("labels one badge per container on the containers list, in the order they are listed", async () => {

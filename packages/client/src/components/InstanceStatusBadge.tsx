@@ -38,9 +38,10 @@ export default function InstanceStatusBadge({ instanceStatus }: InstanceStatusBa
 
   const variant = VARIANTS[instanceStatus.state];
   const since = instanceStatus.state === "waiting" ? "Waiting for your input since" : `${variant.label} since`;
+  const pending = instanceStatus.pendingTaskIds?.length ? ` (${instanceStatus.pendingTaskIds.join(", ")})` : "";
   const title = instanceStatus.updatedAt
-    ? `${since} ${new Date(instanceStatus.updatedAt).toLocaleString()}`
-    : variant.idle;
+    ? `${since} ${new Date(instanceStatus.updatedAt).toLocaleString()}${pending}`
+    : `${variant.idle}${pending}`;
 
   return (
     <span

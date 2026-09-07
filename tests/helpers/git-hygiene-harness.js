@@ -21,15 +21,17 @@ function git(cwd, ...args) {
   }).trim();
 }
 
+function writeStub(bin, name, body) {
+  const file = path.join(bin, name);
+  writeFileSync(file, body);
+  chmodSync(file, 0o755);
+}
+
 function makeRoot() {
   const root = mkdtempSync(path.join(os.tmpdir(), "crc-git-hygiene-"));
   const bin = path.join(root, "bin");
   mkdirSync(bin);
-  for (const name of ["gh", "glab"]) {
-    const file = path.join(bin, name);
-    writeFileSync(file, NO_OUTPUT_STUB);
-    chmodSync(file, 0o755);
-  }
+  for (const name of ["gh", "glab"]) writeStub(bin, name, NO_OUTPUT_STUB);
   return { root, bin };
 }
 
@@ -60,8 +62,12 @@ function writeTranscript(root, entries) {
   return transcriptPath;
 }
 
-function runHook({ root, bin, workspace, payload }) {
-  const statusPath = path.join(root, "crc-instance-status.json");
+function statusPathFor(root) {
+  return path.join(root, "crc-instance-status.json");
+}
+
+function runHook({ root, bin, workspace, payload, env = {} }) {
+  const statusPath = statusPathFor(root);
   const result = execFileSync("node", [HOOK_SCRIPT], {
     input: JSON.stringify(payload),
     encoding: "utf-8",
@@ -71,6 +77,7 @@ function runHook({ root, bin, workspace, payload }) {
       CRC_WORKSPACE_DIR: workspace,
       CRC_INSTANCE_STATUS_PATH: statusPath,
       CRC_RUN_DIR: root,
+      ...env,
     },
   });
 
@@ -81,4 +88,4 @@ function runHook({ root, bin, workspace, payload }) {
   };
 }
 
-module.exports = { git, makeRoot, makeWorkspace, runHook, writeTranscript };
+module.exports = { git, makeRoot, makeWorkspace, runHook, statusPathFor, writeStub, writeTranscript };

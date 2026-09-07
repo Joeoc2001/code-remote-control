@@ -67,6 +67,36 @@ describe("instance-status hook", () => {
     assert.equal(statusInode(), inodeBefore);
   });
 
+  test("records which background tasks the agent is waiting on", () => {
+    assert.equal(writeInstanceStatus("awaiting-background", { pendingTaskIds: ["bq17zaptz", "agent-a1b"] }), true);
+
+    const status = readStatus();
+    assert.deepEqual(Object.keys(status).sort(), ["pendingTaskIds", "state", "updatedAt"]);
+    assert.deepEqual(status.pendingTaskIds, ["bq17zaptz", "agent-a1b"]);
+  });
+
+  test("skips the write when the state and the pending tasks both match", () => {
+    writeInstanceStatus("awaiting-background", { pendingTaskIds: ["bq17zaptz"] });
+    const inodeBefore = statusInode();
+
+    assert.equal(writeInstanceStatus("awaiting-background", { pendingTaskIds: ["bq17zaptz"] }), false);
+    assert.equal(statusInode(), inodeBefore);
+  });
+
+  test("rewrites the file when only the pending tasks change", () => {
+    writeInstanceStatus("awaiting-background", { pendingTaskIds: ["bq17zaptz", "agent-a1b"] });
+
+    assert.equal(writeInstanceStatus("awaiting-background", { pendingTaskIds: ["agent-a1b"] }), true);
+    assert.deepEqual(readStatus().pendingTaskIds, ["agent-a1b"]);
+  });
+
+  test("drops the pending tasks once the state moves on", () => {
+    writeInstanceStatus("awaiting-background", { pendingTaskIds: ["bq17zaptz"] });
+
+    assert.equal(writeInstanceStatus("finished"), true);
+    assert.deepEqual(Object.keys(readStatus()).sort(), ["state", "updatedAt"]);
+  });
+
   test("rewrites the file atomically when the state changes", () => {
     writeInstanceStatus("waiting");
     const inodeBefore = statusInode();
