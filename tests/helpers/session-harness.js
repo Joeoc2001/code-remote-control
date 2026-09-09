@@ -74,6 +74,7 @@ function prepare({
     CRC_TEST_DIR: root,
     CRC_TRANSCRIPT_DIR: transcriptDir,
     CRC_INSTANCE_STATUS_PATH: instanceStatusPath,
+    CRC_RUN_DIR: root,
   };
   if (initialPrompt !== undefined) env.CRC_INITIAL_PROMPT = initialPrompt;
   if (claudeExitStatus !== undefined) env.CRC_TEST_CLAUDE_EXIT_STATUS = String(claudeExitStatus);
@@ -99,6 +100,7 @@ function collect(root) {
     claudeArgv: read("claude-argv", readArgv),
     claudeResumePromptEnv: read("claude-resume-prompt-env", (file) => readFileSync(file, "utf-8")),
     claudeInitialPromptEnv: read("claude-initial-prompt-env", (file) => readFileSync(file, "utf-8")),
+    sessionStartedAt: read("crc-session-started-at", (file) => readFileSync(file, "utf-8")),
   };
 }
 

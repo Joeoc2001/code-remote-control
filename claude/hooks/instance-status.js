@@ -6,23 +6,28 @@ function instanceStatusPath() {
   return process.env.CRC_INSTANCE_STATUS_PATH || "/run/crc-instance-status.json";
 }
 
-function currentInstanceState(path) {
+function currentInstanceStatus(path) {
   try {
-    return JSON.parse(readFileSync(path, "utf-8")).state;
+    return JSON.parse(readFileSync(path, "utf-8"));
   } catch {
     return null;
   }
 }
 
-function writeInstanceStatus(state) {
+function sameStatus(current, state, details) {
+  if (current === null || current.state !== state) return false;
+  return JSON.stringify(current.pendingTaskIds ?? null) === JSON.stringify(details.pendingTaskIds ?? null);
+}
+
+function writeInstanceStatus(state, details = {}) {
   if (!INSTANCE_STATES.includes(state)) {
     throw new Error(`instance-status.js expects one of ${INSTANCE_STATES.join(", ")}, got '${state}'`);
   }
 
   const path = instanceStatusPath();
-  if (currentInstanceState(path) === state) return false;
+  if (sameStatus(currentInstanceStatus(path), state, details)) return false;
 
-  const payload = { state, updatedAt: new Date().toISOString() };
+  const payload = { state, ...details, updatedAt: new Date().toISOString() };
   const stagingPath = `${path}.${process.pid}.tmp`;
   writeFileSync(stagingPath, `${JSON.stringify(payload)}\n`, { encoding: "utf-8", mode: 0o644 });
   renameSync(stagingPath, path);

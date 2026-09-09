@@ -44,6 +44,26 @@ describe("container metadata server: instance status", () => {
     });
   }
 
+  test("round-trips the pending task ids the hook records", async () => {
+    writeInstanceStatus("awaiting-background", { pendingTaskIds: ["bq17zaptz", "agent-a1b"] });
+
+    const status = await readInstanceStatus();
+    assert.equal(status.state, "awaiting-background");
+    assert.deepEqual(status.pendingTaskIds, ["bq17zaptz", "agent-a1b"]);
+  });
+
+  test("omits pending task ids when the hook recorded none", async () => {
+    writeInstanceStatus("finished");
+
+    assert.ok(!("pendingTaskIds" in (await readInstanceStatus())));
+  });
+
+  test("fails loudly on pending task ids that are not a list of strings", async () => {
+    writeFileSync(statusPath, JSON.stringify({ state: "awaiting-background", pendingTaskIds: "bq17zaptz", updatedAt: "2026-08-30T10:00:00.000Z" }));
+
+    await assert.rejects(readInstanceStatus(), /malformed pendingTaskIds/);
+  });
+
   test("fails loudly on a state it does not know", async () => {
     writeFileSync(statusPath, JSON.stringify({ state: "confused", updatedAt: "2026-08-30T10:00:00.000Z" }));
 

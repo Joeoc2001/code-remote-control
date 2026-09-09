@@ -15,8 +15,8 @@ function run(command, args) {
   return (result.stdout || "").trim();
 }
 
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function sleepUntilNextPoll(deadline) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(POLL_INTERVAL_MS, deadline - Date.now()));
 }
 
 function tryParseJson(text) {
@@ -38,7 +38,7 @@ function allowStop() {
 
 function awaitBackgroundWork(pendingTaskIds) {
   process.stderr.write(`git-hygiene hook: waiting on background tasks ${pendingTaskIds.join(", ")}\n`);
-  writeInstanceStatus("awaiting-background");
+  writeInstanceStatus("awaiting-background", { pendingTaskIds });
   process.exit(0);
 }
 
@@ -138,7 +138,7 @@ function watchGithub(branch) {
   while (Date.now() < deadline) {
     summary = parseGithubChecks(tryParseJson(run("gh", ["pr", "checks", branch, "--json", "bucket,name,state,link"])));
     if (summary && summary.pending === 0 && summary.cancel === 0) break;
-    sleepSync(POLL_INTERVAL_MS);
+    sleepUntilNextPoll(deadline);
   }
 
   if (!summary) return { handled: true, failure: null };
@@ -184,7 +184,7 @@ function watchGitlab(branch, headSha) {
   while (Date.now() < deadline) {
     pipeline = parseGitlabPipeline(tryParseJson(run("glab", ["api", `projects/:id/pipelines?ref=${encodedBranch}&sha=${encodedSha}&per_page=1`])));
     if (pipeline && pipeline.sha === headSha && isGitlabTerminal(pipeline.status)) break;
-    sleepSync(POLL_INTERVAL_MS);
+    sleepUntilNextPoll(deadline);
   }
 
   if (!pipeline) return { handled: true, failure: null };
@@ -219,6 +219,7 @@ async function main() {
   if (state.branch === "HEAD") allowStop();
   if (fingerprint.watchedHead === state.headSha) allowStop();
 
+  writeInstanceStatus("working");
   const result = watchGithub(state.branch);
   const finalResult = result.handled ? result : watchGitlab(state.branch, state.headSha);
 

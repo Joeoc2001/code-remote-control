@@ -1,30 +1,74 @@
-const { test, describe } = require("node:test");
+const { test, describe, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const { closeSync, mkdtempSync, openSync, rmSync, writeFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { pendingBackgroundTaskIds, readPendingBackgroundTaskIds } = require("../claude/hooks/background-tasks.js");
+const { setTimeout: delay } = require("node:timers/promises");
+const {
+  isHeldOpenByAnyProcess,
+  pendingBackgroundTasks,
+  readPendingBackgroundTaskIds,
+  readSessionStartedAt,
+  sessionStartedAtPath,
+} = require("../claude/hooks/background-tasks.js");
 
 function transcript(...entries) {
   return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
 
-function backgroundBashLaunch(taskId) {
+function pendingBackgroundTaskIds(text, options) {
+  return pendingBackgroundTasks(text, options).map((task) => task.id);
+}
+
+function backgroundBashLaunch(taskId, { outputFile = null, timestamp } = {}) {
+  const outputNote = outputFile
+    ? ` Output is being written to: ${outputFile}. You will be notified when it completes. To check interim output, use Read on that file path.`
+    : "";
   return {
     type: "user",
+    ...(timestamp ? { timestamp } : {}),
     message: {
       role: "user",
       content: [
         {
           tool_use_id: `toolu_${taskId}`,
           type: "tool_result",
-          content: `Command running in background with ID: ${taskId}.`,
+          content: `Command running in background with ID: ${taskId}.${outputNote}`,
           is_error: false,
         },
       ],
     },
     toolUseResult: { stdout: "", stderr: "", interrupted: false, isImage: false, backgroundTaskId: taskId },
   };
+}
+
+function taskStop(input, timestamp) {
+  return {
+    type: "assistant",
+    ...(timestamp ? { timestamp } : {}),
+    message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_stop", name: "TaskStop", input }] },
+  };
+}
+
+function holdOpen(file) {
+  const fd = openSync(file, "a");
+  const child = spawn("sleep", ["60"], { stdio: ["ignore", fd, fd] });
+  closeSync(fd);
+  return child;
+}
+
+async function release(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill("SIGKILL");
+  await exited;
+}
+
+async function waitFor(condition) {
+  const deadline = Date.now() + 5_000;
+  while (!condition() && Date.now() < deadline) await delay(20);
+  assert.ok(condition(), "timed out waiting for the condition");
 }
 
 function foregroundBashResult() {
@@ -220,19 +264,228 @@ describe("pendingBackgroundTaskIds", () => {
 
     assert.deepEqual(pendingBackgroundTaskIds(transcript(backgroundBashLaunch("bq17zaptz"), prose)), ["bq17zaptz"]);
   });
+
+  test("records the output file named in a background bash launch", () => {
+    const text = transcript(backgroundBashLaunch("bq17zaptz", { outputFile: "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output" }));
+
+    assert.deepEqual(pendingBackgroundTasks(text), [
+      { id: "bq17zaptz", outputFile: "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output" },
+    ]);
+  });
+
+  test("records no output file for launches that do not name one", () => {
+    const text = transcript(backgroundBashLaunch("bq17zaptz"), agentLaunch("agent-a1b"), remoteAgentLaunch("remote-7"));
+
+    assert.deepEqual(pendingBackgroundTasks(text).map((task) => task.outputFile), [null, null, null]);
+  });
+
+  test("treats a TaskStop call as terminal for a bash task that never notifies", () => {
+    const text = transcript(backgroundBashLaunch("bq17zaptz"), taskStop({ task_id: "bq17zaptz" }));
+
+    assert.deepEqual(pendingBackgroundTaskIds(text), []);
+  });
+
+  test("accepts the deprecated shell_id spelling of a TaskStop call", () => {
+    const text = transcript(backgroundBashLaunch("bq17zaptz"), taskStop({ shell_id: "bq17zaptz" }));
+
+    assert.deepEqual(pendingBackgroundTaskIds(text), []);
+  });
+
+  test("only clears the task the TaskStop call names", () => {
+    const text = transcript(backgroundBashLaunch("bq17zaptz"), agentLaunch("agent-a1b"), taskStop({ task_id: "agent-a1b" }));
+
+    assert.deepEqual(pendingBackgroundTaskIds(text), ["bq17zaptz"]);
+  });
+
+  test("reports a task relaunched under the same id after it was stopped", () => {
+    const text = transcript(
+      backgroundBashLaunch("bq17zaptz"),
+      taskStop({ task_id: "bq17zaptz" }),
+      backgroundBashLaunch("bq17zaptz"),
+    );
+
+    assert.deepEqual(pendingBackgroundTaskIds(text), ["bq17zaptz"]);
+  });
+
+  test("ignores a TaskStop that appears in a tool result rather than a tool call", () => {
+    const quoted = toolResultQuoting(JSON.stringify({ name: "TaskStop", input: { task_id: "bq17zaptz" } }));
+
+    assert.deepEqual(pendingBackgroundTaskIds(transcript(backgroundBashLaunch("bq17zaptz"), quoted)), ["bq17zaptz"]);
+  });
+
+  test("drops launches that predate the current session", () => {
+    const text = transcript(
+      backgroundBashLaunch("old-bash", { timestamp: "2026-09-07T10:00:00.000Z" }),
+      { ...agentLaunch("old-agent"), timestamp: "2026-09-07T10:00:01.000Z" },
+      backgroundBashLaunch("new-bash", { timestamp: "2026-09-07T10:05:00.500Z" }),
+    );
+
+    assert.deepEqual(pendingBackgroundTaskIds(text, { since: "2026-09-07T10:05:00Z" }), ["new-bash"]);
+  });
+
+  test("keeps every launch when no session start is known", () => {
+    const text = transcript(backgroundBashLaunch("old-bash", { timestamp: "2026-09-07T10:00:00.000Z" }));
+
+    assert.deepEqual(pendingBackgroundTaskIds(text), ["old-bash"]);
+    assert.deepEqual(pendingBackgroundTaskIds(text, { since: null }), ["old-bash"]);
+  });
+
+  test("keeps launches whose entries carry no timestamp", () => {
+    const text = transcript(backgroundBashLaunch("bq17zaptz"));
+
+    assert.deepEqual(pendingBackgroundTaskIds(text, { since: "2026-09-07T10:05:00Z" }), ["bq17zaptz"]);
+  });
+
+  test("fails loudly on a session start that is not a timestamp", () => {
+    assert.throws(() => pendingBackgroundTasks(transcript(), { since: "yesterday" }), /invalid session start 'yesterday'/);
+  });
+});
+
+describe("isHeldOpenByAnyProcess", () => {
+  let dir;
+  let child = null;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "crc-task-output-"));
+  });
+
+  afterEach(async () => {
+    if (child) await release(child);
+    child = null;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("sees a file that a running process writes its output to", async () => {
+    const file = path.join(dir, "task.output");
+    child = holdOpen(file);
+
+    await waitFor(() => isHeldOpenByAnyProcess(file));
+  });
+
+  test("stops seeing the file once that process is gone", async () => {
+    const file = path.join(dir, "task.output");
+    child = holdOpen(file);
+    await waitFor(() => isHeldOpenByAnyProcess(file));
+
+    await release(child);
+
+    assert.equal(isHeldOpenByAnyProcess(file), false);
+  });
+
+  test("does not see a file nobody holds open, whether or not it exists", () => {
+    const file = path.join(dir, "task.output");
+    assert.equal(isHeldOpenByAnyProcess(file), false);
+
+    writeFileSync(file, "done\n");
+    assert.equal(isHeldOpenByAnyProcess(file), false);
+  });
+});
+
+describe("readSessionStartedAt", () => {
+  let dir;
+  let originalRunDir;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "crc-session-start-"));
+    originalRunDir = process.env.CRC_RUN_DIR;
+    process.env.CRC_RUN_DIR = dir;
+  });
+
+  afterEach(() => {
+    if (originalRunDir === undefined) delete process.env.CRC_RUN_DIR;
+    else process.env.CRC_RUN_DIR = originalRunDir;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("reads the marker the session script writes under the run directory", () => {
+    assert.equal(sessionStartedAtPath(), path.join(dir, "crc-session-started-at"));
+    writeFileSync(sessionStartedAtPath(), "2026-09-07T10:05:00Z\n");
+
+    assert.equal(readSessionStartedAt(), "2026-09-07T10:05:00Z");
+  });
+
+  test("defaults to /run when no run directory is configured", () => {
+    delete process.env.CRC_RUN_DIR;
+
+    assert.equal(sessionStartedAtPath(), "/run/crc-session-started-at");
+  });
+
+  test("reports no session start when the marker is missing", () => {
+    assert.equal(readSessionStartedAt(), null);
+  });
+
+  test("fails loudly when the marker is not a timestamp", () => {
+    writeFileSync(sessionStartedAtPath(), "garbage");
+
+    assert.throws(readSessionStartedAt, /does not hold a timestamp: 'garbage'/);
+  });
 });
 
 describe("readPendingBackgroundTaskIds", () => {
-  test("reads pending tasks from a transcript file", () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "crc-transcript-"));
-    try {
-      const file = path.join(dir, "session.jsonl");
-      writeFileSync(file, transcript(agentLaunch("agent-a1b")));
+  let dir;
+  let child = null;
+  let originalRunDir;
 
-      assert.deepEqual(readPendingBackgroundTaskIds(file), ["agent-a1b"]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "crc-transcript-"));
+    originalRunDir = process.env.CRC_RUN_DIR;
+    process.env.CRC_RUN_DIR = dir;
+  });
+
+  afterEach(async () => {
+    if (originalRunDir === undefined) delete process.env.CRC_RUN_DIR;
+    else process.env.CRC_RUN_DIR = originalRunDir;
+    if (child) await release(child);
+    child = null;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeTranscript(...entries) {
+    const file = path.join(dir, "session.jsonl");
+    writeFileSync(file, transcript(...entries));
+    return file;
+  }
+
+  test("reads pending tasks from a transcript file", () => {
+    const file = writeTranscript(agentLaunch("agent-a1b"));
+
+    assert.deepEqual(readPendingBackgroundTaskIds(file), ["agent-a1b"]);
+  });
+
+  test("reports a background bash command while its process still writes to the output file", async () => {
+    const outputFile = path.join(dir, "bq17zaptz.output");
+    child = holdOpen(outputFile);
+    await waitFor(() => isHeldOpenByAnyProcess(outputFile));
+    const file = writeTranscript(backgroundBashLaunch("bq17zaptz", { outputFile }));
+
+    assert.deepEqual(readPendingBackgroundTaskIds(file), ["bq17zaptz"]);
+  });
+
+  test("drops a background bash command whose process is gone even though it never notified", async () => {
+    const outputFile = path.join(dir, "bq17zaptz.output");
+    child = holdOpen(outputFile);
+    await waitFor(() => isHeldOpenByAnyProcess(outputFile));
+    const file = writeTranscript(backgroundBashLaunch("bq17zaptz", { outputFile }), agentLaunch("agent-a1b"));
+
+    await release(child);
+
+    assert.deepEqual(readPendingBackgroundTaskIds(file), ["agent-a1b"]);
+  });
+
+  test("keeps trusting the transcript for a bash launch that names no output file", () => {
+    const file = writeTranscript(backgroundBashLaunch("bq17zaptz"));
+
+    assert.deepEqual(readPendingBackgroundTaskIds(file), ["bq17zaptz"]);
+  });
+
+  test("drops launches from before the session start marker", () => {
+    writeFileSync(sessionStartedAtPath(), "2026-09-07T10:05:00Z\n");
+    const file = writeTranscript(
+      { ...agentLaunch("old-agent"), timestamp: "2026-09-07T10:00:01.000Z" },
+      { ...agentLaunch("new-agent"), timestamp: "2026-09-07T10:05:01.000Z" },
+    );
+
+    assert.deepEqual(readPendingBackgroundTaskIds(file), ["new-agent"]);
   });
 
   test("reports nothing when the hook payload carries no transcript path", () => {

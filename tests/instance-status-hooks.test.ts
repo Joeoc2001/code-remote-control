@@ -60,7 +60,7 @@ describe("instance status hook wiring", () => {
 
   test("the git hygiene hook only ever writes states the hook script accepts", () => {
     const source = readFileSync(path.join(repoRoot, "claude", "hooks", "git-hygiene.js"), "utf-8");
-    const calls = [...source.matchAll(/writeInstanceStatus\((.*?)\)/g)].map((match) => match[1]);
+    const calls = [...source.matchAll(/writeInstanceStatus\(([^,)]*)/g)].map((match) => match[1]);
 
     assert.ok(calls.length > 0);
     for (const call of calls) {

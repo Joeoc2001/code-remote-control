@@ -23,6 +23,7 @@ export type InstanceState =
 
 export interface InstanceStatus {
   state: InstanceState;
+  pendingTaskIds?: string[];
   updatedAt: string | null;
 }
 
