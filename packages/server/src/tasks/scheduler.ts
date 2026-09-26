@@ -26,6 +26,7 @@ import { decide, type TaskDecision } from "./decide.js";
 export const TASK_TICK_INTERVAL_MS = 30_000;
 export const ATTEMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 export const MAX_CONSECUTIVE_ERRORS = 5;
+export const HELD_CONTAINER_SUFFIX = "; its container was kept so the agent can be inspected or prompted from the terminal";
 
 export interface SchedulerDeps {
   store: TaskStore;
@@ -84,31 +85,35 @@ async function recordTaskError(deps: SchedulerDeps, task: Task, err: unknown): P
   task.error = message;
 
   if (task.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-    task.phase = "failed";
-    task.error = `Failed after ${MAX_CONSECUTIVE_ERRORS} consecutive errors, most recently: ${message}`;
+    const reason = `Failed after ${MAX_CONSECUTIVE_ERRORS} consecutive errors, most recently: ${message}`;
     if (task.activeContainerId) {
-      try {
-        deps.store.writeAttemptLog(
-          task.id,
-          task.attempts.length - 1,
-          await deps.getContainerLogTail(task.activeContainerId),
-        );
-      } catch (logErr) {
-        console.error(`Task ${task.id}: could not capture log tail before failing:`, logErr);
-      }
-      try {
-        await deps.removeContainer(task.activeContainerId);
-      } catch (removeErr) {
-        console.error(`Failed to remove container for failed task ${task.id}:`, removeErr);
-      }
-      const attempt = task.attempts[task.attempts.length - 1];
-      attempt.finishedAt = deps.now().toISOString();
-      attempt.error = attempt.error ?? task.error;
-      task.activeContainerId = null;
-      task.activeStep = null;
+      await holdAttempt(deps, task, task.attempts.length - 1, `${reason}${HELD_CONTAINER_SUFFIX}`);
+      return;
     }
+    task.phase = "failed";
+    task.error = reason;
   }
 
+  saveTask(deps, task);
+}
+
+async function captureAttemptLog(deps: SchedulerDeps, task: Task, attemptIndex: number, containerId: string): Promise<void> {
+  try {
+    deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
+  } catch (err) {
+    console.error(`Task ${task.id}: could not capture log tail of attempt ${attemptIndex}:`, err);
+  }
+}
+
+async function holdAttempt(deps: SchedulerDeps, task: Task, attemptIndex: number, reason: string): Promise<void> {
+  const attempt = task.attempts[attemptIndex];
+  if (!attempt.containerId || attempt.containerId !== task.activeContainerId) {
+    throw new Error(`Task ${task.id}: cannot hold attempt ${attemptIndex}, it is not the task's active container`);
+  }
+  await captureAttemptLog(deps, task, attemptIndex, attempt.containerId);
+  attempt.error = reason;
+  task.phase = "failed";
+  task.error = reason;
   saveTask(deps, task);
 }
 
@@ -143,6 +148,16 @@ function captureContainerLinks(task: Task, attempt: TaskAttempt, codeStatus: Con
     return;
   }
   captureReviewRequestLink(task, codeStatus);
+}
+
+function missingDeliverableReason(task: Task, step: TaskStep): string | null {
+  if (step === "create_issue" && task.createdIssueUrl === null) {
+    return "Issue-creation agent finished without reporting a created issue URL";
+  }
+  if (step === "implement" && task.reviewRequest === null) {
+    return "Implement agent finished without opening a PR/MR";
+  }
+  return null;
 }
 
 function normaliseWorkItemUrl(url: string): string | null {
@@ -206,11 +221,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   }
 
   if (container.status !== "running") {
-    try {
-      deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
-    } catch (err) {
-      console.error(`Task ${task.id}: could not capture log tail of stopped container:`, err);
-    }
+    await captureAttemptLog(deps, task, attemptIndex, containerId);
     await deps.removeContainer(containerId);
     finishAttempt(deps, task, attempt, `Agent container stopped unexpectedly (status: ${container.status})`);
     saveTask(deps, task);
@@ -232,19 +243,12 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     } catch (err) {
       console.error(`Task ${task.id}: could not capture code status before timing out attempt:`, err);
     }
-    try {
-      deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
-    } catch (err) {
-      console.error(`Task ${task.id}: could not capture log tail before timing out attempt:`, err);
-    }
-    await deps.removeContainer(containerId);
-    finishAttempt(
+    await holdAttempt(
       deps,
       task,
-      attempt,
-      `Attempt timed out after ${Math.round(ATTEMPT_TIMEOUT_MS / 60_000)} minutes`,
+      attemptIndex,
+      `Attempt timed out after ${Math.round(ATTEMPT_TIMEOUT_MS / 60_000)} minutes${HELD_CONTAINER_SUFFIX}`,
     );
-    saveTask(deps, task);
     return "settle";
   }
 
@@ -269,6 +273,11 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   }
 
   captureContainerLinks(task, attempt, codeStatus);
+  const missingDeliverable = missingDeliverableReason(task, attempt.step);
+  if (missingDeliverable !== null) {
+    await holdAttempt(deps, task, attemptIndex, `${missingDeliverable}${HELD_CONTAINER_SUFFIX}`);
+    return "settle";
+  }
   deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
   await deps.removeContainer(containerId);
   finishAttempt(deps, task, attempt, null);

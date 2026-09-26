@@ -22,6 +22,7 @@ import {
   runTaskSchedulerTick,
   type SchedulerDeps,
 } from "./scheduler.js";
+import { DISCARDED_CONTAINER_ERROR, resumeTask } from "./resume.js";
 import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask } from "../testing/fixtures.js";
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
@@ -555,7 +556,7 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(task.lastReviewedDiffHash, "diff-hash-1");
   });
 
-  it("times out a wedged attempt and kills its container", async () => {
+  it("times out a wedged attempt by failing the task but holding its container", async () => {
     const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
     const task = makeActiveTask({
       attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
@@ -569,10 +570,51 @@ describe("scheduler: watching a running agent", () => {
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(harness.removed, [CONTAINER_ID]);
-    assert.equal(task.activeContainerId, null);
-    assert.match(task.attempts[0].error ?? "", /timed out/);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.activeStep, "fix_ci");
+    assert.equal(task.attempts[0].finishedAt, null);
+    assert.match(task.attempts[0].error ?? "", /timed out after 120 minutes; its container was kept/);
+    assert.match(task.error ?? "", /timed out after 120 minutes; its container was kept/);
+    assert.equal(harness.store.readAttemptLog(task.id, 0), "captured log tail");
     assert.equal(harness.created.length, 0);
+
+    const broadcastsBefore = harness.broadcasts.length;
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(harness.created.length, 0);
+    assert.equal(harness.broadcasts.length, broadcastsBefore);
+    assert.equal(harness.store.get(task.id)?.phase, "failed");
+  });
+
+  it("still records a PR/MR the agent opened right before timing out", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+    const task = makeActiveTask({
+      reviewRequest: null,
+      activeStep: "implement",
+      attempts: [makeAttempt({ step: "implement", containerId: CONTAINER_ID, startedAt })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: startedAt } },
+      codeStatus: {
+        [CONTAINER_NAME]: makeCodeStatus({
+          id: "12",
+          url: "https://github.com/acme/widgets/pull/12",
+          sourceBranch: "feature",
+        }),
+      },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.reviewRequest?.id, "12");
+    assert.deepEqual(harness.removed, []);
   });
 
   it("never times out an attempt whose agent is waiting on the user", async () => {
@@ -631,8 +673,9 @@ describe("scheduler: watching a running agent", () => {
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(harness.removed, [CONTAINER_ID]);
-    assert.equal(task.activeContainerId, null);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
     assert.match(task.attempts[0].error ?? "", /timed out/);
   });
 
@@ -649,8 +692,9 @@ describe("scheduler: watching a running agent", () => {
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(harness.removed, [CONTAINER_ID]);
-    assert.equal(task.activeContainerId, null);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
     assert.match(task.attempts[0].error ?? "", /timed out/);
   });
 
@@ -668,8 +712,9 @@ describe("scheduler: watching a running agent", () => {
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(harness.removed, [CONTAINER_ID]);
-    assert.equal(task.activeContainerId, null);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
     assert.match(task.attempts[0].error ?? "", /timed out/);
   });
 
@@ -721,7 +766,7 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(harness.removed.length, 0);
   });
 
-  it("fails a task whose implement agent finished without opening a PR/MR", async () => {
+  it("fails a task whose implement agent finished without opening a PR/MR, holding its container", async () => {
     const task = makeActiveTask({
       reviewRequest: null,
       activeStep: "implement",
@@ -736,14 +781,233 @@ describe("scheduler: watching a running agent", () => {
     });
 
     await runTaskSchedulerTick(harness.deps);
-    await runTaskSchedulerTick(harness.deps);
     assert.equal(task.phase, "agent_running");
-    assert.equal(task.reviewRequest, null);
+    assert.deepEqual(harness.removed, []);
 
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.phase, "failed");
-    assert.match(task.error ?? "", /without opening a PR\/MR/);
+    assert.match(task.error ?? "", /finished without opening a PR\/MR; its container was kept/);
+    assert.equal(task.reviewRequest, null);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.activeStep, "implement");
+    assert.equal(task.attempts[0].finishedAt, null);
+    assert.match(task.attempts[0].error ?? "", /without opening a PR\/MR/);
+    assert.equal(harness.store.readAttemptLog(task.id, 0), "captured log tail");
     assert.equal(harness.created.length, 0);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(harness.created.length, 0);
+  });
+
+  it("still tears down a finished agent for a step without a container-side deliverable", async () => {
+    const task = makeActiveTask({
+      activeStep: "review",
+      attempts: [makeAttempt({ step: "review", containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "abc123", diffHashBefore: "diff-hash-1" })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
+      snapshot: [makeReviewRequest({ ciState: "pending" })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.activeContainerId, null);
+    assert.equal(task.attempts[0].error, null);
+    assert.ok(task.attempts[0].finishedAt);
+    assert.equal(task.phase, "agent_running");
+  });
+});
+
+describe("scheduler: resuming a held attempt", () => {
+  function makeHeldImplementTask(): Task {
+    return makeActiveTask({
+      phase: "failed",
+      error: "Implement agent finished without opening a PR/MR; its container was kept",
+      reviewRequest: null,
+      activeStep: "implement",
+      attempts: [
+        makeAttempt({
+          step: "implement",
+          containerId: CONTAINER_ID,
+          startedAt: RECENT_START,
+          finishedObservation: { headSha: "abc123", observedAt: NOW.toISOString() },
+          error: "Implement agent finished without opening a PR/MR; its container was kept",
+        }),
+      ],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    });
+  }
+
+  it("re-monitors the kept container on retry and advances once the agent has opened a PR/MR", async () => {
+    const task = makeHeldImplementTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: {
+        [CONTAINER_NAME]: {
+          ...makeCodeStatus({ id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" }),
+          commitSha: "def456",
+        },
+      },
+      snapshot: [makeReviewRequest({ ciState: "failed" })],
+    });
+
+    await resumeTask(harness.deps, task, false);
+    harness.store.save(task);
+
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.error, null);
+    assert.equal(task.attempts[0].error, null);
+    assert.equal(task.attemptsByStep.implement, 0);
+    assert.deepEqual(harness.removed, []);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.reviewRequest?.id, "12");
+    assert.equal(task.activeContainerId, null);
+    assert.ok(task.attempts[0].finishedAt);
+    assert.equal(task.attempts[0].error, null);
+    assert.equal(task.phase, "agent_running");
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.created[0].spawn.step, "fix_ci");
+  });
+
+  it("holds the container again on the next tick when a retried agent still has no PR/MR", async () => {
+    const task = makeHeldImplementTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
+    });
+
+    await resumeTask(harness.deps, task, false);
+    harness.store.save(task);
+    assert.equal(task.phase, "agent_running");
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /without opening a PR\/MR; its container was kept/);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(harness.created.length, 0);
+  });
+
+  it("holds a timed-out container again when it is retried without the agent changing state", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+    const task = makeActiveTask({
+      phase: "failed",
+      error: "Attempt timed out",
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt, error: "Attempt timed out" })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: startedAt } },
+    });
+
+    await resumeTask(harness.deps, task, false);
+    harness.store.save(task);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /timed out/);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.deepEqual(harness.removed, []);
+  });
+
+  it("keeps watching a retried timed-out agent once prompting it has restarted the clock", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+    const task = makeActiveTask({
+      phase: "failed",
+      error: "Attempt timed out",
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt, error: "Attempt timed out" })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
+    });
+
+    await resumeTask(harness.deps, task, false);
+    harness.store.save(task);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[0].error, null);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.deepEqual(harness.removed, []);
+  });
+
+  it("removes the kept container on discard, closes the attempt, and spawns a fresh agent next tick", async () => {
+    const task = makeHeldImplementTask();
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+    });
+
+    await resumeTask(harness.deps, task, true);
+    harness.store.save(task);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.phase, "spawning");
+    assert.equal(task.activeContainerId, null);
+    assert.equal(task.activeStep, null);
+    assert.equal(task.error, null);
+    assert.equal(task.attempts[0].finishedAt, NOW.toISOString());
+    assert.match(task.attempts[0].error ?? "", /without opening a PR\/MR/);
+    assert.equal(task.attemptsByStep.implement, 0);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.created[0].spawn.step, "implement");
+    assert.equal(task.attempts.length, 2);
+    assert.equal(task.phase, "agent_running");
+  });
+
+  it("records why a paused agent's container went away when it is discarded on resume", async () => {
+    const task = makeActiveTask({ phase: "paused" });
+    const harness = makeHarness({ tasks: [task], containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)] });
+
+    await resumeTask(harness.deps, task, true);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.phase, "spawning");
+    assert.equal(task.attempts[1].error, DISCARDED_CONTAINER_ERROR);
+    assert.equal(task.attemptsByStep.fix_ci, 1);
+  });
+
+  it("refuses to discard when the task has no container", async () => {
+    const task = makeLinkedTask({ phase: "failed", error: "boom" });
+    const harness = makeHarness({ tasks: [task] });
+
+    await assert.rejects(resumeTask(harness.deps, task, true), /no agent container to discard/);
+    assert.equal(task.phase, "failed");
+  });
+
+  it("refuses to resume a task that is neither failed nor paused", async () => {
+    const task = makeLinkedTask({ phase: "waiting_ci" });
+    const harness = makeHarness({ tasks: [task] });
+
+    await assert.rejects(resumeTask(harness.deps, task, false), /Cannot resume task/);
   });
 });
 
@@ -810,7 +1074,7 @@ describe("scheduler: text tasks", () => {
     assert.match(harness.created[0].prompt, /open a pull\/merge request/);
   });
 
-  it("fails a text task whose create_issue agent finished without reporting a URL", async () => {
+  it("fails a text task whose create_issue agent finished without reporting a URL, holding its container", async () => {
     const task = makeActiveCreateIssueTask();
     const harness = makeHarness({
       tasks: [task],
@@ -820,12 +1084,17 @@ describe("scheduler: text tasks", () => {
     });
 
     await runTaskSchedulerTick(harness.deps);
-    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "agent_running");
+
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(harness.created.length, 0);
     assert.equal(task.phase, "failed");
-    assert.match(task.error ?? "", /finished without reporting a created issue URL/);
+    assert.match(task.error ?? "", /finished without reporting a created issue URL; its container was kept/);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.attempts[0].finishedAt, null);
+    assert.equal(harness.store.readAttemptLog(task.id, 0), "captured log tail");
   });
 
   it("does not link a PR/MR that a create_issue agent happened to open", async () => {
@@ -1255,6 +1524,33 @@ describe("scheduler: recovering agent containers after a restart", () => {
     assert.equal(harness.broadcasts.length, 0);
   });
 
+  it("keeps a held container across a restart while its failed task still points at it", async () => {
+    const task = makeActiveTask({
+      phase: "failed",
+      error: "Attempt timed out; its container was kept",
+      attempts: [
+        makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt: RECENT_START, error: "Attempt timed out" }),
+      ],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      taskContainers: [
+        {
+          container: makeContainer(CONTAINER_ID, CONTAINER_NAME),
+          spawn: { taskId: task.id, step: "fix_ci", headShaBefore: null, diffHashBefore: null },
+        },
+      ],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(harness.broadcasts.length, 0);
+  });
+
   it("removes a container whose task was deleted", async () => {
     const harness = makeHarness({
       tasks: [],
@@ -1388,7 +1684,7 @@ describe("scheduler: rails", () => {
     assert.equal(task.attempts.length, 1);
   });
 
-  it("captures the active attempt's log before failing a task on repeated errors", async () => {
+  it("captures the active attempt's log and holds its container when failing a task on repeated errors", async () => {
     const task = makeActiveTask();
     const harness = makeHarness({
       tasks: [task],
@@ -1396,14 +1692,25 @@ describe("scheduler: rails", () => {
       instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
     });
 
-    for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
+    for (let i = 0; i < MAX_CONSECUTIVE_ERRORS - 1; i++) {
       await runTaskSchedulerTick(harness.deps);
     }
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.consecutiveErrors, MAX_CONSECUTIVE_ERRORS - 1);
+
+    await runTaskSchedulerTick(harness.deps);
 
     assert.equal(task.phase, "failed");
-    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.match(task.error ?? "", /Failed after 5 consecutive errors.*No code status stubbed.*its container was kept/);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
     assert.equal(harness.store.readAttemptLog(task.id, 1), "captured log tail");
-    assert.ok(task.attempts[1].finishedAt);
+    assert.equal(task.attempts[1].finishedAt, null);
+    assert.match(task.attempts[1].error ?? "", /consecutive errors/);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.consecutiveErrors, MAX_CONSECUTIVE_ERRORS);
   });
 
   it("records snapshot errors and fails the task after repeated failures", async () => {

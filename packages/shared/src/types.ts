@@ -317,6 +317,7 @@ export interface CreateTasksResponse {
 
 export interface UpdateTaskRequest {
   phase?: "paused" | "resume";
+  discardContainer?: boolean;
   configByStep?: Partial<Record<TaskStep, string>>;
 }
 
