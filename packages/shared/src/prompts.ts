@@ -45,7 +45,8 @@ export function buildReviewCommentsPrompt(item: Pick<RepoReviewRequest, "kind" |
 }
 
 export function buildRebasePrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {
-  return `Rebase ${reviewRequestNoun(item)} ${item.reference} at ${item.url} onto the main branch, resolving any merge conflicts, and force-push the rebased branch. ${reviewRequestBodyGuidance(item)}`;
+  const noun = reviewRequestNoun(item);
+  return `Rebase ${noun} ${item.reference} at ${item.url} onto the main branch, resolving any merge conflicts, and force-push the rebased branch. Then, if previous review left any nits or minor non-blocking suggestions on the ${noun}, address them too in separate commits on top of the rebase and push those as well; if no such suggestions were given, or a suggestion is contentious or would expand the scope of the change, leave it alone rather than guessing. ${reviewRequestBodyGuidance(item)}`;
 }
 
 export function buildFixCiPrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {

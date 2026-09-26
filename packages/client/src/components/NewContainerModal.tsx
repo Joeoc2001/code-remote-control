@@ -326,7 +326,7 @@ export default function NewContainerModal({
                     </p>
                   ) : spawnManyMode === "rebase" ? (
                     <p className="text-sm text-slate-400">
-                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with merge conflicts to rebase it onto the main branch and resolve the conflicts.
+                      Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with merge conflicts to rebase it onto the main branch, resolve the conflicts, and fold in any nits left by earlier reviews.
                     </p>
                   ) : spawnManyMode === "fixCi" ? (
                     <p className="text-sm text-slate-400">
