@@ -218,9 +218,12 @@ The task detail page shows the full attempt timeline with the captured logs.
 Safety rails: fix-CI and rebase each spawn at most 3 times, an implement agent
 that ends without opening a PR/MR is never retried automatically, and a task
 spawns at most 12 agents in total before failing; a wedged attempt is killed
-after 2 hours (an interrupted agent can otherwise report "working" forever —
-see the known limitation above); repeated forge errors fail the task; paused
-tasks are never evaluated; and each work item can have only one live task.
+2 hours after the agent last changed state (an interrupted agent can otherwise
+report "working" forever — see the known limitation above), but never while it
+reports "waiting", so an agent parked on a question survives until someone
+answers and the clock restarts once it does; repeated forge errors fail the
+task; paused tasks are never evaluated; and each work item can have only one
+live task.
 
 ## Authentication
 

@@ -178,6 +178,14 @@ async function adoptCreatedIssue(deps: SchedulerDeps, forge: Forge, task: Task, 
   saveTask(deps, task);
 }
 
+function attemptActiveSince(attempt: TaskAttempt, status: InstanceStatus | null): number {
+  const startedAt = Date.parse(attempt.startedAt);
+  if (status === null || status.updatedAt === null) {
+    return startedAt;
+  }
+  return Math.max(startedAt, Date.parse(status.updatedAt));
+}
+
 async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"settle" | "evaluate"> {
   const attemptIndex = task.attempts.length - 1;
   const attempt = task.attempts[attemptIndex];
@@ -209,8 +217,16 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     return "evaluate";
   }
 
-  const elapsedMs = deps.now().getTime() - Date.parse(attempt.startedAt);
-  if (elapsedMs > ATTEMPT_TIMEOUT_MS) {
+  let status: InstanceStatus | null;
+  try {
+    status = await deps.fetchInstanceStatus(container.name);
+  } catch (err) {
+    console.error(`Task ${task.id}: container metadata server unreachable, waiting:`, err);
+    status = null;
+  }
+
+  const elapsedMs = deps.now().getTime() - attemptActiveSince(attempt, status);
+  if (status?.state !== "waiting" && elapsedMs > ATTEMPT_TIMEOUT_MS) {
     try {
       captureContainerLinks(task, attempt, await deps.fetchCodeStatus(container.name));
     } catch (err) {
@@ -232,11 +248,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     return "settle";
   }
 
-  let status: InstanceStatus;
-  try {
-    status = await deps.fetchInstanceStatus(container.name);
-  } catch (err) {
-    console.error(`Task ${task.id}: container metadata server unreachable, waiting:`, err);
+  if (status === null) {
     return "settle";
   }
 

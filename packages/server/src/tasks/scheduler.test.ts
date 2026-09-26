@@ -575,6 +575,104 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(harness.created.length, 0);
   });
 
+  it("never times out an attempt whose agent is waiting on the user", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+    const task = makeActiveTask({
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "waiting", updatedAt: startedAt } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.removed.length, 0);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[0].finishedAt, null);
+  });
+
+  it("restarts the timeout clock when the agent resumes working after waiting", async () => {
+    const startedAt = new Date(NOW.getTime() - 3 * 60 * 60 * 1000).toISOString();
+    const resumedAt = new Date(NOW.getTime() - 10 * 60_000).toISOString();
+    const task = makeActiveTask({
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: resumedAt } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.removed.length, 0);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[0].finishedAt, null);
+  });
+
+  it("times out an attempt once the restarted clock expires", async () => {
+    const startedAt = new Date(NOW.getTime() - 3 * 60 * 60 * 1000).toISOString();
+    const resumedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+    const task = makeActiveTask({
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: resumedAt } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.activeContainerId, null);
+    assert.match(task.attempts[0].error ?? "", /timed out/);
+  });
+
+  it("times out an attempt whose metadata server is unreachable", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+    const task = makeActiveTask({
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.activeContainerId, null);
+    assert.match(task.attempts[0].error ?? "", /timed out/);
+  });
+
+  it("times out an attempt that never wrote a status file", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+    const task = makeActiveTask({
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: null } },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.activeContainerId, null);
+    assert.match(task.attempts[0].error ?? "", /timed out/);
+  });
+
   it("records the attempt as failed and re-evaluates when the container vanished", async () => {
     const task = makeActiveTask();
     const harness = makeHarness({
