@@ -47,6 +47,15 @@ jobs:
           echo "APP_IMAGE=ghcr.io/${REPO}" >> $GITHUB_ENV
           echo "ENV_IMAGE=ghcr.io/${REPO}-env" >> $GITHUB_ENV
 
+      - name: Resolve latest env tool versions
+        run: |
+          CLAUDE_CODE_VERSION=$(npm view @anthropic-ai/claude-code version)
+          TSX_VERSION=$(npm view tsx version)
+          WITHONE_CLI_VERSION=$(npm view @withone/cli version)
+          echo "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" >> $GITHUB_ENV
+          echo "TSX_VERSION=${TSX_VERSION}" >> $GITHUB_ENV
+          echo "WITHONE_CLI_VERSION=${WITHONE_CLI_VERSION}" >> $GITHUB_ENV
+
       - name: Build environment image (push on main)
         uses: docker/build-push-action@v6
         with:
@@ -55,6 +64,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=env
           cache-to: type=gha,mode=min,scope=env
+          build-args: |
+            CLAUDE_CODE_VERSION=${{ env.CLAUDE_CODE_VERSION }}
+            TSX_VERSION=${{ env.TSX_VERSION }}
+            WITHONE_CLI_VERSION=${{ env.WITHONE_CLI_VERSION }}
           tags: |
             ${{ env.ENV_IMAGE }}:latest
             ${{ env.ENV_IMAGE }}:${{ github.sha }}
