@@ -192,13 +192,17 @@ seconds and spawns exactly the agent the current state calls for:
    instead of waiting for a CI result the rebase would invalidate anyway.
 3. Behind the target branch without conflicts → a fast-forward rebase via the
    forge API on GitLab, or a **rebase** agent on GitHub (where the API
-   equivalent would create a merge commit).
-4. Merge conflicts → a **rebase** agent.
+   equivalent would create a merge commit). A rebase agent also addresses any
+   nits or minor non-blocking suggestions left by earlier reviews, in separate
+   commits on top of the rebase.
+4. Merge conflicts → a **rebase** agent, which likewise folds in any review
+   nits.
 5. Head commit changed since the last review → a **review** agent, then an
    **address comments** agent while unresolved threads remain. A moved head is
    only re-reviewed when the PR/MR's diff actually changed with it, so a clean
    rebase (server-side or agent-driven) carries the reviewed state forward
-   instead of burning another review.
+   instead of burning another review. A rebase agent that also fixed nits does
+   change the diff, so it legitimately triggers a fresh review.
 6. Green, reviewed, and comment-free → the task waits for a human approval
    (approvals from the bot's own forge account are ignored), then merges via
    the forge API.

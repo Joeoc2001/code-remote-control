@@ -249,6 +249,24 @@ describe("scheduler: spawning", () => {
     assert.match(prompt, /single plain comment/);
   });
 
+  it("tells the rebase agent to resolve conflicts and then fold in any review nits", async () => {
+    const task = makeLinkedTask({ phase: "waiting_ci" });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ hasConflicts: true })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(task.activeStep, "rebase");
+    const prompt = harness.created[0].prompt;
+    assert.match(prompt, /^Rebase pull request #12 at https:\/\/github\.com\/acme\/widgets\/pull\/12 onto the main branch/);
+    assert.match(prompt, /resolving any merge conflicts, and force-push the rebased branch/);
+    assert.match(prompt, /if previous review left any nits or minor non-blocking suggestions on the pull request, address them too in separate commits on top of the rebase/);
+    assert.match(prompt, /if no such suggestions were given, or a suggestion is contentious or would expand the scope of the change, leave it alone/);
+  });
+
   it("hands every spawned agent the guidance for the forge it is posting to", async () => {
     const github = makeHarness({ tasks: [makeTask()] });
     await runTaskSchedulerTick(github.deps);
