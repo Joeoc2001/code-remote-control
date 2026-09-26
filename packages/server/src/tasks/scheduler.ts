@@ -237,7 +237,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   }
 
   const elapsedMs = deps.now().getTime() - attemptActiveSince(attempt, status);
-  if (status?.state !== "waiting" && elapsedMs > ATTEMPT_TIMEOUT_MS) {
+  if (status?.state !== "waiting" && status?.state !== "finished" && elapsedMs > ATTEMPT_TIMEOUT_MS) {
     try {
       captureContainerLinks(task, attempt, await deps.fetchCodeStatus(container.name));
     } catch (err) {
