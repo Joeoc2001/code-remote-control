@@ -37,6 +37,7 @@ interface AttemptRowProps {
 }
 
 function AttemptRow({ taskId, attempt, index, isActive, activeContainerId }: AttemptRowProps) {
+  const isHeld = isActive && attempt.error !== null;
   const [log, setLog] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
@@ -67,7 +68,12 @@ function AttemptRow({ taskId, attempt, index, isActive, activeContainerId }: Att
           #{index + 1}
         </span>
         <span className="text-sm font-medium text-slate-100">{TASK_STEP_LABELS[attempt.step]}</span>
-        {isActive ? (
+        {isHeld ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-800/80 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-300" />
+            Held
+          </span>
+        ) : isActive ? (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-800/80 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-300 animate-pulse" />
             Running
@@ -86,14 +92,15 @@ function AttemptRow({ taskId, attempt, index, isActive, activeContainerId }: Att
           {attempt.finishedAt && ` · ${formatDuration(attempt.startedAt, attempt.finishedAt)}`}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          {isActive && activeContainerId ? (
+          {isActive && activeContainerId && (
             <Link
               to={`/view/${activeContainerId}`}
               className="px-2.5 py-1 text-xs text-slate-300 hover:text-slate-100 border border-slate-700 hover:bg-slate-800 rounded-md transition-colors"
             >
               Terminal
             </Link>
-          ) : (
+          )}
+          {(!isActive || isHeld) && (
             <button
               onClick={handleToggleLog}
               className="px-2.5 py-1 text-xs text-slate-300 hover:text-slate-100 border border-slate-700 hover:bg-slate-800 rounded-md transition-colors"
@@ -233,7 +240,20 @@ export default function TaskView() {
                       disabled={busy}
                       className={actionButtonClass}
                     >
-                      {task.phase === "failed" ? "Retry" : "Resume"}
+                      {task.phase === "paused" ? "Resume" : task.activeContainerId ? "Retry with same agent" : "Retry"}
+                    </button>
+                  )}
+                  {task.phase === "failed" && task.activeContainerId && (
+                    <button
+                      onClick={() =>
+                        runAction(async () =>
+                          setTask(await updateTask(task.id, { phase: "resume", discardContainer: true })),
+                        )
+                      }
+                      disabled={busy}
+                      className={actionButtonClass}
+                    >
+                      Discard &amp; retry
                     </button>
                   )}
                   <button

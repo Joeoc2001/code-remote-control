@@ -40,6 +40,11 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
       onChanged(await updateTask(task.id, { phase: "resume" }));
     });
 
+  const handleDiscardAndRetry = () =>
+    runAction(async () => {
+      onChanged(await updateTask(task.id, { phase: "resume", discardContainer: true }));
+    });
+
   const handleDelete = () =>
     runAction(async () => {
       if (!confirm(`Delete task "${taskTitle(task)}"?`)) return;
@@ -50,6 +55,7 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
   const canPause = task.phase !== "merged" && task.phase !== "failed" && task.phase !== "paused";
   const canResume = task.phase === "paused";
   const canRetry = task.phase === "failed";
+  const hasHeldContainer = task.phase === "failed" && task.activeContainerId !== null;
 
   const actionButtonClass =
     "px-2.5 py-1 text-xs text-slate-300 hover:text-slate-100 border border-slate-700 hover:bg-slate-800 rounded-md transition-colors disabled:opacity-50";
@@ -121,7 +127,12 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
         )}
         {canRetry && (
           <button onClick={handleResume} disabled={busy} className={actionButtonClass}>
-            Retry
+            {hasHeldContainer ? "Retry with same agent" : "Retry"}
+          </button>
+        )}
+        {hasHeldContainer && (
+          <button onClick={handleDiscardAndRetry} disabled={busy} className={actionButtonClass}>
+            Discard &amp; retry
           </button>
         )}
         <button

@@ -6,11 +6,20 @@ import { getForge } from "../forge/index.js";
 import { TASK_STEPS } from "../types.js";
 import type { CreateTaskFromTextRequest, CreateTasksRequest, RepoWorkItem, Task, TaskStep, UpdateTaskRequest } from "../types.js";
 import { getRepoNameError, isValidRepoSource } from "../validation.js";
+import { resumeTask, type ResumeDeps } from "./resume.js";
 import { broadcastTaskRemoved, broadcastTaskUpdated, taskStore } from "./runtime.js";
 
 export const tasksRouter = Router();
 
 const MAX_BULK_WORK_ITEMS = 25;
+
+const resumeDeps: ResumeDeps = {
+  removeContainer: async (id) => {
+    await removeContainerIfPresent(id);
+    broadcastRemoval(id);
+  },
+  now: () => new Date(),
+};
 
 function isLive(task: Task): boolean {
   return task.phase !== "merged" && task.phase !== "failed";
@@ -255,7 +264,7 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
       return;
     }
 
-    const { phase, configByStep } = req.body as UpdateTaskRequest;
+    const { phase, configByStep, discardContainer } = req.body as UpdateTaskRequest;
 
     if (phase === undefined && configByStep === undefined) {
       res.status(400).json({ error: "Provide phase or configByStep" });
@@ -264,6 +273,21 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
 
     if (phase !== undefined && phase !== "paused" && phase !== "resume") {
       res.status(400).json({ error: "phase must be 'paused' or 'resume'" });
+      return;
+    }
+
+    if (discardContainer !== undefined && typeof discardContainer !== "boolean") {
+      res.status(400).json({ error: "discardContainer must be a boolean" });
+      return;
+    }
+
+    if (discardContainer && phase !== "resume") {
+      res.status(400).json({ error: "discardContainer requires phase 'resume'" });
+      return;
+    }
+
+    if (discardContainer && !task.activeContainerId) {
+      res.status(409).json({ error: "Task has no agent container to discard" });
       return;
     }
 
@@ -296,14 +320,7 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
     }
 
     if (phase === "resume") {
-      if (task.phase === "failed") {
-        task.attemptsByStep = Object.fromEntries(
-          Object.keys(task.attemptsByStep).map((step) => [step, 0]),
-        ) as Record<TaskStep, number>;
-        task.error = null;
-        task.consecutiveErrors = 0;
-      }
-      task.phase = task.activeContainerId ? "agent_running" : "spawning";
+      await resumeTask(resumeDeps, task, discardContainer === true);
     }
 
     saveAndBroadcast(task);

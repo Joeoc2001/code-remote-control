@@ -210,20 +210,33 @@ seconds and spawns exactly the agent the current state calls for:
 Each step runs under a per-step configuration chosen at task creation. An agent
 counts as done only once its container reports `finished` on two consecutive
 ticks with an unchanged HEAD; anything else — including `awaiting-background` —
-leaves it running. When an agent finishes, its container's log tail and PR/MR
-link are captured, the container is removed, and the task settles for one tick
-before deciding again.
+leaves it running. When an agent finishes with its deliverable in place, its
+container's log tail and PR/MR link are captured, the container is removed, and
+the task settles for one tick before deciding again.
 The task detail page shows the full attempt timeline with the captured logs.
 
 Safety rails: fix-CI and rebase each spawn at most 3 times, an implement agent
 that ends without opening a PR/MR is never retried automatically, and a task
-spawns at most 12 agents in total before failing; a wedged attempt is killed
+spawns at most 12 agents in total before failing; a wedged attempt is held
 2 hours after the agent last changed state (an interrupted agent can otherwise
 report "working" forever — see the known limitation above), but never while it
 reports "waiting", so an agent parked on a question survives until someone
 answers and the clock restarts once it does; repeated forge errors fail the
 task; paused tasks are never evaluated; and each work item can have only one
 live task.
+
+When an attempt times out, finishes without its deliverable (an implement agent
+that never opened a PR/MR, or an issue-creating agent that never reported an
+issue URL), or its task fails on repeated errors, the task fails but the agent
+container is **held** rather than removed: it stays the task's active container,
+its log tail is captured, and the attempt shows as *Held* with a Terminal link
+so you can inspect the agent or prompt it to continue by hand. A held task
+offers two retries: **Retry with same agent** puts the container back under the
+scheduler's watch (if the agent has since opened its PR/MR the task advances; if
+nothing changed it is held again on the next tick), and **Discard & retry**
+removes the container and spawns a fresh agent. Held containers keep running
+and consuming resources until the task is retried with discard, deleted, or the
+container is removed by hand from the Home grid.
 
 ## Authentication
 
