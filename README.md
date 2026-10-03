@@ -89,12 +89,27 @@ git-hygiene hook scans the session transcript it is handed for background tasks
 that have been launched but have not notified yet, and records
 `awaiting-background` instead of `finished` when any are still outstanding — the
 stop itself is still allowed, so the notification wakes the agent as usual, and
-the next Stop after the work lands records `finished`.
+the next Stop after the work lands records `finished`. The status file lists each
+outstanding task as `{ id, kind, label }`, where `kind` is `shell`, `agent` or
+`remote` and `label` is the description the agent gave when launching it.
+
+Background shells are different from agents: a shell that never exits (a "wait
+until X" loop, a watcher, a dev server) never notifies, so it would hold the
+container on `awaiting-background` forever. So the first time a turn ends with
+background shells still running, the hook blocks the stop and lists them,
+asking the agent to `TaskStop` any it is no longer waiting on. If the agent ends
+its turn again with the same shells running, the hook accepts that it really is
+waiting on them and records `awaiting-background`.
+
+The uncommitted/unpushed check runs before the background check, so a dirty tree
+is still reported while background work is pending. The CI watch only runs once
+no background work is outstanding.
 
 The state lives in `/run/crc-instance-status.json` inside the container, is served
 by the container metadata server on `/api/instance-status`, proxied by the app on
 `/api/containers/:id/instance-status`, and shown as a
-Working/Waiting/Waiting-on-agents/Finished badge in the UI.
+Working/Waiting/Waiting-on-shells/Waiting-on-agents/Finished badge in the UI
+("Waiting on background tasks" when both kinds are outstanding).
 
 Known limitation: interrupting a turn from the terminal (Esc) fires no hook, so the
 badge keeps reading "Working" until the next stop or session end. The badge tooltip

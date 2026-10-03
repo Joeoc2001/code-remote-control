@@ -1,4 +1,4 @@
-import type { InstanceState, InstanceStatus } from "../types";
+import type { InstanceState, InstanceStatus, PendingTask } from "../types";
 
 interface InstanceStatusBadgeProps {
   instanceStatus: InstanceStatus | null;
@@ -18,8 +18,8 @@ const VARIANTS: Record<InstanceState, { label: string; idle: string; pill: strin
     dot: "bg-amber-300 animate-pulse",
   },
   "awaiting-background": {
-    label: "Waiting on agents",
-    idle: "Claude is waiting on background agents",
+    label: "Waiting on background tasks",
+    idle: "Claude is waiting on background tasks",
     pill: "border-violet-800/80 bg-violet-500/10 text-violet-300",
     dot: "bg-violet-300 animate-pulse",
   },
@@ -31,14 +31,23 @@ const VARIANTS: Record<InstanceState, { label: string; idle: string; pill: strin
   },
 };
 
+function backgroundLabel(pendingTasks: PendingTask[]): string {
+  if (pendingTasks.length === 0) return VARIANTS["awaiting-background"].label;
+  if (pendingTasks.every((task) => task.kind === "shell")) return "Waiting on shells";
+  if (pendingTasks.every((task) => task.kind !== "shell")) return "Waiting on agents";
+  return VARIANTS["awaiting-background"].label;
+}
+
 export default function InstanceStatusBadge({ instanceStatus }: InstanceStatusBadgeProps) {
   if (!instanceStatus) {
     return null;
   }
 
   const variant = VARIANTS[instanceStatus.state];
-  const since = instanceStatus.state === "waiting" ? "Waiting for your input since" : `${variant.label} since`;
-  const pending = instanceStatus.pendingTaskIds?.length ? ` (${instanceStatus.pendingTaskIds.join(", ")})` : "";
+  const pendingTasks = instanceStatus.pendingTasks ?? [];
+  const label = instanceStatus.state === "awaiting-background" ? backgroundLabel(pendingTasks) : variant.label;
+  const since = instanceStatus.state === "waiting" ? "Waiting for your input since" : `${label} since`;
+  const pending = pendingTasks.length ? ` (${pendingTasks.map((task) => task.label).join("; ")})` : "";
   const title = instanceStatus.updatedAt
     ? `${since} ${new Date(instanceStatus.updatedAt).toLocaleString()}${pending}`
     : `${variant.idle}${pending}`;
@@ -49,7 +58,7 @@ export default function InstanceStatusBadge({ instanceStatus }: InstanceStatusBa
       className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${variant.pill}`}
     >
       <span className={`inline-block h-1.5 w-1.5 rounded-full ${variant.dot}`} />
-      {variant.label}
+      {label}
     </span>
   );
 }

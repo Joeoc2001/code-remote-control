@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { closeSync, openSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const path = require("node:path");
-const { makeRoot, makeWorkspace, runHook, statusPathFor, writeStub, writeTranscript } = require("./helpers/git-hygiene-harness.js");
+const { git, makeRoot, makeWorkspace, runHook, statusPathFor, writeStub, writeTranscript } = require("./helpers/git-hygiene-harness.js");
 const { isHeldOpenByAnyProcess } = require("../claude/hooks/background-tasks.js");
 
 function backgroundBashLaunch(taskId, outputFile) {
@@ -20,6 +20,16 @@ function backgroundBashLaunch(taskId, outputFile) {
       ],
     },
     toolUseResult: { stdout: "", stderr: "", interrupted: false, isImage: false, backgroundTaskId: taskId },
+  };
+}
+
+function bashToolUse(taskId, command, description) {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "tool_use", id: `toolu_${taskId}`, name: "Bash", input: { command, description, run_in_background: true } }],
+    },
   };
 }
 
@@ -108,19 +118,27 @@ describe("git-hygiene stop hook", () => {
     assert.equal(result.decision, null);
   });
 
-  test("keeps reporting awaiting-background rather than nagging about an untouched dirty worktree", () => {
+  test("reports a dirty worktree while a background agent is still running, then waits on the agent", () => {
     const workspace = makeWorkspace(root, { repo: "pushed", dirty: true });
     const transcriptPath = writeTranscript(root, [backgroundAgentLaunch("agent-a1b")]);
 
-    const result = runHook({
+    const first = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+
+    assert.equal(first.instanceStatus.state, "working");
+    assert.equal(first.decision.decision, "block");
+    assert.match(first.decision.reason, /uncommitted/);
+    assert.match(first.decision.reason, /end your turn again to wait for them/);
+
+    const repeat = runHook({
       root,
       bin,
       workspace,
-      payload: { session_id: "s1", transcript_path: transcriptPath },
+      payload: { session_id: "s1", transcript_path: transcriptPath, stop_hook_active: true },
     });
 
-    assert.equal(result.instanceStatus.state, "awaiting-background");
-    assert.equal(result.decision, null);
+    assert.equal(repeat.decision, null);
+    assert.equal(repeat.instanceStatus.state, "awaiting-background");
+    assert.deepEqual(repeat.instanceStatus.pendingTasks, [{ id: "agent-a1b", kind: "agent", label: "Implement the fix" }]);
   });
 
   test("reports finished once every background agent has notified", () => {
@@ -206,7 +224,11 @@ describe("git-hygiene stop hook", () => {
     const result = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
 
     assert.equal(result.instanceStatus.state, "awaiting-background");
-    assert.deepEqual(result.instanceStatus.pendingTaskIds, ["agent-a1b", "agent-c3d"]);
+    assert.equal(result.decision, null);
+    assert.deepEqual(result.instanceStatus.pendingTasks, [
+      { id: "agent-a1b", kind: "agent", label: "Implement the fix" },
+      { id: "agent-c3d", kind: "agent", label: "Implement the fix" },
+    ]);
   });
 
   describe("background bash commands", () => {
@@ -217,17 +239,167 @@ describe("git-hygiene stop hook", () => {
       child = null;
     });
 
-    test("reports awaiting-background while the command's process is still running", async () => {
+    async function liveShell(taskId, command, description) {
+      const outputFile = path.join(root, `${taskId}.output`);
+      const running = holdOpen(outputFile);
+      await waitUntilHeld(outputFile);
+      return { process: running, entries: [bashToolUse(taskId, command, description), backgroundBashLaunch(taskId, outputFile)] };
+    }
+
+    test("blocks the first stop while a background shell is still running and names it", async () => {
+      const workspace = makeWorkspace(root, { repo: "pushed" });
+      const shell = await liveShell("bq17zaptz", "until test -f /tmp/done; do sleep 5; done", "Wait for the CI run");
+      child = shell.process;
+      const transcriptPath = writeTranscript(root, shell.entries);
+
+      const result = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+
+      assert.equal(result.instanceStatus.state, "working");
+      assert.equal(result.decision.decision, "block");
+      assert.match(result.decision.reason, /background shells are still running/);
+      assert.ok(result.decision.reason.includes("- bq17zaptz: until test -f /tmp/done; do sleep 5; done (Wait for the CI run)"));
+      assert.match(result.decision.reason, /TaskStop/);
+      assert.match(result.decision.reason, /end your turn again/);
+    });
+
+    test("accepts a repeated stop with the same shells and reports awaiting-background on them", async () => {
+      const workspace = makeWorkspace(root, { repo: "pushed" });
+      const shell = await liveShell("bq17zaptz", "npm run dev", "Serve the app");
+      child = shell.process;
+      const transcriptPath = writeTranscript(root, shell.entries);
+
+      runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+      const repeat = runHook({
+        root,
+        bin,
+        workspace,
+        payload: { session_id: "s1", transcript_path: transcriptPath, stop_hook_active: true },
+      });
+
+      assert.equal(repeat.decision, null);
+      assert.equal(repeat.instanceStatus.state, "awaiting-background");
+      assert.deepEqual(repeat.instanceStatus.pendingTasks, [{ id: "bq17zaptz", kind: "shell", label: "Serve the app" }]);
+    });
+
+    test("challenges again when another shell is left running after the first challenge", async () => {
+      const workspace = makeWorkspace(root, { repo: "pushed" });
+      const first = await liveShell("bq17zaptz", "npm run dev", "Serve the app");
+      child = first.process;
+      const outputFile = path.join(root, "bnew0000.output");
+      const second = holdOpen(outputFile);
+      try {
+        await waitUntilHeld(outputFile);
+        runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: writeTranscript(root, first.entries) } });
+
+        const transcriptPath = writeTranscript(root, [
+          ...first.entries,
+          bashToolUse("bnew0000", "sleep infinity", "Wait forever"),
+          backgroundBashLaunch("bnew0000", outputFile),
+        ]);
+        const repeat = runHook({
+          root,
+          bin,
+          workspace,
+          payload: { session_id: "s1", transcript_path: transcriptPath, stop_hook_active: true },
+        });
+
+        assert.equal(repeat.decision.decision, "block");
+        assert.ok(repeat.decision.reason.includes("- bq17zaptz: npm run dev (Serve the app)"));
+        assert.ok(repeat.decision.reason.includes("- bnew0000: sleep infinity (Wait forever)"));
+      } finally {
+        await release(second);
+      }
+    });
+
+    test("challenges the same shells again at the end of a later turn", async () => {
+      const workspace = makeWorkspace(root, { repo: "pushed" });
+      const shell = await liveShell("bq17zaptz", "npm run dev", "Serve the app");
+      child = shell.process;
+      const transcriptPath = writeTranscript(root, shell.entries);
+      runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+      runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath, stop_hook_active: true } });
+
+      const nextTurn = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+
+      assert.equal(nextTurn.decision.decision, "block");
+      assert.equal(nextTurn.instanceStatus.state, "working");
+    });
+
+    test("names a shell by its command alone when it was launched without a description", async () => {
       const workspace = makeWorkspace(root, { repo: "pushed" });
       const outputFile = path.join(root, "bq17zaptz.output");
       child = holdOpen(outputFile);
       await waitUntilHeld(outputFile);
-      const transcriptPath = writeTranscript(root, [backgroundBashLaunch("bq17zaptz", outputFile)]);
+      const transcriptPath = writeTranscript(root, [
+        { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_bq17zaptz", name: "Bash", input: { command: "npm run dev", run_in_background: true } }] } },
+        backgroundBashLaunch("bq17zaptz", outputFile),
+      ]);
 
       const result = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
 
+      assert.ok(result.decision.reason.includes("- bq17zaptz: npm run dev\n"));
+    });
+
+    test("does not challenge background agents that run alongside no shells", () => {
+      const workspace = makeWorkspace(root, { repo: "pushed" });
+      const transcriptPath = writeTranscript(root, [backgroundAgentLaunch("agent-a1b")]);
+
+      const result = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+
+      assert.equal(result.decision, null);
       assert.equal(result.instanceStatus.state, "awaiting-background");
-      assert.deepEqual(result.instanceStatus.pendingTaskIds, ["bq17zaptz"]);
+    });
+
+    test("challenges only the shells when shells and agents are both pending, then waits on both", async () => {
+      const workspace = makeWorkspace(root, { repo: "pushed" });
+      const shell = await liveShell("bq17zaptz", "npm run dev", "Serve the app");
+      child = shell.process;
+      const transcriptPath = writeTranscript(root, [...shell.entries, backgroundAgentLaunch("agent-a1b")]);
+
+      const first = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+      assert.equal(first.decision.decision, "block");
+      assert.ok(first.decision.reason.includes("bq17zaptz"));
+      assert.ok(!first.decision.reason.includes("agent-a1b"));
+
+      const repeat = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath, stop_hook_active: true } });
+      assert.equal(repeat.decision, null);
+      assert.deepEqual(repeat.instanceStatus.pendingTasks, [
+        { id: "bq17zaptz", kind: "shell", label: "Serve the app" },
+        { id: "agent-a1b", kind: "agent", label: "Implement the fix" },
+      ]);
+    });
+
+    test("reports a dirty worktree first, then challenges the shells, then waits on them", async () => {
+      const workspace = makeWorkspace(root, { repo: "pushed", dirty: true });
+      const shell = await liveShell("bq17zaptz", "npm run dev", "Serve the app");
+      child = shell.process;
+      const transcriptPath = writeTranscript(root, shell.entries);
+
+      const first = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+      assert.equal(first.decision.decision, "block");
+      assert.match(first.decision.reason, /uncommitted/);
+
+      const second = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath, stop_hook_active: true } });
+      assert.equal(second.decision.decision, "block");
+      assert.match(second.decision.reason, /background shells are still running/);
+
+      const third = runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath, stop_hook_active: true } });
+      assert.equal(third.decision, null);
+      assert.equal(third.instanceStatus.state, "awaiting-background");
+    });
+
+    test("remembers the CI-watched commit across a shell challenge", async () => {
+      const workspace = makeWorkspace(root, { repo: "pushed" });
+      const headSha = git(workspace, "rev-parse", "HEAD");
+      const fingerprintFile = path.join(root, "crc-git-hygiene-s1.json");
+      writeFileSync(fingerprintFile, JSON.stringify({ watchedHead: headSha }));
+      const shell = await liveShell("bq17zaptz", "npm run dev", "Serve the app");
+      child = shell.process;
+      const transcriptPath = writeTranscript(root, shell.entries);
+
+      runHook({ root, bin, workspace, payload: { session_id: "s1", transcript_path: transcriptPath } });
+
+      assert.equal(JSON.parse(readFileSync(fingerprintFile, "utf-8")).watchedHead, headSha);
     });
 
     test("reports finished once the command's process is gone, even without a notification", async () => {
@@ -297,7 +469,7 @@ describe("git-hygiene stop hook", () => {
       const workspace = makeWorkspace(root, { repo: "pushed" });
       const snapshot = path.join(root, "status-during-checks.json");
       writeStub(bin, "gh", githubStub({ checks: [{ bucket: "pass", name: "ci", state: "SUCCESS" }], snapshotTo: snapshot }));
-      writeFileSync(statusPathFor(root), JSON.stringify({ state: "awaiting-background", pendingTaskIds: ["bq17zaptz"], updatedAt: "2026-09-07T10:00:00.000Z" }));
+      writeFileSync(statusPathFor(root), JSON.stringify({ state: "awaiting-background", pendingTasks: [{ id: "bq17zaptz", kind: "shell", label: "Wait" }], updatedAt: "2026-09-07T10:00:00.000Z" }));
 
       const result = runHook({ root, bin, workspace, payload: { session_id: "s1" }, env: { CRC_CI_WATCH_TIMEOUT_MS: "5000" } });
 

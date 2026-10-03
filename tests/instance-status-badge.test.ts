@@ -11,11 +11,45 @@ const CASES: Array<{ id: string; status: InstanceStatus; label: string; colour: 
   { id: "bbbb000000000000", status: { state: "waiting", updatedAt: UPDATED_AT }, label: "Waiting", colour: "amber" },
   {
     id: "cccc000000000000",
-    status: { state: "awaiting-background", pendingTaskIds: ["bq17zaptz", "agent-a1b"], updatedAt: UPDATED_AT },
-    label: "Waiting on agents",
+    status: {
+      state: "awaiting-background",
+      pendingTasks: [
+        { id: "bq17zaptz", kind: "shell", label: "Wait for the CI run" },
+        { id: "agent-a1b", kind: "agent", label: "Review the diff" },
+      ],
+      updatedAt: UPDATED_AT,
+    },
+    label: "Waiting on background tasks",
     colour: "violet",
   },
   { id: "dddd000000000000", status: { state: "finished", updatedAt: UPDATED_AT }, label: "Finished", colour: "emerald" },
+];
+
+const BACKGROUND_CASES: Array<{ id: string; status: InstanceStatus; label: string }> = [
+  {
+    id: "eeee000000000000",
+    status: {
+      state: "awaiting-background",
+      pendingTasks: [
+        { id: "bq17zaptz", kind: "shell", label: "Wait for the CI run" },
+        { id: "b5nuwjv9p", kind: "shell", label: "npm run dev" },
+      ],
+      updatedAt: UPDATED_AT,
+    },
+    label: "Waiting on shells",
+  },
+  {
+    id: "ffff000000000000",
+    status: {
+      state: "awaiting-background",
+      pendingTasks: [
+        { id: "agent-a1b", kind: "agent", label: "Review the diff" },
+        { id: "remote-7", kind: "remote", label: "Remote work" },
+      ],
+      updatedAt: UPDATED_AT,
+    },
+    label: "Waiting on agents",
+  },
 ];
 
 function makeContainer(id: string): ManagedContainer {
@@ -32,9 +66,9 @@ function makeContainer(id: string): ManagedContainer {
 }
 
 const stubs: Record<string, unknown> = {
-  "/api/containers": CASES.map((entry) => makeContainer(entry.id)),
+  "/api/containers": [...CASES, ...BACKGROUND_CASES].map((entry) => makeContainer(entry.id)),
 };
-for (const entry of CASES) {
+for (const entry of [...CASES, ...BACKGROUND_CASES]) {
   stubs[`/api/containers/${entry.id}`] = makeContainer(entry.id);
   stubs[`/api/containers/${entry.id}/instance-status`] = entry.status;
   stubs[`/api/containers/${entry.id}/code-status`] = {
@@ -104,18 +138,28 @@ describe("instance status badge", () => {
     assert.ok(badge.title.includes(new Date(UPDATED_AT).toLocaleString()));
   });
 
-  test("the awaiting-background pill distinguishes agents from user input", async () => {
+  test("the awaiting-background pill distinguishes background work from user input", async () => {
     const badge = await badgeFor("cccc000000000000");
 
-    assert.match(badge.title, /^Waiting on agents since /);
+    assert.match(badge.title, /^Waiting on background tasks since /);
     assert.ok(badge.title.includes(new Date(UPDATED_AT).toLocaleString()));
   });
 
-  test("the awaiting-background pill names the tasks the agent is waiting on", async () => {
+  test("the awaiting-background pill lists what each pending task is", async () => {
     const badge = await badgeFor("cccc000000000000");
 
-    assert.match(badge.title, /\(bq17zaptz, agent-a1b\)$/);
+    assert.match(badge.title, /\(Wait for the CI run; Review the diff\)$/);
   });
+
+  for (const entry of BACKGROUND_CASES) {
+    test(`the awaiting-background pill reads "${entry.label}" when only that kind of task is pending`, async () => {
+      const badge = await badgeFor(entry.id);
+
+      assert.equal(badge.text, entry.label);
+      assert.match(badge.className, /bg-violet-500\/10/);
+      assert.match(badge.title, new RegExp(`^${entry.label} since `));
+    });
+  }
 
   test("labels one badge per container on the containers list, in the order they are listed", async () => {
     const page = await harness.browser.newPage();
@@ -126,7 +170,7 @@ describe("instance status badge", () => {
 
       assert.deepEqual(
         (await badges.allTextContents()).map((text) => text.trim()),
-        CASES.map((entry) => entry.label),
+        [...CASES, ...BACKGROUND_CASES].map((entry) => entry.label),
       );
     } finally {
       await page.close();

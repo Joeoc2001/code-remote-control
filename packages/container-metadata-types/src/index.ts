@@ -21,9 +21,17 @@ export type InstanceState =
   | "awaiting-background"
   | "finished";
 
+export type PendingTaskKind = "shell" | "agent" | "remote";
+
+export interface PendingTask {
+  id: string;
+  kind: PendingTaskKind;
+  label: string;
+}
+
 export interface InstanceStatus {
   state: InstanceState;
-  pendingTaskIds?: string[];
+  pendingTasks?: PendingTask[];
   updatedAt: string | null;
 }
 

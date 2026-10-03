@@ -44,25 +44,35 @@ describe("container metadata server: instance status", () => {
     });
   }
 
-  test("round-trips the pending task ids the hook records", async () => {
-    writeInstanceStatus("awaiting-background", { pendingTaskIds: ["bq17zaptz", "agent-a1b"] });
+  test("round-trips the pending tasks the hook records", async () => {
+    writeInstanceStatus("awaiting-background", {
+      pendingTasks: [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }, { id: "agent-a1b", kind: "agent", label: "Review the diff" }, { id: "remote-7", kind: "remote", label: "Remote work" }],
+    });
 
     const status = await readInstanceStatus();
     assert.equal(status.state, "awaiting-background");
-    assert.deepEqual(status.pendingTaskIds, ["bq17zaptz", "agent-a1b"]);
+    assert.deepEqual(status.pendingTasks, [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }, { id: "agent-a1b", kind: "agent", label: "Review the diff" }, { id: "remote-7", kind: "remote", label: "Remote work" }]);
   });
 
-  test("omits pending task ids when the hook recorded none", async () => {
+  test("omits pending tasks when the hook recorded none", async () => {
     writeInstanceStatus("finished");
 
-    assert.ok(!("pendingTaskIds" in (await readInstanceStatus())));
+    assert.ok(!("pendingTasks" in (await readInstanceStatus())));
   });
 
-  test("fails loudly on pending task ids that are not a list of strings", async () => {
-    writeFileSync(statusPath, JSON.stringify({ state: "awaiting-background", pendingTaskIds: "bq17zaptz", updatedAt: "2026-08-30T10:00:00.000Z" }));
+  for (const [name, pendingTasks] of [
+    ["not a list", "bq17zaptz"],
+    ["a list of bare ids", ["bq17zaptz"]],
+    ["missing a label", [{ id: "bq17zaptz", kind: "shell" }]],
+    ["of an unknown kind", [{ id: "bq17zaptz", kind: "daemon", label: "Wait" }]],
+    ["missing an id", [{ kind: "shell", label: "Wait" }]],
+  ] as const) {
+    test(`fails loudly on pending tasks that are ${name}`, async () => {
+      writeFileSync(statusPath, JSON.stringify({ state: "awaiting-background", pendingTasks, updatedAt: "2026-08-30T10:00:00.000Z" }));
 
-    await assert.rejects(readInstanceStatus(), /malformed pendingTaskIds/);
-  });
+      await assert.rejects(readInstanceStatus(), /malformed pendingTasks/);
+    });
+  }
 
   test("fails loudly on a state it does not know", async () => {
     writeFileSync(statusPath, JSON.stringify({ state: "confused", updatedAt: "2026-08-30T10:00:00.000Z" }));

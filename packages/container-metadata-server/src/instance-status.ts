@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { InstanceState, InstanceStatus } from "../../container-metadata-types/src/index.js";
+import type { InstanceState, InstanceStatus, PendingTask, PendingTaskKind } from "../../container-metadata-types/src/index.js";
 
 const INSTANCE_STATES: readonly InstanceState[] = ["working", "waiting", "awaiting-background", "finished"];
 
@@ -11,8 +11,21 @@ function isInstanceState(value: unknown): value is InstanceState {
   return typeof value === "string" && (INSTANCE_STATES as readonly string[]).includes(value);
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+const PENDING_TASK_KINDS: readonly PendingTaskKind[] = ["shell", "agent", "remote"];
+
+function isPendingTask(value: unknown): value is PendingTask {
+  if (typeof value !== "object" || value === null) return false;
+  const task = value as Record<string, unknown>;
+  return (
+    typeof task.id === "string" &&
+    typeof task.label === "string" &&
+    typeof task.kind === "string" &&
+    (PENDING_TASK_KINDS as readonly string[]).includes(task.kind)
+  );
+}
+
+function isPendingTaskList(value: unknown): value is PendingTask[] {
+  return Array.isArray(value) && value.every(isPendingTask);
 }
 
 export async function readInstanceStatus(): Promise<InstanceStatus> {
@@ -31,13 +44,13 @@ export async function readInstanceStatus(): Promise<InstanceStatus> {
   if (!isInstanceState(parsed.state) || typeof parsed.updatedAt !== "string") {
     throw new Error(`Instance status file ${path} is malformed`);
   }
-  if (parsed.pendingTaskIds !== undefined && !isStringArray(parsed.pendingTaskIds)) {
-    throw new Error(`Instance status file ${path} has a malformed pendingTaskIds list`);
+  if (parsed.pendingTasks !== undefined && !isPendingTaskList(parsed.pendingTasks)) {
+    throw new Error(`Instance status file ${path} has a malformed pendingTasks list`);
   }
 
   return {
     state: parsed.state,
-    ...(parsed.pendingTaskIds === undefined ? {} : { pendingTaskIds: parsed.pendingTaskIds }),
+    ...(parsed.pendingTasks === undefined ? {} : { pendingTasks: parsed.pendingTasks }),
     updatedAt: parsed.updatedAt,
   };
 }

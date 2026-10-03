@@ -16,7 +16,7 @@ function currentInstanceStatus(path) {
 
 function sameStatus(current, state, details) {
   if (current === null || current.state !== state) return false;
-  return JSON.stringify(current.pendingTaskIds ?? null) === JSON.stringify(details.pendingTaskIds ?? null);
+  return JSON.stringify(current.pendingTasks ?? null) === JSON.stringify(details.pendingTasks ?? null);
 }
 
 function writeInstanceStatus(state, details = {}) {
