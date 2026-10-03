@@ -24,6 +24,7 @@ export type {
   ContainerCodeStatus,
   InstanceState,
   InstanceStatus,
+  PendingTask,
   ReviewRequestStatus,
   PipelineStatus,
   ForgeProvider,

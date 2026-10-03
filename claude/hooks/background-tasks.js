@@ -41,19 +41,61 @@ function launchedOutputFile(entry) {
   return null;
 }
 
-function launchedTasks(entry) {
+function toolUseBlocks(entry) {
+  if (entry.type !== "assistant") return [];
+  const message = isRecord(entry.message) ? entry.message : null;
+  if (!message || !Array.isArray(message.content)) return [];
+  return message.content.filter((block) => isRecord(block) && block.type === "tool_use" && typeof block.id === "string");
+}
+
+function launchingToolInput(entry, toolInputs) {
+  const message = isRecord(entry.message) ? entry.message : null;
+  if (!message || !Array.isArray(message.content)) return {};
+  for (const block of message.content) {
+    if (!isRecord(block) || block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+    const input = toolInputs.get(block.tool_use_id);
+    if (input) return input;
+  }
+  return {};
+}
+
+function firstString(...values) {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0) ?? null;
+}
+
+function launchedTasks(entry, toolInputs) {
   const result = isRecord(entry) ? entry.toolUseResult : null;
   if (!isRecord(result)) return [];
 
+  const input = launchingToolInput(entry, toolInputs);
   const tasks = [];
   if (typeof result.backgroundTaskId === "string") {
-    tasks.push({ id: result.backgroundTaskId, outputFile: launchedOutputFile(entry) });
+    const command = firstString(input.command);
+    tasks.push({
+      id: result.backgroundTaskId,
+      kind: "shell",
+      label: firstString(input.description, command, result.backgroundTaskId),
+      command,
+      outputFile: launchedOutputFile(entry),
+    });
   }
   if (result.status === "async_launched" && typeof result.agentId === "string") {
-    tasks.push({ id: result.agentId, outputFile: null });
+    tasks.push({
+      id: result.agentId,
+      kind: "agent",
+      label: firstString(input.description, result.description, result.agentId),
+      command: null,
+      outputFile: null,
+    });
   }
   if (result.status === "remote_launched" && typeof result.taskId === "string") {
-    tasks.push({ id: result.taskId, outputFile: null });
+    tasks.push({
+      id: result.taskId,
+      kind: "remote",
+      label: firstString(input.description, result.description, result.taskId),
+      command: null,
+      outputFile: null,
+    });
   }
   return tasks;
 }
@@ -127,6 +169,7 @@ function pendingBackgroundTasks(transcript, { since = null } = {}) {
   if (sinceMs !== null && Number.isNaN(sinceMs)) throw new Error(`background-tasks.js: invalid session start '${since}'`);
 
   const pending = new Map();
+  const toolInputs = new Map();
   for (const line of transcript.split("\n")) {
     if (!line.trim()) continue;
 
@@ -138,7 +181,8 @@ function pendingBackgroundTasks(transcript, { since = null } = {}) {
     }
     if (!isRecord(entry) || predatesSession(entry, sinceMs)) continue;
 
-    for (const task of launchedTasks(entry)) pending.set(task.id, task);
+    for (const block of toolUseBlocks(entry)) toolInputs.set(block.id, isRecord(block.input) ? block.input : {});
+    for (const task of launchedTasks(entry, toolInputs)) pending.set(task.id, task);
     for (const id of stoppedTaskIds(entry)) pending.delete(id);
     if (entry.type === "assistant" || !line.includes("<task-notification>")) continue;
     for (const id of notifiedTaskIds(entry)) pending.delete(id);
@@ -196,7 +240,7 @@ function isStillRunning(task) {
   return task.outputFile === null || isHeldOpenByAnyProcess(task.outputFile);
 }
 
-function readPendingBackgroundTaskIds(transcriptPath) {
+function readPendingBackgroundTasks(transcriptPath) {
   if (typeof transcriptPath !== "string" || transcriptPath.length === 0) return [];
 
   let transcript;
@@ -207,14 +251,13 @@ function readPendingBackgroundTaskIds(transcriptPath) {
     throw error;
   }
   return pendingBackgroundTasks(transcript, { since: readSessionStartedAt() })
-    .filter(isStillRunning)
-    .map((task) => task.id);
+    .filter(isStillRunning);
 }
 
 module.exports = {
   isHeldOpenByAnyProcess,
   pendingBackgroundTasks,
-  readPendingBackgroundTaskIds,
+  readPendingBackgroundTasks,
   readSessionStartedAt,
   sessionStartedAtPath,
 };

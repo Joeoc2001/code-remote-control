@@ -8,7 +8,7 @@ const { setTimeout: delay } = require("node:timers/promises");
 const {
   isHeldOpenByAnyProcess,
   pendingBackgroundTasks,
-  readPendingBackgroundTaskIds,
+  readPendingBackgroundTasks,
   readSessionStartedAt,
   sessionStartedAtPath,
 } = require("../claude/hooks/background-tasks.js");
@@ -19,6 +19,24 @@ function transcript(...entries) {
 
 function pendingBackgroundTaskIds(text, options) {
   return pendingBackgroundTasks(text, options).map((task) => task.id);
+}
+
+function readPendingBackgroundTaskIds(transcriptPath) {
+  return readPendingBackgroundTasks(transcriptPath).map((task) => task.id);
+}
+
+function toolUse(toolUseId, name, input) {
+  return {
+    type: "assistant",
+    message: {
+      model: "claude-opus-5-5",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "tool_use", id: toolUseId, name, input, caller: { type: "direct" } }],
+    },
+    wireToolInputs: { [toolUseId]: input },
+    uuid: `assistant-${toolUseId}`,
+  };
 }
 
 function backgroundBashLaunch(taskId, { outputFile = null, timestamp } = {}) {
@@ -268,8 +286,8 @@ describe("pendingBackgroundTaskIds", () => {
   test("records the output file named in a background bash launch", () => {
     const text = transcript(backgroundBashLaunch("bq17zaptz", { outputFile: "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output" }));
 
-    assert.deepEqual(pendingBackgroundTasks(text), [
-      { id: "bq17zaptz", outputFile: "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output" },
+    assert.deepEqual(pendingBackgroundTasks(text).map((task) => task.outputFile), [
+      "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output",
     ]);
   });
 
@@ -338,6 +356,109 @@ describe("pendingBackgroundTaskIds", () => {
 
   test("fails loudly on a session start that is not a timestamp", () => {
     assert.throws(() => pendingBackgroundTasks(transcript(), { since: "yesterday" }), /invalid session start 'yesterday'/);
+  });
+});
+
+describe("what each pending background task is", () => {
+  test("labels a background shell with the description and command of the Bash call that launched it", () => {
+    const text = transcript(
+      toolUse("toolu_bq17zaptz", "Bash", {
+        command: "until gh pr checks 7 | grep -q pass; do sleep 30; done",
+        description: "Wait for the PR checks to pass",
+        run_in_background: true,
+      }),
+      backgroundBashLaunch("bq17zaptz", { outputFile: "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output" }),
+    );
+
+    assert.deepEqual(pendingBackgroundTasks(text), [
+      {
+        id: "bq17zaptz",
+        kind: "shell",
+        label: "Wait for the PR checks to pass",
+        command: "until gh pr checks 7 | grep -q pass; do sleep 30; done",
+        outputFile: "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output",
+      },
+    ]);
+  });
+
+  test("labels a background shell launched without a description by its command", () => {
+    const text = transcript(
+      toolUse("toolu_bq17zaptz", "Bash", { command: "npm run dev", run_in_background: true }),
+      backgroundBashLaunch("bq17zaptz"),
+    );
+
+    const [task] = pendingBackgroundTasks(text);
+    assert.equal(task.kind, "shell");
+    assert.equal(task.label, "npm run dev");
+    assert.equal(task.command, "npm run dev");
+  });
+
+  test("falls back to the task id when the launching call is not in the transcript", () => {
+    const [task] = pendingBackgroundTasks(transcript(backgroundBashLaunch("bq17zaptz")));
+
+    assert.deepEqual({ kind: task.kind, label: task.label, command: task.command }, { kind: "shell", label: "bq17zaptz", command: null });
+  });
+
+  test("labels a background agent with the description of the Agent call that launched it", () => {
+    const text = transcript(
+      toolUse("toolu_agent-a1b", "Agent", { description: "Review the diff", prompt: "...", run_in_background: true }),
+      agentLaunch("agent-a1b"),
+    );
+
+    assert.deepEqual(pendingBackgroundTasks(text), [
+      { id: "agent-a1b", kind: "agent", label: "Review the diff", command: null, outputFile: null },
+    ]);
+  });
+
+  test("falls back to the description in the launch result for an agent", () => {
+    const [task] = pendingBackgroundTasks(transcript(agentLaunch("agent-a1b")));
+
+    assert.equal(task.kind, "agent");
+    assert.equal(task.label, "Investigate auth bug");
+  });
+
+  test("labels a remote agent from its launch result", () => {
+    assert.deepEqual(pendingBackgroundTasks(transcript(remoteAgentLaunch("remote-7"))), [
+      { id: "remote-7", kind: "remote", label: "Remote work", command: null, outputFile: null },
+    ]);
+  });
+
+  test("does not track a Monitor task, which records a taskId rather than a backgroundTaskId", () => {
+    const monitorLaunch = {
+      type: "user",
+      message: { role: "user", content: [{ tool_use_id: "toolu_mon", type: "tool_result", content: "Monitor started with ID: m1x2y3." }] },
+      toolUseResult: { taskId: "m1x2y3", description: "Watch the build log" },
+    };
+    const text = transcript(toolUse("toolu_mon", "Monitor", { command: "tail -f build.log", description: "Watch the build log" }), monitorLaunch);
+
+    assert.deepEqual(pendingBackgroundTasks(text), []);
+  });
+
+  test("clears a labelled shell through the queue-operation and queued_command entries of its notification", () => {
+    const launch = [
+      toolUse("toolu_bq17zaptz", "Bash", { command: "npm test", description: "Run the tests", run_in_background: true }),
+      backgroundBashLaunch("bq17zaptz", { outputFile: "/tmp/claude-0/-workspace/s1/tasks/bq17zaptz.output" }),
+    ];
+
+    assert.deepEqual(pendingBackgroundTaskIds(transcript(...launch, queuedNotification("bq17zaptz"))), []);
+    assert.deepEqual(pendingBackgroundTaskIds(transcript(...launch, deliveredNotification("bq17zaptz"))), []);
+  });
+
+  test("keeps shells and agents apart when both are pending", () => {
+    const text = transcript(
+      toolUse("toolu_bq17zaptz", "Bash", { command: "sleep infinity", description: "Wait forever", run_in_background: true }),
+      backgroundBashLaunch("bq17zaptz"),
+      toolUse("toolu_agent-a1b", "Agent", { description: "Review the diff", prompt: "..." }),
+      agentLaunch("agent-a1b"),
+    );
+
+    assert.deepEqual(
+      pendingBackgroundTasks(text).map(({ id, kind, label }) => ({ id, kind, label })),
+      [
+        { id: "bq17zaptz", kind: "shell", label: "Wait forever" },
+        { id: "agent-a1b", kind: "agent", label: "Review the diff" },
+      ],
+    );
   });
 });
 
@@ -421,7 +542,7 @@ describe("readSessionStartedAt", () => {
   });
 });
 
-describe("readPendingBackgroundTaskIds", () => {
+describe("readPendingBackgroundTasks", () => {
   let dir;
   let child = null;
   let originalRunDir;
