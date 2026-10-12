@@ -11,13 +11,9 @@ const dockerDeviceSchema = z.object({
   cgroup_permissions: z.string().optional(),
 });
 
-const dockerDeviceRequestSchema = z.object({
-  driver: z.string().optional(),
-  count: z.number().int().optional(),
-  device_ids: z.array(z.string().min(1)).optional(),
-  capabilities: z.array(z.array(z.string().min(1)).min(1)).min(1).optional(),
-  options: z.record(z.string(), z.string()).optional(),
-});
+const cdiDeviceNameSchema = z
+  .string()
+  .regex(/^[^/=\s]+\/[^/=\s]+=[^/=\s]+$/, "CDI device names must be fully qualified, e.g. nvidia.com/gpu=all");
 
 const dockerUlimitSchema = z.object({
   name: z.string().min(1),
@@ -30,7 +26,7 @@ const dockerRestartPolicySchema = z.object({
   maximum_retry_count: z.number().int().min(0).optional(),
 });
 
-export const dockerConfigSchema = z.object({
+export const dockerConfigSchema = z.strictObject({
   auto_remove: z
     .literal(false, {
       error:
@@ -58,7 +54,7 @@ export const dockerConfigSchema = z.object({
   dns_search: z.array(z.string().min(1)).optional(),
   devices: z.array(dockerDeviceSchema).optional(),
   device_cgroup_rules: z.array(z.string().min(1)).optional(),
-  device_requests: z.array(dockerDeviceRequestSchema).optional(),
+  cdi_devices: z.array(cdiDeviceNameSchema).min(1).optional(),
   runtime: z.string().min(1).optional(),
   restart_policy: dockerRestartPolicySchema.optional(),
   ulimits: z.array(dockerUlimitSchema).optional(),
