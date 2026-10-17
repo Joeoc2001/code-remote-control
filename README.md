@@ -137,6 +137,7 @@ services:
       - "80:3000"
     environment:
       GITHUB_TOKEN: ghp_...
+      GITHUB_MERGE_TOKEN: github_pat_...
       CRC_ACCESS_TOKEN: choose-a-long-random-secret
     volumes:
       - ./environments.json:/configs/environments.json:ro
@@ -147,6 +148,8 @@ services:
     restart: always
     stop_grace_period: 30s
 ```
+
+The configuration is read from `/configs/environments.json`; override the path with `CRC_CONFIG_PATH`.
 
 Note that the runners must be accessible from the CRC server, so must share at least one docker network.
 
@@ -221,6 +224,28 @@ seconds and spawns exactly the agent the current state calls for:
 6. Green, reviewed, and comment-free → the task waits for a human approval
    (approvals from the bot's own forge account are ignored), then merges via
    the forge API.
+
+### Merge token
+
+Agents get `GITHUB_TOKEN` / `GITLAB_TOKEN`, which should not be able to merge
+into the default branch. The server merges approved PRs/MRs with a separate,
+privileged token instead:
+
+- `GITHUB_MERGE_TOKEN` — a fine-grained PAT with `Contents: write` and
+  `Pull requests: write`. If the target branch is protected, the token's account
+  must be allowed to bypass the protection or be on the merge allowlist.
+- `GITLAB_MERGE_TOKEN` — a token with the `api` scope whose account has
+  Maintainer access or is "allowed to merge" on the protected branch.
+
+The merge token is used only for the merge call and is never passed to agent
+containers; the server refuses to create a container whose `env` would carry
+it. Every other forge call, including the fast-forward rebase, uses the agent
+token. Approvals are attributed against the agent token's account, so approvals
+made by the merge token's account (e.g. your own PAT) still count as human.
+
+A merge token equal to its agent token is rejected at startup. If a merge token
+is unset the server warns and merges with the agent token, which fails under
+branch protection; merge errors name the token that was used.
 
 Each step runs under a per-step configuration chosen at task creation. An agent
 counts as done only once its container reports `finished` on two consecutive

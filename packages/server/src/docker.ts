@@ -13,7 +13,13 @@ import type {
   TaskSpawn,
 } from "./types.js";
 import { taskSpawnSchema } from "./types.js";
-import { GITHUB_TOKEN, GITLAB_TOKEN, CRC_ENV_IMAGE } from "./config.js";
+import {
+  GITHUB_AGENT_TOKEN,
+  GITHUB_MERGE_TOKEN,
+  GITLAB_AGENT_TOKEN,
+  GITLAB_MERGE_TOKEN,
+  CRC_ENV_IMAGE,
+} from "./config.js";
 
 
 import type { RepoSource } from "./types.js";
@@ -373,6 +379,51 @@ export async function getContainer(id: string): Promise<ManagedContainer | null>
   }
 }
 
+interface ContainerEnvOptions {
+  repoUrl: string;
+  repoSource: RepoSource;
+  gitlabUrl: string;
+  gitUsername: string;
+  gitEmail: string;
+  initialPrompt: string | undefined;
+  configEnv: Record<string, string> | undefined;
+}
+
+export function buildContainerEnv(options: ContainerEnvOptions): string[] {
+  const envVars = [
+    `REPO_URL=${options.repoUrl}`,
+    ...(options.repoSource === "github" && GITHUB_AGENT_TOKEN.value
+      ? [`GITHUB_TOKEN=${GITHUB_AGENT_TOKEN.value}`]
+      : []),
+    ...(options.repoSource === "gitlab" && GITLAB_AGENT_TOKEN.value
+      ? [`GITLAB_TOKEN=${GITLAB_AGENT_TOKEN.value}`]
+      : []),
+    `GITLAB_URL=${options.gitlabUrl}`,
+    `CRC_REPO_SOURCE=${options.repoSource}`,
+    `CRC_METADATA_PORT=${CONTAINER_METADATA_INTERNAL_PORT}`,
+    `GIT_USER_NAME=${options.gitUsername}`,
+    `GIT_USER_EMAIL=${options.gitEmail}`,
+    "IS_SANDBOX=1",
+    ...(options.initialPrompt ? [`CRC_INITIAL_PROMPT=${options.initialPrompt}`] : []),
+    ...Object.entries(options.configEnv || {}).map(([k, v]) => `${k}=${v}`),
+  ];
+
+  const leaked = envVars.find((entry) => entry.split("=", 1)[0].endsWith("_MERGE_TOKEN"));
+  if (leaked) {
+    throw new Error(`Refusing to pass ${leaked.split("=", 1)[0]} into an agent container`);
+  }
+  for (const [agentToken, mergeToken] of [
+    [GITHUB_AGENT_TOKEN, GITHUB_MERGE_TOKEN],
+    [GITLAB_AGENT_TOKEN, GITLAB_MERGE_TOKEN],
+  ]) {
+    if (mergeToken.value !== agentToken.value && envVars.some((entry) => entry.includes(mergeToken.value))) {
+      throw new Error(`Refusing to pass the value of ${mergeToken.envName} into an agent container`);
+    }
+  }
+
+  return envVars;
+}
+
 export async function createContainer(
   appConfig: ResolvedConfigFile,
   config: ResolvedEnvironmentConfig,
@@ -398,19 +449,15 @@ export async function createContainer(
     ? `${gitlabHost}/${repoFullName}.git`
     : `https://github.com/${repoFullName}.git`;
 
-  const envVars = [
-    `REPO_URL=${repoUrl}`,
-    ...(repoSource === "github" && GITHUB_TOKEN ? [`GITHUB_TOKEN=${GITHUB_TOKEN}`] : []),
-    ...(repoSource === "gitlab" && GITLAB_TOKEN ? [`GITLAB_TOKEN=${GITLAB_TOKEN}`] : []),
-    `GITLAB_URL=${gitlabUrl}`,
-    `CRC_REPO_SOURCE=${repoSource}`,
-    `CRC_METADATA_PORT=${CONTAINER_METADATA_INTERNAL_PORT}`,
-    `GIT_USER_NAME=${appConfig.git.username}`,
-    `GIT_USER_EMAIL=${appConfig.git.email}`,
-    "IS_SANDBOX=1",
-    ...(options.initialPrompt ? [`CRC_INITIAL_PROMPT=${options.initialPrompt}`] : []),
-    ...Object.entries(config.env || {}).map(([k, v]) => `${k}=${v}`),
-  ];
+  const envVars = buildContainerEnv({
+    repoUrl,
+    repoSource,
+    gitlabUrl,
+    gitUsername: appConfig.git.username,
+    gitEmail: appConfig.git.email,
+    initialPrompt: options.initialPrompt,
+    configEnv: config.env,
+  });
 
   const image = CRC_ENV_IMAGE;
   const hostConfig = buildHostConfig(config.docker);
