@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { Task } from "../types";
 import { fetchTasks, subscribeToEvents, deleteMergedTasks } from "../api";
 import Header from "../components/Header";
@@ -6,6 +6,7 @@ import TaskCard from "../components/TaskCard";
 import NewTaskModal from "../components/NewTaskModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import Footer from "../components/Footer";
+import { sortTasks } from "../components/taskOrder";
 
 export default function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -14,6 +15,7 @@ export default function Tasks() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(true);
+  const sortedTasks = useMemo(() => sortTasks(tasks), [tasks]);
 
   const loadTasks = useCallback(async () => {
     try {
@@ -116,7 +118,7 @@ export default function Tasks() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {tasks.map((task) => (
+            {sortedTasks.map((task) => (
               <TaskCard key={task.id} task={task} onChanged={upsertTask} onRemoved={removeTask} />
             ))}
           </div>

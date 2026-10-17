@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,6 +64,7 @@ export interface ClientAppHarness {
   origin: string;
   browser: Browser;
   unstubbedRequests: string[];
+  sendEvent: (event: string, data: unknown) => void;
   stop: () => Promise<void>;
 }
 
@@ -73,6 +74,7 @@ function buildClient(): void {
 
 function startStubServer(
   unstubbedRequests: string[],
+  eventStreams: Set<ServerResponse>,
   extraStubs: Record<string, unknown>,
 ): Promise<{ server: Server; origin: string }> {
   const stubs = { ...apiStubs, ...extraStubs };
@@ -83,6 +85,8 @@ function startStubServer(
     if (path === "/api/events") {
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
       res.write(":ok\n\n");
+      eventStreams.add(res);
+      res.on("close", () => eventStreams.delete(res));
       return;
     }
 
@@ -116,13 +120,18 @@ function startStubServer(
 export async function startClientApp(extraStubs: Record<string, unknown> = {}): Promise<ClientAppHarness> {
   buildClient();
   const unstubbedRequests: string[] = [];
-  const { server, origin } = await startStubServer(unstubbedRequests, extraStubs);
+  const eventStreams = new Set<ServerResponse>();
+  const { server, origin } = await startStubServer(unstubbedRequests, eventStreams, extraStubs);
   const browser = await chromium.launch();
 
   return {
     origin,
     browser,
     unstubbedRequests,
+    sendEvent: (event, data) => {
+      if (eventStreams.size === 0) throw new Error("no client is subscribed to /api/events");
+      for (const stream of eventStreams) stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    },
     stop: async () => {
       await browser.close();
       server.closeAllConnections();
