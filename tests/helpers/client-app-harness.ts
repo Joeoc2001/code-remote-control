@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { createServer, type Server } from "node:http";
-import { readFileSync } from "node:fs";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser } from "playwright";
 import type { Task } from "@crc/shared";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const distDir = join(repoRoot, "packages", "client", "dist");
 
 const stubTask: Task = {
   id: "task-1",
@@ -64,15 +64,23 @@ export interface ClientAppHarness {
   origin: string;
   browser: Browser;
   unstubbedRequests: string[];
+  sendEvent: (event: string, data: unknown) => void;
   stop: () => Promise<void>;
 }
 
-function buildClient(): void {
-  execFileSync("npm", ["run", "build", "-w", "packages/client"], { cwd: repoRoot, stdio: "pipe" });
+function buildClient(): string {
+  const distDir = mkdtempSync(join(tmpdir(), "crc-client-dist-"));
+  execFileSync("npm", ["run", "build", "-w", "packages/client", "--", "--outDir", distDir, "--emptyOutDir"], {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  return distDir;
 }
 
 function startStubServer(
+  distDir: string,
   unstubbedRequests: string[],
+  eventStreams: Set<ServerResponse>,
   extraStubs: Record<string, unknown>,
 ): Promise<{ server: Server; origin: string }> {
   const stubs = { ...apiStubs, ...extraStubs };
@@ -83,6 +91,8 @@ function startStubServer(
     if (path === "/api/events") {
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
       res.write(":ok\n\n");
+      eventStreams.add(res);
+      res.on("close", () => eventStreams.delete(res));
       return;
     }
 
@@ -114,19 +124,25 @@ function startStubServer(
 }
 
 export async function startClientApp(extraStubs: Record<string, unknown> = {}): Promise<ClientAppHarness> {
-  buildClient();
+  const distDir = buildClient();
   const unstubbedRequests: string[] = [];
-  const { server, origin } = await startStubServer(unstubbedRequests, extraStubs);
+  const eventStreams = new Set<ServerResponse>();
+  const { server, origin } = await startStubServer(distDir, unstubbedRequests, eventStreams, extraStubs);
   const browser = await chromium.launch();
 
   return {
     origin,
     browser,
     unstubbedRequests,
+    sendEvent: (event, data) => {
+      if (eventStreams.size === 0) throw new Error("no client is subscribed to /api/events");
+      for (const stream of eventStreams) stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    },
     stop: async () => {
       await browser.close();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      rmSync(distDir, { recursive: true, force: true });
     },
   };
 }
