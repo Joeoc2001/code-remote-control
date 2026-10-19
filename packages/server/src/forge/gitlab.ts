@@ -5,7 +5,7 @@ import type {
   ReviewRequestCiState,
   ReviewRequestState,
 } from "../types.js";
-import { GITLAB_TOKEN, loadConfigurations } from "../config.js";
+import { GITLAB_AGENT_TOKEN, GITLAB_MERGE_TOKEN, loadConfigurations, type ForgeToken } from "../config.js";
 import { hashDiffText } from "./diff-hash.js";
 import { isStdinPlaceholderBody } from "./body.js";
 
@@ -16,7 +16,7 @@ let repoCache: { repos: GitLabRepo[]; fetchedAt: number } | null = null;
 let currentUsernamePromise: Promise<string> | null = null;
 
 export function isGitLabConfigured(): boolean {
-  return GITLAB_TOKEN.length > 0;
+  return GITLAB_AGENT_TOKEN.value.length > 0;
 }
 
 async function gitlabApiBase(): Promise<string> {
@@ -25,11 +25,16 @@ async function gitlabApiBase(): Promise<string> {
   return gitlabUrl.replace(/\/+$/, "");
 }
 
-async function gitlabRequest(method: string, url: string, body?: unknown): Promise<Response> {
+async function gitlabRequest(
+  method: string,
+  url: string,
+  body?: unknown,
+  token: ForgeToken = GITLAB_AGENT_TOKEN,
+): Promise<Response> {
   const response = await fetch(url, {
     method,
     headers: {
-      "PRIVATE-TOKEN": GITLAB_TOKEN,
+      "PRIVATE-TOKEN": token.value,
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -37,7 +42,9 @@ async function gitlabRequest(method: string, url: string, body?: unknown): Promi
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`GitLab API error: ${response.status} ${response.statusText}: ${detail}`);
+    throw new Error(
+      `GitLab API error (using ${token.envName}): ${response.status} ${response.statusText}: ${detail}`,
+    );
   }
 
   return response;
@@ -478,5 +485,6 @@ export async function mergeMergeRequest(repoFullName: string, id: string): Promi
     "PUT",
     `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/merge`,
     config.merge_method === "squash" ? { squash: true } : undefined,
+    GITLAB_MERGE_TOKEN,
   );
 }

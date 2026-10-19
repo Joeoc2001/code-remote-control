@@ -5,7 +5,7 @@ import type {
   ReviewRequestCiState,
   ReviewRequestState,
 } from "../types.js";
-import { GITHUB_TOKEN, loadConfigurations } from "../config.js";
+import { GITHUB_AGENT_TOKEN, GITHUB_MERGE_TOKEN, loadConfigurations, type ForgeToken } from "../config.js";
 import { hashDiffText } from "./diff-hash.js";
 import { isStdinPlaceholderBody } from "./body.js";
 
@@ -32,7 +32,7 @@ export async function fetchRepos(): Promise<GitHubRepo[]> {
       `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=updated`,
       {
         headers: {
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Authorization: `Bearer ${GITHUB_AGENT_TOKEN.value}`,
           Accept: "application/vnd.github.v3+json",
         },
       }
@@ -78,7 +78,7 @@ export async function fetchOpenIssues(repoFullName: string): Promise<RepoWorkIte
       `https://api.github.com/repos/${repoFullName}/issues?state=open&per_page=${perPage}&page=${page}`,
       {
         headers: {
-          Authorization: `Bearer ${GITHUB_TOKEN}`,
+          Authorization: `Bearer ${GITHUB_AGENT_TOKEN.value}`,
           Accept: "application/vnd.github.v3+json",
         },
       },
@@ -197,7 +197,7 @@ async function githubGraphql<T>(query: string, variables: Record<string, unknown
   const response = await fetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Authorization: `Bearer ${GITHUB_AGENT_TOKEN.value}`,
       Accept: GRAPHQL_ACCEPT,
       "Content-Type": "application/json",
     },
@@ -349,7 +349,7 @@ export async function fetchPullRequestDiffHash(
 ): Promise<string | null> {
   const response = await fetch(`https://api.github.com/repos/${repoFullName}/pulls/${id}`, {
     headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Authorization: `Bearer ${GITHUB_AGENT_TOKEN.value}`,
       Accept: "application/vnd.github.v3.diff",
     },
   });
@@ -369,11 +369,11 @@ export async function fetchPullRequestDiffHash(
   return hashDiffText(await response.text());
 }
 
-async function githubRest(method: string, path: string, body?: unknown): Promise<void> {
+async function githubRest(token: ForgeToken, method: string, path: string, body?: unknown): Promise<void> {
   const response = await fetch(`https://api.github.com${path}`, {
     method,
     headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Authorization: `Bearer ${token.value}`,
       Accept: "application/vnd.github.v3+json",
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
@@ -382,17 +382,19 @@ async function githubRest(method: string, path: string, body?: unknown): Promise
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`GitHub API error: ${response.status} ${response.statusText}: ${detail}`);
+    throw new Error(
+      `GitHub API error (using ${token.envName}): ${response.status} ${response.statusText}: ${detail}`,
+    );
   }
 }
 
 export async function rebasePullRequest(repoFullName: string, id: string): Promise<void> {
-  await githubRest("PUT", `/repos/${repoFullName}/pulls/${id}/update-branch`);
+  await githubRest(GITHUB_AGENT_TOKEN, "PUT", `/repos/${repoFullName}/pulls/${id}/update-branch`);
 }
 
 export async function mergePullRequest(repoFullName: string, id: string): Promise<void> {
   const config = await loadConfigurations();
-  await githubRest("PUT", `/repos/${repoFullName}/pulls/${id}/merge`, {
+  await githubRest(GITHUB_MERGE_TOKEN, "PUT", `/repos/${repoFullName}/pulls/${id}/merge`, {
     merge_method: config.merge_method ?? "merge",
   });
 }
