@@ -31,11 +31,16 @@ export default function RepoPicker({ repos, gitlabConfigured, selectedRepo, onSe
       </label>
       <div className="flex gap-2 mb-2">
         <input
-          type="text"
+          type="search"
           placeholder="Search repositories..."
           value={repoSearch}
           onChange={(e) => setRepoSearch(e.target.value)}
-          className="flex-1 bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          autoComplete="off"
+          enterKeyHint="search"
+          className="flex-1 min-w-0 bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-base sm:text-sm"
         />
         {gitlabConfigured && (
           <select

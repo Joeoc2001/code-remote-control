@@ -60,14 +60,16 @@ export default function Tasks() {
     return unsubscribe;
   }, [loadTasks, upsertTask, removeTask]);
 
-  const handleTasksCreated = (createdTasks: Task[]) => {
+  const handleTasksCreated = useCallback((createdTasks: Task[]) => {
     setTasks((prev) => {
       const existingIds = new Set(prev.map((task) => task.id));
       const newTasks = createdTasks.filter((task) => !existingIds.has(task.id));
       if (newTasks.length === 0) return prev;
       return [...newTasks, ...prev];
     });
-  };
+  }, []);
+
+  const closeModal = useCallback(() => setShowModal(false), []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -125,7 +127,7 @@ export default function Tasks() {
         )}
       </main>
       {showModal && (
-        <NewTaskModal onClose={() => setShowModal(false)} onCreated={handleTasksCreated} />
+        <NewTaskModal onClose={closeModal} onCreated={handleTasksCreated} />
       )}
       {showDeleteMergedModal && (
         <ConfirmDeleteModal

@@ -122,7 +122,7 @@ export default function Home() {
     [metadataByContainerId],
   );
 
-  const handleContainersCreated = (createdContainers: ManagedContainer[]) => {
+  const handleContainersCreated = useCallback((createdContainers: ManagedContainer[]) => {
     setContainers((prev) => {
       const existingIds = new Set(prev.map((container) => container.id));
       const newContainers = createdContainers.filter((container) => !existingIds.has(container.id));
@@ -134,7 +134,9 @@ export default function Home() {
       void refreshContainerMetadata(runningContainers);
       void refreshInstanceStatuses(runningContainers);
     }
-  };
+  }, [refreshContainerMetadata, refreshInstanceStatuses]);
+
+  const closeModal = useCallback(() => setShowModal(false), []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -201,7 +203,7 @@ export default function Home() {
       </main>
       {showModal && (
         <NewContainerModal
-          onClose={() => setShowModal(false)}
+          onClose={closeModal}
           onCreated={handleContainersCreated}
         />
       )}

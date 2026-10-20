@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect, useCallback } from "react";
 import {
   buildFixCiPrompt,
   buildIssuePrompt,
@@ -9,6 +9,7 @@ import {
 import type { ConfigSummary, ManagedContainer } from "../types";
 import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, createContainer, createContainers, fetchRepoReviewRequests, fetchRepoWorkItems } from "../api";
 import RepoPicker, { type RepoEntry } from "./RepoPicker";
+import ProseTextArea from "./ProseTextArea";
 
 interface NewContainerModalProps {
   onClose: () => void;
@@ -32,7 +33,7 @@ function referenceLabel(item: { reference: string; title: string }): string {
   return `${item.reference} ${item.title}`;
 }
 
-export default function NewContainerModal({
+function NewContainerModal({
   onClose,
   onCreated,
 }: NewContainerModalProps) {
@@ -333,12 +334,11 @@ export default function NewContainerModal({
                       Spawn one container for every open {selectedRepo?.source === "gitlab" ? "merge request" : "pull request"} with failing CI to investigate and fix the failures.
                     </p>
                   ) : (
-                    <textarea
+                    <ProseTextArea
                       value={pastedText}
-                      onChange={(e) => setPastedText(e.target.value)}
+                      onChange={setPastedText}
                       placeholder="One prompt per line..."
                       rows={6}
-                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm resize-y"
                     />
                   )}
 
@@ -438,3 +438,5 @@ export default function NewContainerModal({
     </div>
   );
 }
+
+export default memo(NewContainerModal);

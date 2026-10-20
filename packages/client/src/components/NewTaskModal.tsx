@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect, useCallback } from "react";
 import type { ConfigSummary, RepoWorkItem, Task, TaskStep } from "../types";
 import { TASK_STEPS } from "../types";
 import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, fetchRepoWorkItems, createTasks, createTaskFromText } from "../api";
 import RepoPicker, { type RepoEntry } from "./RepoPicker";
+import ProseTextArea from "./ProseTextArea";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
 
 interface NewTaskModalProps {
@@ -19,7 +20,7 @@ const TASK_MODES: Array<{ mode: TaskMode; label: string }> = [
   { mode: "text", label: "From pasted text" },
 ];
 
-export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
+function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
   const [configs, setConfigs] = useState<ConfigSummary[]>([]);
   const [repos, setRepos] = useState<RepoEntry[]>([]);
   const [gitlabConfigured, setGitlabConfigured] = useState(false);
@@ -277,12 +278,11 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
                     An agent first explores the repository and opens an issue from your text; the task then shepherds
                     that issue to a merged PR/MR.
                   </p>
-                  <textarea
+                  <ProseTextArea
                     value={pastedText}
-                    onChange={(e) => setPastedText(e.target.value)}
+                    onChange={setPastedText}
                     placeholder="Describe the feature or fix..."
                     rows={8}
-                    className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm resize-y"
                   />
                 </div>
               ) : workItems === null ? (
@@ -376,3 +376,5 @@ export default function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) 
     </div>
   );
 }
+
+export default memo(NewTaskModal);
