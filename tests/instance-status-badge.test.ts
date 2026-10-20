@@ -1,9 +1,10 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import type { ManagedContainer } from "@crc/shared";
 import type { InstanceStatus } from "@crc/container-metadata-types";
 import { startClientApp, type ClientAppHarness } from "./helpers/client-app-harness.js";
+import { makeContainer } from "./helpers/container-fixture.js";
 
+const CREATED_AT = "2026-08-30T09:00:00.000Z";
 const UPDATED_AT = "2026-08-30T10:00:00.000Z";
 
 const CASES: Array<{ id: string; status: InstanceStatus; label: string; colour: string }> = [
@@ -52,24 +53,11 @@ const BACKGROUND_CASES: Array<{ id: string; status: InstanceStatus; label: strin
   },
 ];
 
-function makeContainer(id: string): ManagedContainer {
-  return {
-    id,
-    name: `crc-${id.slice(0, 4)}`,
-    configName: "default",
-    repoName: "example/repo",
-    status: "running",
-    health: { container: "running", claude: "healthy" },
-    subdomain: `crc-${id.slice(0, 4)}`,
-    createdAt: "2026-08-30T09:00:00.000Z",
-  };
-}
-
 const stubs: Record<string, unknown> = {
-  "/api/containers": [...CASES, ...BACKGROUND_CASES].map((entry) => makeContainer(entry.id)),
+  "/api/containers": [...CASES, ...BACKGROUND_CASES].map((entry) => makeContainer(entry.id, CREATED_AT)),
 };
 for (const entry of [...CASES, ...BACKGROUND_CASES]) {
-  stubs[`/api/containers/${entry.id}`] = makeContainer(entry.id);
+  stubs[`/api/containers/${entry.id}`] = makeContainer(entry.id, CREATED_AT);
   stubs[`/api/containers/${entry.id}/instance-status`] = entry.status;
   stubs[`/api/containers/${entry.id}/code-status`] = {
     branch: "main",
