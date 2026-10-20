@@ -1,6 +1,7 @@
 import type {
   ManagedContainer,
   ConfigSummary,
+  CreateQuickPromptRequest,
   CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,
@@ -12,6 +13,7 @@ import type {
   RepoWorkItem,
   ContainerCodeStatus,
   InstanceStatus,
+  QuickPrompt,
   Task,
   UpdateTaskRequest,
 } from "./types";
@@ -171,6 +173,34 @@ export async function createTaskFromText(request: CreateTaskFromTextRequest): Pr
   });
   if (!res.ok) throw new Error("Failed to create task from text");
   return res.json();
+}
+
+function repoQuery(repoFullName: string, repoSource: RepoSource): string {
+  return new URLSearchParams({ repoFullName, repoSource }).toString();
+}
+
+export async function fetchQuickPrompts(repoFullName: string, repoSource: RepoSource): Promise<QuickPrompt[]> {
+  const res = await fetch(`${BASE}/quick-prompts?${repoQuery(repoFullName, repoSource)}`);
+  if (!res.ok) throw new Error("Failed to fetch quick-prompts");
+  return res.json();
+}
+
+export async function createQuickPrompt(request: CreateQuickPromptRequest): Promise<QuickPrompt> {
+  const res = await fetch(`${BASE}/quick-prompts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (res.status === 409) throw new Error("This quick-prompt is already saved for the repository");
+  if (!res.ok) throw new Error("Failed to save quick-prompt");
+  return res.json();
+}
+
+export async function deleteQuickPrompt(id: string, repoFullName: string, repoSource: RepoSource): Promise<void> {
+  const res = await fetch(`${BASE}/quick-prompts/${encodeURIComponent(id)}?${repoQuery(repoFullName, repoSource)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to remove quick-prompt");
 }
 
 export async function updateTask(id: string, patch: UpdateTaskRequest): Promise<Task> {

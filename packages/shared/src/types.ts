@@ -310,6 +310,18 @@ export interface CreateTaskFromTextRequest {
   configByStep?: Partial<Record<TaskStep, string>>;
 }
 
+export interface QuickPrompt {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface CreateQuickPromptRequest {
+  repoFullName: string;
+  repoSource: RepoSource;
+  text: string;
+}
+
 export interface CreateTasksResponse {
   tasks: Task[];
   errors: Array<{ workItemId: string; error: string }>;

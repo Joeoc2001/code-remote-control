@@ -1,7 +1,17 @@
 import { memo, useState, useEffect, useCallback } from "react";
-import type { ConfigSummary, RepoWorkItem, Task, TaskStep } from "../types";
+import type { ConfigSummary, QuickPrompt, RepoWorkItem, Task, TaskStep } from "../types";
 import { TASK_STEPS } from "../types";
-import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, fetchRepoWorkItems, createTasks, createTaskFromText } from "../api";
+import {
+  fetchConfigs,
+  fetchGitHubRepos,
+  fetchGitLabRepos,
+  fetchRepoWorkItems,
+  createTasks,
+  createTaskFromText,
+  fetchQuickPrompts,
+  createQuickPrompt,
+  deleteQuickPrompt,
+} from "../api";
 import RepoPicker, { type RepoEntry } from "./RepoPicker";
 import ProseTextArea from "./ProseTextArea";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
@@ -13,11 +23,12 @@ interface NewTaskModalProps {
 
 type WorkItemChoice = { item: RepoWorkItem; selected: boolean };
 
-type TaskMode = "work_items" | "text";
+type TaskMode = "work_items" | "text" | "quick_prompt";
 
 const TASK_MODES: Array<{ mode: TaskMode; label: string }> = [
   { mode: "work_items", label: "From work items" },
   { mode: "text", label: "From pasted text" },
+  { mode: "quick_prompt", label: "From quick-prompt" },
 ];
 
 function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
@@ -29,9 +40,15 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
   const [workItems, setWorkItems] = useState<WorkItemChoice[] | null>(null);
   const [mode, setMode] = useState<TaskMode>("work_items");
   const [pastedText, setPastedText] = useState("");
+  const [savedPastedText, setSavedPastedText] = useState<string | null>(null);
+  const [quickPrompts, setQuickPrompts] = useState<QuickPrompt[] | null>(null);
+  const [selectedQuickPromptId, setSelectedQuickPromptId] = useState<string | null>(null);
+  const [newQuickPromptText, setNewQuickPromptText] = useState("");
   const [customisePerStep, setCustomisePerStep] = useState(false);
   const [configByStep, setConfigByStep] = useState<Partial<Record<TaskStep, string>>>({});
-  const stepsForMode = mode === "text" ? TASK_STEPS : TASK_STEPS.filter((step) => step !== "create_issue");
+  const usesTextPipeline = mode !== "work_items";
+  const selectedQuickPrompt = quickPrompts?.find((prompt) => prompt.id === selectedQuickPromptId) ?? null;
+  const stepsForMode = usesTextPipeline ? TASK_STEPS : TASK_STEPS.filter((step) => step !== "create_issue");
   const configByStepForMode = () =>
     customisePerStep
       ? Object.fromEntries(stepsForMode.flatMap((step) => (configByStep[step] ? [[step, configByStep[step]]] : [])))
@@ -78,7 +95,26 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
 
   useEffect(() => {
     setWorkItems(null);
+    setSavedPastedText(null);
   }, [selectedRepo]);
+
+  useEffect(() => {
+    setQuickPrompts(null);
+    setSelectedQuickPromptId(null);
+    if (mode !== "quick_prompt" || !selectedRepo) return;
+
+    let cancelled = false;
+    fetchQuickPrompts(selectedRepo.fullName, selectedRepo.source)
+      .then((prompts) => {
+        if (!cancelled) setQuickPrompts(prompts);
+      })
+      .catch((err) => {
+        if (!cancelled) setError("Failed to load quick-prompts: " + String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, selectedRepo]);
 
   const handleLoadWorkItems = async () => {
     if (!selectedRepo) return;
@@ -149,14 +185,8 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
     }
   };
 
-  const handleCreateFromText = async () => {
+  const submitText = async (text: string) => {
     if (!selectedConfig || !selectedRepo) return;
-    const text = pastedText.trim();
-    if (text === "") {
-      setError("Paste a description of the work first");
-      return;
-    }
-
     setWorking(true);
     setError(null);
     try {
@@ -175,6 +205,72 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
       setWorking(false);
     }
   };
+
+  const handleCreateFromText = async () => {
+    const text = pastedText.trim();
+    if (text === "") {
+      setError("Paste a description of the work first");
+      return;
+    }
+    await submitText(text);
+  };
+
+  const handleCreateFromQuickPrompt = async () => {
+    if (!selectedQuickPrompt) {
+      setError("Select a quick-prompt first");
+      return;
+    }
+    await submitText(selectedQuickPrompt.text);
+  };
+
+  const saveQuickPrompt = async (text: string): Promise<QuickPrompt | null> => {
+    if (!selectedRepo) return null;
+    setWorking(true);
+    setError(null);
+    try {
+      return await createQuickPrompt({ repoFullName: selectedRepo.fullName, repoSource: selectedRepo.source, text });
+    } catch (err) {
+      setError(String(err));
+      return null;
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleSaveNewQuickPrompt = async () => {
+    const prompt = await saveQuickPrompt(newQuickPromptText.trim());
+    if (!prompt) return;
+    setQuickPrompts((prompts) => [...(prompts ?? []), prompt]);
+    setSelectedQuickPromptId(prompt.id);
+    setNewQuickPromptText("");
+  };
+
+  const handleSavePastedTextAsQuickPrompt = async () => {
+    const text = pastedText.trim();
+    const prompt = await saveQuickPrompt(text);
+    if (prompt) setSavedPastedText(text);
+  };
+
+  const handleRemoveQuickPrompt = async (id: string) => {
+    if (!selectedRepo) return;
+    setWorking(true);
+    setError(null);
+    try {
+      await deleteQuickPrompt(id, selectedRepo.fullName, selectedRepo.source);
+      setQuickPrompts((prompts) => (prompts ? prompts.filter((prompt) => prompt.id !== id) : prompts));
+      setSelectedQuickPromptId((selected) => (selected === id ? null : selected));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleSubmit =
+    mode === "text" ? handleCreateFromText : mode === "quick_prompt" ? handleCreateFromQuickPrompt : handleCreate;
+
+  const submitDisabledForMode =
+    mode === "text" ? pastedText.trim() === "" : mode === "quick_prompt" ? !selectedQuickPrompt : selectedCount === 0;
 
   return (
     <div
@@ -259,7 +355,7 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
                 onSelect={setSelectedRepo}
               />
 
-              <div className="grid grid-cols-2 gap-px bg-slate-700 border border-slate-700 rounded-lg overflow-hidden">
+              <div className="grid grid-cols-3 gap-px bg-slate-700 border border-slate-700 rounded-lg overflow-hidden">
                 {TASK_MODES.map(({ mode: taskMode, label }) => (
                   <button
                     key={taskMode}
@@ -284,7 +380,87 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
                     placeholder="Describe the feature or fix..."
                     rows={8}
                   />
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSavePastedTextAsQuickPrompt}
+                      disabled={
+                        !selectedRepo || working || pastedText.trim() === "" || savedPastedText === pastedText.trim()
+                      }
+                      className="text-xs text-slate-400 hover:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {savedPastedText === pastedText.trim() ? "Saved as quick-prompt" : "Save as quick-prompt"}
+                    </button>
+                  </div>
                 </div>
+              ) : mode === "quick_prompt" ? (
+                !selectedRepo ? (
+                  <p className="text-xs text-slate-500">Select a repository first.</p>
+                ) : quickPrompts === null ? (
+                  <div className="flex justify-center py-4">
+                    <div className="animate-spin h-5 w-5 border-2 border-slate-500 border-t-transparent rounded-full" />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500">
+                      Saved prompts for this repository. The selected prompt is used like pasted text: an agent opens an
+                      issue from it, then the task shepherds that issue to a merged PR/MR.
+                    </p>
+                    {quickPrompts.length === 0 ? (
+                      <p className="text-sm text-slate-400 border border-slate-700 rounded-lg px-3 py-2">
+                        No quick-prompts saved for this repository yet.
+                      </p>
+                    ) : (
+                      <div
+                        role="radiogroup"
+                        aria-label="Quick-prompts"
+                        className="max-h-48 overflow-y-auto border border-slate-700 rounded-lg divide-y divide-slate-800"
+                      >
+                        {quickPrompts.map((prompt) => (
+                          <div key={prompt.id} className="flex items-start gap-2 px-3 py-2 hover:bg-slate-800">
+                            <label className="flex items-start gap-2 flex-1 min-w-0 text-sm text-slate-300 cursor-pointer">
+                              <input
+                                type="radio"
+                                name="quick-prompt"
+                                checked={selectedQuickPromptId === prompt.id}
+                                onChange={() => setSelectedQuickPromptId(prompt.id)}
+                                className="mt-0.5 accent-indigo-500"
+                              />
+                              <span className="break-words whitespace-pre-wrap min-w-0">{prompt.text}</span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveQuickPrompt(prompt.id)}
+                              disabled={working}
+                              aria-label="Remove quick-prompt"
+                              className="text-slate-500 hover:text-rose-300 leading-none disabled:opacity-50"
+                            >
+                              &times;
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <textarea
+                      value={newQuickPromptText}
+                      onChange={(e) => setNewQuickPromptText(e.target.value)}
+                      placeholder="New quick-prompt..."
+                      aria-label="New quick-prompt"
+                      rows={3}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm resize-y"
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleSaveNewQuickPrompt}
+                        disabled={working || newQuickPromptText.trim() === ""}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Save prompt
+                      </button>
+                    </div>
+                  </div>
+                )
               ) : workItems === null ? (
                 <button
                   type="button"
@@ -355,19 +531,19 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
             Cancel
           </button>
           <button
-            onClick={mode === "text" ? handleCreateFromText : handleCreate}
+            onClick={handleSubmit}
             disabled={
               !selectedConfig ||
               !selectedRepo ||
               working ||
               loading ||
-              (mode === "text" ? pastedText.trim() === "" : selectedCount === 0)
+              submitDisabledForMode
             }
             className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {working
               ? "Working..."
-              : mode === "text"
+              : usesTextPipeline
                 ? "Create Task"
                 : `Create ${selectedCount} Task${selectedCount === 1 ? "" : "s"}`}
           </button>
