@@ -121,6 +121,23 @@ describe("task step prompts", () => {
     assert.match(githubPrompts.implement, /thoroughly tested/);
   });
 
+  test("the first-stage implement prompt asks for a closing keyword only when the issue is fully addressed", () => {
+    assert.match(githubPrompts.implement, /If it fully addresses the issue, make it close the issue when merged \(e\.g\. `Closes #7`/);
+    assert.doesNotMatch(githubPrompts.implement, /Earlier pull\/merge requests/);
+  });
+
+  test("a later-stage implement prompt names the merged PRs/MRs and asks for only the remaining work", () => {
+    const prompt = buildTaskImplementPrompt(workItem, "gitlab", [
+      "https://gitlab.com/acme/widgets/-/merge_requests/3",
+      "https://gitlab.com/acme/widgets/-/merge_requests/5",
+    ]);
+    assert.match(
+      prompt,
+      /Earlier pull\/merge requests for this issue \(https:\/\/gitlab\.com\/acme\/widgets\/-\/merge_requests\/3, https:\/\/gitlab\.com\/acme\/widgets\/-\/merge_requests\/5\) have already been merged but did not close it; work out what remains, implement only that/,
+    );
+    assert.ok(prompt.endsWith(forgeBodyGuidance("gitlab")));
+  });
+
   test("the review prompt keeps its thread instructions alongside the guidance in both nit modes", () => {
     const threads = buildReviewRequestPrompt(pullRequest, "threads");
     const comment = buildReviewRequestPrompt(pullRequest, "comment");

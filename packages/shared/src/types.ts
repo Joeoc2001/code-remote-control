@@ -246,6 +246,7 @@ export type TaskPhase =
   | "waiting_ci"
   | "waiting_approval"
   | "merging"
+  | "checking_closure"
   | "merged"
   | "failed"
   | "paused";
@@ -272,6 +273,19 @@ export interface TaskReviewRequestRef {
   sourceBranch: string;
 }
 
+export interface TaskStage {
+  reviewRequest: TaskReviewRequestRef;
+  startedAt: string;
+  mergedAt: string;
+  firstAttemptIndex: number;
+  attemptCount: number;
+}
+
+export function currentStageFirstAttemptIndex(task: Pick<Task, "completedStages">): number {
+  const last = task.completedStages[task.completedStages.length - 1];
+  return last ? last.firstAttemptIndex + last.attemptCount : 0;
+}
+
 export interface Task {
   id: string;
   repoFullName: string;
@@ -288,6 +302,9 @@ export interface Task {
   activeStep: TaskStep | null;
   attemptsByStep: Record<TaskStep, number>;
   attempts: TaskAttempt[];
+  completedStages: TaskStage[];
+  stageStartedAt: string;
+  mergedAt: string | null;
   consecutiveErrors: number;
   error: string | null;
   createdAt: string;

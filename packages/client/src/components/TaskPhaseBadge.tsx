@@ -31,6 +31,12 @@ const PHASE_STYLES: Record<TaskPhase, { label: string; className: string; dotCla
     dotClassName: "bg-emerald-300",
     pulse: true,
   },
+  checking_closure: {
+    label: "Checking issue",
+    className: "border-emerald-800/80 bg-emerald-500/10 text-emerald-300",
+    dotClassName: "bg-emerald-300",
+    pulse: true,
+  },
   merged: {
     label: "Merged",
     className: "border-emerald-800/80 bg-emerald-500/10 text-emerald-300",

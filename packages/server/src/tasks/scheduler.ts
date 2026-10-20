@@ -11,6 +11,7 @@ import type {
   ManagedContainer,
   RepoReviewRequest,
   RepoSource,
+  RepoWorkItem,
   ResolvedConfigFile,
   ResolvedEnvironmentConfig,
   Task,
@@ -19,6 +20,7 @@ import type {
   TaskSpawn,
   TaskStep,
 } from "../types.js";
+import { currentStageFirstAttemptIndex, TASK_STEPS } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import type { TaskStore } from "./store.js";
 import { completedReviews, decide, NIT_THREAD_REVIEW_LIMIT, type TaskDecision } from "./decide.js";
@@ -26,6 +28,8 @@ import { completedReviews, decide, NIT_THREAD_REVIEW_LIMIT, type TaskDecision } 
 export const TASK_TICK_INTERVAL_MS = 30_000;
 export const ATTEMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 export const MAX_CONSECUTIVE_ERRORS = 5;
+export const CLOSURE_GRACE_MS = 2 * 60 * 1000;
+export const MAX_STAGES = 5;
 export const HELD_CONTAINER_SUFFIX = "; its container was kept so the agent can be inspected or prompted from the terminal";
 
 export interface SchedulerDeps {
@@ -176,14 +180,18 @@ function failTask(deps: SchedulerDeps, task: Task, reason: string): void {
   saveTask(deps, task);
 }
 
+async function findOpenWorkItem(forge: Forge, repoFullName: string, wanted: string): Promise<RepoWorkItem | null> {
+  const items = await forge.listWorkItems(repoFullName);
+  return items.find((candidate) => normaliseWorkItemUrl(candidate.url) === wanted) ?? null;
+}
+
 async function adoptCreatedIssue(deps: SchedulerDeps, forge: Forge, task: Task, createdIssueUrl: string): Promise<void> {
   const wanted = normaliseWorkItemUrl(createdIssueUrl);
   if (wanted === null) {
     failTask(deps, task, `Issue-creation agent reported '${createdIssueUrl}', which is not a URL`);
     return;
   }
-  const items = await forge.listWorkItems(task.repoFullName);
-  const item = items.find((candidate) => normaliseWorkItemUrl(candidate.url) === wanted);
+  const item = await findOpenWorkItem(forge, task.repoFullName, wanted);
   if (!item) {
     failTask(deps, task, `Created issue ${createdIssueUrl} is not among the repository's open work items`);
     return;
@@ -191,6 +199,68 @@ async function adoptCreatedIssue(deps: SchedulerDeps, forge: Forge, task: Task, 
   task.workItem = item;
   clearTaskError(task);
   saveTask(deps, task);
+}
+
+function markReviewRequestMerged(deps: SchedulerDeps, task: Task): void {
+  task.phase = "checking_closure";
+  task.mergedAt = deps.now().toISOString();
+  clearTaskError(task);
+  saveTask(deps, task);
+}
+
+function startNextStage(deps: SchedulerDeps, task: Task, workItem: RepoWorkItem): void {
+  if (!task.reviewRequest || task.mergedAt === null) {
+    throw new Error(`Task ${task.id} cannot start a new stage before its PR/MR has merged`);
+  }
+  const firstAttemptIndex = currentStageFirstAttemptIndex(task);
+  task.completedStages.push({
+    reviewRequest: task.reviewRequest,
+    startedAt: task.stageStartedAt,
+    mergedAt: task.mergedAt,
+    firstAttemptIndex,
+    attemptCount: task.attempts.length - firstAttemptIndex,
+  });
+  task.workItem = workItem;
+  task.reviewRequest = null;
+  task.lastReviewedSha = null;
+  task.lastReviewedDiffHash = null;
+  task.mergedAt = null;
+  task.attemptsByStep = Object.fromEntries(TASK_STEPS.map((step) => [step, 0])) as Record<TaskStep, number>;
+  task.consecutiveErrors = 0;
+  task.error = null;
+  task.stageStartedAt = deps.now().toISOString();
+  task.phase = "spawning";
+  saveTask(deps, task);
+}
+
+async function checkWorkItemClosure(deps: SchedulerDeps, forge: Forge, task: Task): Promise<void> {
+  if (!task.workItem || task.mergedAt === null) {
+    throw new Error(`Task ${task.id} is checking issue closure without a work item or merge time`);
+  }
+  const wanted = normaliseWorkItemUrl(task.workItem.url);
+  if (wanted === null) {
+    throw new Error(`Task ${task.id}'s work item URL '${task.workItem.url}' is not a URL`);
+  }
+  const openItem = await findOpenWorkItem(forge, task.repoFullName, wanted);
+  if (!openItem) {
+    task.phase = "merged";
+    clearTaskError(task);
+    saveTask(deps, task);
+    return;
+  }
+  if (deps.now().getTime() - Date.parse(task.mergedAt) < CLOSURE_GRACE_MS) {
+    if (clearTaskError(task)) saveTask(deps, task);
+    return;
+  }
+  if (task.completedStages.length + 1 >= MAX_STAGES) {
+    failTask(
+      deps,
+      task,
+      `${task.workItem.reference} is still open after ${MAX_STAGES} merged stages — close it by hand and resume the task, or finish the remaining work manually`,
+    );
+    return;
+  }
+  startNextStage(deps, task, openItem);
 }
 
 function attemptActiveSince(attempt: TaskAttempt, status: InstanceStatus | null): number {
@@ -297,7 +367,11 @@ function buildStepPrompt(step: TaskStep, task: Task, reviewRequest: RepoReviewRe
     if (!task.workItem) {
       throw new Error(`Task ${task.id} has no work item to implement`);
     }
-    return buildTaskImplementPrompt(task.workItem, task.repoSource);
+    return buildTaskImplementPrompt(
+      task.workItem,
+      task.repoSource,
+      task.completedStages.map((stage) => stage.reviewRequest.url),
+    );
   }
   if (!reviewRequest) {
     throw new Error(`Step '${step}' requires the forge state of the task's PR/MR`);
@@ -454,9 +528,7 @@ async function executeDecision(
       return;
     }
     case "mark_merged": {
-      task.phase = "merged";
-      clearTaskError(task);
-      saveTask(deps, task);
+      markReviewRequestMerged(deps, task);
       return;
     }
     case "fail": {
@@ -476,9 +548,7 @@ async function executeDecision(
         saveTask(deps, task);
       }
       await forge.merge(task.repoFullName, task.reviewRequest!.id);
-      task.phase = "merged";
-      clearTaskError(task);
-      saveTask(deps, task);
+      markReviewRequestMerged(deps, task);
       return;
     }
     case "spawn": {
@@ -512,7 +582,18 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
     }
   }
 
-  for (const task of toEvaluate.filter((t) => !t.reviewRequest)) {
+  const checkingClosure = toEvaluate.filter((t) => t.phase === "checking_closure");
+  const toDecide = toEvaluate.filter((t) => t.phase !== "checking_closure");
+
+  for (const task of checkingClosure) {
+    try {
+      await checkWorkItemClosure(deps, deps.getForge(task.repoSource), task);
+    } catch (err) {
+      await recordTaskError(deps, task, err);
+    }
+  }
+
+  for (const task of toDecide.filter((t) => !t.reviewRequest)) {
     try {
       const forge = deps.getForge(task.repoSource);
       if (!task.workItem && task.createdIssueUrl) {
@@ -527,7 +608,7 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
   }
 
   const groups = new Map<string, Task[]>();
-  for (const task of toEvaluate.filter((t) => t.reviewRequest)) {
+  for (const task of toDecide.filter((t) => t.reviewRequest)) {
     const key = `${task.repoSource}:${task.repoFullName}`;
     const group = groups.get(key);
     if (group) {

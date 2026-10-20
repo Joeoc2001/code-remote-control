@@ -818,3 +818,62 @@ describe("NIT_THREAD_REVIEW_LIMIT", () => {
     assert.ok(NIT_THREAD_REVIEW_LIMIT > 0);
   });
 });
+
+describe("decide: multi-stage tasks", () => {
+  const firstStage = {
+    reviewRequest: { id: "11", url: "https://github.com/acme/widgets/pull/11", sourceBranch: "first" },
+    startedAt: "2026-08-20T08:00:00.000Z",
+    mergedAt: "2026-08-20T09:00:00.000Z",
+    firstAttemptIndex: 0,
+    attemptCount: 4,
+  };
+  const exhaustedStageAttempts: TaskAttempt[] = [
+    makeAttempt({ step: "implement", finishedAt: "2026-08-20T08:30:00.000Z", error: "earlier stage failure" }),
+    makeAttempt({ step: "fix_ci", finishedAt: "2026-08-20T08:40:00.000Z" }),
+    makeAttempt({ step: "fix_ci", finishedAt: "2026-08-20T08:50:00.000Z" }),
+    makeAttempt({ step: "fix_ci", finishedAt: "2026-08-20T08:55:00.000Z" }),
+  ];
+
+  it("refuses to decide a task that is checking whether its work item closed", async () => {
+    await assert.rejects(
+      decide(makeLinkedTask({ phase: "checking_closure", mergedAt: "2026-08-20T09:00:00.000Z" }), makeReviewRequest({ state: "merged" }), noDiffFetch),
+      /checking whether its work item closed/,
+    );
+  });
+
+  it("spawns implement for a new stage even though an earlier stage already implemented", async () => {
+    const task = makeTask({ completedStages: [firstStage], attempts: [...exhaustedStageAttempts] });
+    assert.deepEqual(await decide(task, null, noDiffFetch), {
+      kind: "spawn",
+      step: "implement",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
+  });
+
+  it("can spawn fix_ci again in a new stage after the previous stage used up its cap", async () => {
+    assert.equal(exhaustedStageAttempts.filter((a) => a.step === "fix_ci").length, PER_STEP_SPAWN_CAP);
+    const task = makeLinkedTask({
+      completedStages: [firstStage],
+      attempts: [...exhaustedStageAttempts, makeAttempt({ step: "implement", finishedAt: "2026-08-20T09:30:00.000Z" })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    });
+    assert.deepEqual(await decide(task, makeReviewRequest({ ciState: "failed" }), noDiffFetch), {
+      kind: "spawn",
+      step: "fix_ci",
+      headShaBefore: null,
+      diffHashBefore: null,
+    });
+  });
+
+  it("reports the current stage's implement failure, not an earlier stage's", async () => {
+    const task = makeTask({
+      completedStages: [firstStage],
+      attempts: [...exhaustedStageAttempts, makeAttempt({ step: "implement", finishedAt: "2026-08-20T09:30:00.000Z", error: "this stage's failure" })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const decision = await decide(task, null, noDiffFetch);
+    assert.equal(decision.kind, "fail");
+    assert.match(decision.kind === "fail" ? decision.reason : "", /this stage's failure/);
+  });
+});

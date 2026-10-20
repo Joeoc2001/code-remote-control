@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { Task, TaskAttempt } from "../types";
+import { currentStageFirstAttemptIndex, type Task, type TaskAttempt, type TaskStage } from "../types";
 import { deleteTask, fetchTask, fetchTaskAttemptLog, subscribeToEvents, updateTask } from "../api";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
@@ -132,6 +132,66 @@ function AttemptRow({ taskId, attempt, index, isActive, activeContainerId }: Att
   );
 }
 
+function AttemptList({ task, firstIndex, count }: { task: Task; firstIndex: number; count: number }) {
+  const indices = Array.from({ length: count }, (_, offset) => firstIndex + offset);
+  return (
+    <ul className="space-y-3">
+      {indices.map((index) => (
+        <AttemptRow
+          key={index}
+          taskId={task.id}
+          attempt={task.attempts[index]}
+          index={index}
+          isActive={
+            task.attempts[index].finishedAt === null &&
+            index === task.attempts.length - 1 &&
+            task.activeContainerId !== null
+          }
+          activeContainerId={task.activeContainerId}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function CompletedStage({ task, stage, number }: { task: Task; stage: TaskStage; number: number }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-sm font-semibold text-slate-200">Stage {number}</h3>
+        <a
+          href={stage.reviewRequest.url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
+        >
+          <ReviewRequestStatusIcon state="merged" />
+          PR/MR #{stage.reviewRequest.id}
+        </a>
+        <span className="text-xs text-slate-500">
+          {formatTimestamp(stage.startedAt)} → merged {formatTimestamp(stage.mergedAt)}
+        </span>
+      </div>
+      <AttemptList task={task} firstIndex={stage.firstAttemptIndex} count={stage.attemptCount} />
+    </div>
+  );
+}
+
+function PreviousStages({ task }: { task: Task }) {
+  return (
+    <details className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-5">
+      <summary className="cursor-pointer text-sm font-semibold uppercase tracking-wide text-slate-400 hover:text-slate-200">
+        Previous stages ({task.completedStages.length})
+      </summary>
+      <div className="mt-4 space-y-6">
+        {task.completedStages.map((stage, index) => (
+          <CompletedStage key={index} task={task} stage={stage} number={index + 1} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function TaskView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -181,6 +241,9 @@ export default function TaskView() {
     }
   };
 
+  const currentStageFirstIndex = task ? currentStageFirstAttemptIndex(task) : 0;
+  const currentStageAttemptCount = task ? task.attempts.length - currentStageFirstIndex : 0;
+
   const actionButtonClass =
     "px-3 py-1.5 text-sm text-slate-300 hover:text-slate-100 border border-slate-700 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50";
 
@@ -201,6 +264,7 @@ export default function TaskView() {
           </div>
         ) : (
           <div className="mt-4 space-y-6">
+            {task.completedStages.length > 0 && <PreviousStages task={task} />}
             <div className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -285,7 +349,9 @@ export default function TaskView() {
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
                   >
-                    <ReviewRequestStatusIcon state={task.phase === "merged" ? "merged" : "open"} />
+                    <ReviewRequestStatusIcon
+                      state={task.phase === "merged" || task.phase === "checking_closure" ? "merged" : "open"}
+                    />
                     PR/MR #{task.reviewRequest.id}
                   </a>
                 )}
@@ -308,23 +374,12 @@ export default function TaskView() {
 
             <section>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400 mb-3">
-                Attempts
+                {task.completedStages.length > 0 ? `Stage ${task.completedStages.length + 1} attempts` : "Attempts"}
               </h2>
-              {task.attempts.length === 0 ? (
+              {currentStageAttemptCount === 0 ? (
                 <p className="text-sm text-slate-500">No agents have been spawned yet.</p>
               ) : (
-                <ul className="space-y-3">
-                  {task.attempts.map((attempt, index) => (
-                    <AttemptRow
-                      key={index}
-                      taskId={task.id}
-                      attempt={attempt}
-                      index={index}
-                      isActive={attempt.finishedAt === null && index === task.attempts.length - 1 && task.activeContainerId !== null}
-                      activeContainerId={task.activeContainerId}
-                    />
-                  ))}
-                </ul>
+                <AttemptList task={task} firstIndex={currentStageFirstIndex} count={currentStageAttemptCount} />
               )}
             </section>
           </div>

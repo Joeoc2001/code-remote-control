@@ -32,12 +32,14 @@ export type {
   TaskAttempt,
   TaskPhase,
   TaskReviewRequestRef,
+  TaskStage,
   TaskStep,
   UpdateTaskRequest,
 } from "@crc/shared";
 
 export {
   configFileSchema,
+  currentStageFirstAttemptIndex,
   environmentConfigSchema,
   gitConfigSchema,
   resolveConfigFile,

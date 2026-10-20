@@ -31,8 +31,17 @@ export function buildCreateIssuePrompt(text: string, source: RepoSource): string
   return `Explore the codebase and open an ${noun} with your findings and a plan for the request below. Do not implement the request — the deliverable is the open ${noun}, containing what you learned from the codebase and a concrete implementation plan. Once it is open, write its URL (and nothing else) to ${CREATED_ISSUE_URL_PATH}; the task is incomplete until that file holds the URL. Write the ${noun} body to a temporary file and pass it with ${bodyCommand} — never pass \`@-\`, \`@\` or \`-\` as the body value, never leave the body empty, and re-read what you posted to confirm the body arrived intact.\n\nRequest:\n${text}`;
 }
 
-export function buildTaskImplementPrompt(item: RepoWorkItem, source: RepoSource): string {
-  return `Address issue ${item.reference} at ${item.url}. Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. ${ISSUE_PROMPT_SUFFIX} ${forgeBodyGuidance(source)}`;
+function earlierStagesGuidance(item: RepoWorkItem, mergedReviewRequestUrls: string[]): string {
+  if (mergedReviewRequestUrls.length === 0) return "";
+  return ` Earlier pull/merge requests for this issue (${mergedReviewRequestUrls.join(", ")}) have already been merged but did not close it; work out what remains, implement only that, and make sure the new pull/merge request closes the issue when merged (e.g. \`Closes ${item.reference}\` in its description).`;
+}
+
+export function buildTaskImplementPrompt(
+  item: RepoWorkItem,
+  source: RepoSource,
+  mergedReviewRequestUrls: string[] = [],
+): string {
+  return `Address issue ${item.reference} at ${item.url}.${earlierStagesGuidance(item, mergedReviewRequestUrls)} Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. If it fully addresses the issue, make it close the issue when merged (e.g. \`Closes ${item.reference}\` in its description). ${ISSUE_PROMPT_SUFFIX} ${forgeBodyGuidance(source)}`;
 }
 
 export type ReviewNitMode = "threads" | "comment";

@@ -116,6 +116,10 @@ export async function decide(
     throw new Error(`decide() called for task ${task.id} while an agent container is active`);
   }
 
+  if (task.phase === "checking_closure") {
+    throw new Error(`decide() called for task ${task.id} while it is checking whether its work item closed`);
+  }
+
   if (!task.workItem) {
     if (reviewRequest) {
       throw new Error(`decide() received forge state for task ${task.id}, which has no work item yet`);
