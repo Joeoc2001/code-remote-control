@@ -37,7 +37,7 @@ async function installQuickPromptBackend(page: Page, initial: Record<string, str
       const key = `${body.repoSource}:${body.repoFullName}`;
       const prompts = backend.promptsByRepo.get(key) ?? [];
       if (prompts.some((prompt) => prompt.text === body.text.trim())) {
-        await json(route, 409, { error: "duplicate" });
+        await json(route, 409, { error: "This quick-prompt already exists for the repository" });
         return;
       }
       const prompt = { id: randomUUID(), text: body.text.trim(), createdAt: new Date().toISOString() };
@@ -227,7 +227,7 @@ describe("New Task modal quick-prompts", () => {
 
       await page.getByPlaceholder("Describe the feature or fix...").fill("Already saved");
       await page.getByRole("button", { name: "Save as quick-prompt" }).click();
-      await page.getByText("This quick-prompt is already saved for the repository").waitFor();
+      await page.getByText("This quick-prompt already exists for the repository").waitFor();
 
       await page.getByRole("button", { name: "From quick-prompt" }).click();
       await page.getByRole("radio", { name: "Add dark mode" }).waitFor();

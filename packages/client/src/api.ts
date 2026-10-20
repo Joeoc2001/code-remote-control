@@ -191,7 +191,7 @@ export async function createQuickPrompt(request: CreateQuickPromptRequest): Prom
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
   });
-  if (res.status === 409) throw new Error("This quick-prompt is already saved for the repository");
+  if (res.status === 409) throw new Error(((await res.json()) as { error: string }).error);
   if (!res.ok) throw new Error("Failed to save quick-prompt");
   return res.json();
 }
