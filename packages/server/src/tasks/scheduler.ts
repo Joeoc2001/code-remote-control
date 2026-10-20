@@ -256,7 +256,7 @@ async function checkWorkItemClosure(deps: SchedulerDeps, forge: Forge, task: Tas
     failTask(
       deps,
       task,
-      `${task.workItem.reference} is still open after ${MAX_STAGES} merged stages — close it by hand and resume the task, or finish the remaining work manually`,
+      `${task.workItem.reference} is still open after ${MAX_STAGES} merged stages — close it by hand before resuming the task (resuming while it is still open fails again straight away), or finish the remaining work manually`,
     );
     return;
   }

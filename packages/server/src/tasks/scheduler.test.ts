@@ -2133,8 +2133,14 @@ describe("scheduler: multi-stage tasks", () => {
 
     assert.equal(task.phase, "failed");
     assert.match(task.error ?? "", new RegExp(`#7 is still open after ${MAX_STAGES} merged stages`));
+    assert.match(task.error ?? "", /close it by hand before resuming/);
     assert.equal(task.completedStages.length, MAX_STAGES - 1);
     assert.equal(harness.created.length, 0);
+
+    await resumeTask({ removeContainer: async () => {}, now: () => AFTER_GRACE }, task, false);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /still open after/);
 
     await resumeTask({ removeContainer: async () => {}, now: () => AFTER_GRACE }, task, false);
     assert.equal(task.phase, "checking_closure");
