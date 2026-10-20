@@ -161,7 +161,7 @@ describe("instance status badge", () => {
     });
   }
 
-  test("labels one badge per container on the containers list, in the order they are listed", async () => {
+  test("labels one badge per container on the containers list, with waiting and finished containers listed first", async () => {
     const page = await harness.browser.newPage();
     try {
       await page.goto(`${harness.origin}/`, { waitUntil: "networkidle" });
@@ -170,7 +170,7 @@ describe("instance status badge", () => {
 
       assert.deepEqual(
         (await badges.allTextContents()).map((text) => text.trim()),
-        [...CASES, ...BACKGROUND_CASES].map((entry) => entry.label),
+        ["Waiting", "Finished", "Working", "Waiting on background tasks", "Waiting on shells", "Waiting on agents"],
       );
     } finally {
       await page.close();
