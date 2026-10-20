@@ -35,9 +35,21 @@ export function buildTaskImplementPrompt(item: RepoWorkItem, source: RepoSource)
   return `Address issue ${item.reference} at ${item.url}. Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. ${ISSUE_PROMPT_SUFFIX} ${forgeBodyGuidance(source)}`;
 }
 
-export function buildReviewRequestPrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {
+export type ReviewNitMode = "threads" | "comment";
+
+function reviewNitGuidance(noun: string, nits: ReviewNitMode): string {
+  if (nits === "threads") {
+    return `Open a resolvable discussion thread for each change that must be made before merge, and also for each nit or minor suggestion, so the follow-up agent addresses them before merge. Every unresolved thread blocks the merge automation and spawns a follow-up agent, so only raise nits you actually want fixed and leave out optional "consider maybe" remarks. If you have nothing to raise and the ${noun} is acceptable to merge as-is, post your verdict as a single plain comment: not a resolvable thread, and not a review that requires resolution.`;
+  }
+  return `Only open resolvable discussion threads for changes that genuinely must be made before merge — every unresolved thread blocks the merge automation and spawns a follow-up agent. If changes are required, open threads for the must-fix items only and put any minor non-blocking suggestions in a plain comment alongside them. If the ${noun} is acceptable to merge as-is, post your verdict together with any minor non-blocking suggestions as a single plain comment: not a resolvable thread, and not a review that requires resolution.`;
+}
+
+export function buildReviewRequestPrompt(
+  item: Pick<RepoReviewRequest, "kind" | "reference" | "url">,
+  nits: ReviewNitMode,
+): string {
   const noun = reviewRequestNoun(item);
-  return `Review ${noun} ${item.reference} at ${item.url}. Only open resolvable discussion threads for changes that genuinely must be made before merge — every unresolved thread blocks the merge automation and spawns a follow-up agent. If changes are required, open threads for the must-fix items only and put any minor non-blocking suggestions in a plain comment alongside them. If the ${noun} is acceptable to merge as-is, post your verdict together with any minor non-blocking suggestions as a single plain comment: not a resolvable thread, and not a review that requires resolution. ${reviewRequestBodyGuidance(item)}`;
+  return `Review ${noun} ${item.reference} at ${item.url}. ${reviewNitGuidance(noun, nits)} ${reviewRequestBodyGuidance(item)}`;
 }
 
 export function buildReviewCommentsPrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {

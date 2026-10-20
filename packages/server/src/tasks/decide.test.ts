@@ -1,7 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { Task, TaskAttempt } from "../types.js";
-import { decide, PER_STEP_SPAWN_CAP, REVIEW_CYCLE_CAP, TOTAL_SPAWN_CAP } from "./decide.js";
+import {
+  completedReviews,
+  decide,
+  NIT_THREAD_REVIEW_LIMIT,
+  PER_STEP_SPAWN_CAP,
+  REVIEW_CYCLE_CAP,
+  TOTAL_SPAWN_CAP,
+} from "./decide.js";
 import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask } from "../testing/fixtures.js";
 
 const CHANGED_DIFF = "sha256-of-a-different-diff";
@@ -746,5 +753,68 @@ describe("decide: review/address_comments cycle cap", () => {
         diffHashBefore: null,
       },
     );
+  });
+});
+
+describe("completedReviews", () => {
+  it("is zero for a task that has not been reviewed", () => {
+    assert.equal(completedReviews(makeLinkedTask({ attempts: [makeAttempt({ step: "implement" })] })), 0);
+  });
+
+  it("counts successful review attempts, not address_comments, rebase or fix_ci ones", () => {
+    const task = makeLinkedTask({
+      attempts: [
+        makeAttempt({ step: "implement" }),
+        makeAttempt({ step: "review" }),
+        makeAttempt({ step: "address_comments" }),
+        makeAttempt({ step: "rebase" }),
+        makeAttempt({ step: "fix_ci" }),
+        makeAttempt({ step: "review" }),
+      ],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 1, review: 2, address_comments: 1 },
+    });
+    assert.equal(completedReviews(task), 2);
+  });
+
+  it("ignores review attempts that errored", () => {
+    const task = makeLinkedTask({
+      attempts: [
+        makeAttempt({ step: "implement" }),
+        makeAttempt({ step: "review", error: "Agent container exited unexpectedly" }),
+        makeAttempt({ step: "review" }),
+      ],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 2, address_comments: 0 },
+    });
+    assert.equal(completedReviews(task), 1);
+  });
+
+  it("ignores review attempts made before the last resume", () => {
+    const task = makeLinkedTask({
+      attempts: [
+        makeAttempt({ step: "implement" }),
+        makeAttempt({ step: "review" }),
+        makeAttempt({ step: "address_comments" }),
+        makeAttempt({ step: "review" }),
+        makeAttempt({ step: "address_comments" }),
+        makeAttempt({ step: "review" }),
+      ],
+      attemptsByStep: { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+    });
+    assert.equal(completedReviews(task), 1);
+  });
+
+  it("does not reset after a rebase", () => {
+    const task = makeLinkedTask({
+      attempts: [makeAttempt({ step: "implement" }), makeAttempt({ step: "review" }), makeAttempt({ step: "rebase" })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 1, review: 1, address_comments: 0 },
+    });
+    assert.equal(completedReviews(task), 1);
+  });
+});
+
+describe("NIT_THREAD_REVIEW_LIMIT", () => {
+  it("sits below the review cycle cap so nit threads cannot exhaust it", () => {
+    assert.ok(NIT_THREAD_REVIEW_LIMIT < REVIEW_CYCLE_CAP);
+    assert.ok(NIT_THREAD_REVIEW_LIMIT > 0);
   });
 });

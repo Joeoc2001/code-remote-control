@@ -4,6 +4,13 @@ import { isStdinPlaceholderBody } from "../forge/body.js";
 export const PER_STEP_SPAWN_CAP = 3;
 export const TOTAL_SPAWN_CAP = 12;
 export const REVIEW_CYCLE_CAP = 3;
+export const NIT_THREAD_REVIEW_LIMIT = 2;
+
+if (NIT_THREAD_REVIEW_LIMIT >= REVIEW_CYCLE_CAP) {
+  throw new Error(
+    `NIT_THREAD_REVIEW_LIMIT (${NIT_THREAD_REVIEW_LIMIT}) must be below REVIEW_CYCLE_CAP (${REVIEW_CYCLE_CAP})`,
+  );
+}
 
 const PER_STEP_CAPPED_STEPS: readonly TaskStep[] = ["fix_ci", "rebase"];
 const REVIEW_CYCLE_STEPS: readonly TaskStep[] = ["review", "address_comments"];
@@ -23,6 +30,10 @@ function totalAttempts(task: Task): number {
 
 function attemptsSinceResume(task: Task): TaskAttempt[] {
   return task.attempts.slice(task.attempts.length - totalAttempts(task));
+}
+
+export function completedReviews(task: Task): number {
+  return attemptsSinceResume(task).filter((attempt) => attempt.step === "review" && attempt.error === null).length;
 }
 
 function trailingReviewCycles(task: Task): number {

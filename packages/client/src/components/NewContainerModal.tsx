@@ -203,7 +203,7 @@ export default function NewContainerModal({
         .map((item) => ({ label: referenceLabel(item), prompt: buildReviewCommentsPrompt(item) }));
     }
 
-    return reviewRequests.map((item) => ({ label: referenceLabel(item), prompt: buildReviewRequestPrompt(item) }));
+    return reviewRequests.map((item) => ({ label: referenceLabel(item), prompt: buildReviewRequestPrompt(item, "threads") }));
   };
 
   const getEmptySpawnManyError = (repo: RepoEntry): string => {
