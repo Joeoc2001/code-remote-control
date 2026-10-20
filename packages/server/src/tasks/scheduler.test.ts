@@ -10,12 +10,13 @@ import type {
   RepoWorkItem,
   ResolvedConfigFile,
   Task,
+  TaskAttempt,
   TaskContainer,
   TaskSpawn,
 } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import { TaskStore } from "./store.js";
-import { REVIEW_CYCLE_CAP } from "./decide.js";
+import { NIT_THREAD_REVIEW_LIMIT, REVIEW_CYCLE_CAP } from "./decide.js";
 import {
   ATTEMPT_TIMEOUT_MS,
   MAX_CONSECUTIVE_ERRORS,
@@ -235,7 +236,7 @@ describe("scheduler: spawning", () => {
     assert.deepEqual(harness.diffHashFetches, ["12"]);
   });
 
-  it("tells the review agent to keep merge-ready feedback out of resolvable threads", async () => {
+  it("tells the first review agent to leave nits as resolvable threads", async () => {
     const task = makeLinkedTask({ phase: "waiting_ci" });
     const harness = makeHarness({
       tasks: [task],
@@ -244,10 +245,67 @@ describe("scheduler: spawning", () => {
 
     await runTaskSchedulerTick(harness.deps);
 
+    assert.equal(task.activeStep, "review");
     const prompt = harness.created[0].prompt;
-    assert.match(prompt, /Only open resolvable discussion threads/);
+    assert.match(prompt, /also for each nit or minor suggestion/);
     assert.match(prompt, /unresolved thread blocks the merge automation/);
+    assert.doesNotMatch(prompt, /Only open resolvable discussion threads/);
+  });
+
+  function reviewedTask(attempts: TaskAttempt[]): Task {
+    const attemptsByStep = { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 };
+    for (const attempt of attempts) attemptsByStep[attempt.step] += 1;
+    return makeLinkedTask({ phase: "waiting_ci", lastReviewedSha: "abc123", attempts, attemptsByStep });
+  }
+
+  function reviewCycles(count: number, between: TaskAttempt[] = []): TaskAttempt[] {
+    const attempts = [makeAttempt({ step: "implement" })];
+    for (let i = 0; i < count; i++) {
+      attempts.push(makeAttempt({ step: "review" }), makeAttempt({ step: "address_comments" }), ...between);
+    }
+    return attempts;
+  }
+
+  async function reviewPromptFor(task: Task): Promise<string> {
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ headSha: "def456" })] });
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.activeStep, "review");
+    assert.equal(harness.created.length, 1);
+    return harness.created[0].prompt;
+  }
+
+  it("keeps asking for nit threads while under the nit-thread review limit", async () => {
+    const prompt = await reviewPromptFor(reviewedTask(reviewCycles(NIT_THREAD_REVIEW_LIMIT - 1)));
+    assert.match(prompt, /also for each nit or minor suggestion/);
+  });
+
+  it("moves nits into a plain comment once the PR/MR has had the nit-thread review limit of reviews", async () => {
+    const prompt = await reviewPromptFor(reviewedTask(reviewCycles(NIT_THREAD_REVIEW_LIMIT)));
+    assert.match(prompt, /Only open resolvable discussion threads/);
+    assert.match(prompt, /open threads for the must-fix items only/);
     assert.match(prompt, /single plain comment/);
+    assert.doesNotMatch(prompt, /also for each nit or minor suggestion/);
+  });
+
+  it("does not reset the review count after interleaved rebases", async () => {
+    const prompt = await reviewPromptFor(
+      reviewedTask(reviewCycles(NIT_THREAD_REVIEW_LIMIT, [makeAttempt({ step: "rebase" })])),
+    );
+    assert.match(prompt, /Only open resolvable discussion threads/);
+  });
+
+  it("does not count errored review attempts", async () => {
+    const attempts = reviewCycles(NIT_THREAD_REVIEW_LIMIT - 1);
+    attempts.push(makeAttempt({ step: "review", error: "Agent container exited unexpectedly" }));
+    const prompt = await reviewPromptFor(reviewedTask(attempts));
+    assert.match(prompt, /also for each nit or minor suggestion/);
+  });
+
+  it("counts reviews only since the last resume", async () => {
+    const task = reviewedTask(reviewCycles(NIT_THREAD_REVIEW_LIMIT));
+    task.attemptsByStep = { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 1 };
+    const prompt = await reviewPromptFor(task);
+    assert.match(prompt, /also for each nit or minor suggestion/);
   });
 
   it("tells the rebase agent to resolve conflicts and then fold in any review nits", async () => {

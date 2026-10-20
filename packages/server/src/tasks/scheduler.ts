@@ -21,7 +21,7 @@ import type {
 } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import type { TaskStore } from "./store.js";
-import { decide, type TaskDecision } from "./decide.js";
+import { completedReviews, decide, NIT_THREAD_REVIEW_LIMIT, type TaskDecision } from "./decide.js";
 
 export const TASK_TICK_INTERVAL_MS = 30_000;
 export const ATTEMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
@@ -304,7 +304,10 @@ function buildStepPrompt(step: TaskStep, task: Task, reviewRequest: RepoReviewRe
   }
   switch (step) {
     case "review":
-      return buildReviewRequestPrompt(reviewRequest);
+      return buildReviewRequestPrompt(
+        reviewRequest,
+        completedReviews(task) < NIT_THREAD_REVIEW_LIMIT ? "threads" : "comment",
+      );
     case "address_comments":
       return buildReviewCommentsPrompt(reviewRequest);
     case "rebase":

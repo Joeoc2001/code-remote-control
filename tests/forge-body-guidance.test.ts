@@ -84,7 +84,7 @@ describe("forgeBodyGuidance", () => {
 describe("task step prompts", () => {
   const githubPrompts = {
     implement: buildTaskImplementPrompt(workItem, "github"),
-    review: buildReviewRequestPrompt(pullRequest),
+    review: buildReviewRequestPrompt(pullRequest, "threads"),
     address_comments: buildReviewCommentsPrompt(pullRequest),
     rebase: buildRebasePrompt(pullRequest),
     fix_ci: buildFixCiPrompt(pullRequest),
@@ -92,7 +92,7 @@ describe("task step prompts", () => {
 
   const gitlabPrompts = {
     implement: buildTaskImplementPrompt(workItem, "gitlab"),
-    review: buildReviewRequestPrompt(mergeRequest),
+    review: buildReviewRequestPrompt(mergeRequest, "threads"),
     address_comments: buildReviewCommentsPrompt(mergeRequest),
     rebase: buildRebasePrompt(mergeRequest),
     fix_ci: buildFixCiPrompt(mergeRequest),
@@ -121,8 +121,12 @@ describe("task step prompts", () => {
     assert.match(githubPrompts.implement, /thoroughly tested/);
   });
 
-  test("the review prompt keeps its thread instructions alongside the guidance", () => {
-    assert.match(githubPrompts.review, /Only open resolvable discussion threads/);
+  test("the review prompt keeps its thread instructions alongside the guidance in both nit modes", () => {
+    const threads = buildReviewRequestPrompt(pullRequest, "threads");
+    const comment = buildReviewRequestPrompt(pullRequest, "comment");
+    assert.match(threads, /Open a resolvable discussion thread for each change/);
+    assert.match(comment, /Only open resolvable discussion threads/);
+    for (const prompt of [threads, comment]) assert.ok(prompt.includes(forgeBodyGuidance("github")));
   });
 });
 
