@@ -5,7 +5,7 @@ import { broadcastRemoval, removeContainerIfPresent } from "../docker.js";
 import { getForge } from "../forge/index.js";
 import { TASK_STEPS } from "../types.js";
 import type { CreateTaskFromTextRequest, CreateTasksRequest, RepoWorkItem, Task, TaskStep, UpdateTaskRequest } from "../types.js";
-import { getRepoNameError, isValidRepoSource } from "../validation.js";
+import { parseRepo } from "../validation.js";
 import { resumeTask, type ResumeDeps } from "./resume.js";
 import { broadcastTaskRemoved, broadcastTaskUpdated, taskStore } from "./runtime.js";
 
@@ -126,14 +126,9 @@ tasksRouter.post("/api/tasks", async (req, res) => {
       return;
     }
 
-    if (!isValidRepoSource(repoSource)) {
-      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
-      return;
-    }
-
-    const repoNameError = getRepoNameError(repoFullName, repoSource);
-    if (repoNameError) {
-      res.status(400).json({ error: repoNameError });
+    const repo = parseRepo(repoSource, repoFullName);
+    if ("error" in repo) {
+      res.status(400).json({ error: repo.error });
       return;
     }
 
@@ -213,14 +208,9 @@ tasksRouter.post("/api/tasks/from-text", async (req, res) => {
       return;
     }
 
-    if (!isValidRepoSource(repoSource)) {
-      res.status(400).json({ error: "repoSource must be 'github' or 'gitlab'" });
-      return;
-    }
-
-    const repoNameError = getRepoNameError(repoFullName, repoSource);
-    if (repoNameError) {
-      res.status(400).json({ error: repoNameError });
+    const repo = parseRepo(repoSource, repoFullName);
+    if ("error" in repo) {
+      res.status(400).json({ error: repo.error });
       return;
     }
 

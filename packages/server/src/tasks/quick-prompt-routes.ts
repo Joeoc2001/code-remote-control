@@ -1,22 +1,7 @@
 import { Router } from "express";
-import type { CreateQuickPromptRequest, RepoSource } from "../types.js";
-import { getRepoNameError, isValidRepoSource } from "../validation.js";
+import type { CreateQuickPromptRequest } from "../types.js";
+import { parseRepo } from "../validation.js";
 import type { QuickPromptStore } from "./quick-prompt-store.js";
-
-function parseRepo(
-  repoSource: unknown,
-  repoFullName: unknown,
-): { error: string } | { repoSource: RepoSource; repoFullName: string } {
-  if (typeof repoFullName !== "string" || repoFullName === "") {
-    return { error: "repoFullName is required" };
-  }
-  if (!isValidRepoSource(repoSource)) {
-    return { error: "repoSource must be 'github' or 'gitlab'" };
-  }
-  const repoNameError = getRepoNameError(repoFullName, repoSource);
-  if (repoNameError) return { error: repoNameError };
-  return { repoSource, repoFullName };
-}
 
 export function createQuickPromptsRouter(store: QuickPromptStore): Router {
   const router = Router();
