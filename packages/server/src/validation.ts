@@ -19,3 +19,18 @@ export function getRepoNameError(repoFullName: string, repoSource: RepoSource): 
 
   return GITLAB_REPO_NAME_RE.test(repoFullName) ? null : "GitLab repoFullName must be in namespace/repo format";
 }
+
+export function parseRepo(
+  repoSource: unknown,
+  repoFullName: unknown,
+): { error: string } | { repoSource: RepoSource; repoFullName: string } {
+  if (typeof repoFullName !== "string" || repoFullName === "") {
+    return { error: "repoFullName is required" };
+  }
+  if (!isValidRepoSource(repoSource)) {
+    return { error: "repoSource must be 'github' or 'gitlab'" };
+  }
+  const repoNameError = getRepoNameError(repoFullName, repoSource);
+  if (repoNameError) return { error: repoNameError };
+  return { repoSource, repoFullName };
+}

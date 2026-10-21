@@ -12,10 +12,12 @@ import {
 } from "../docker.js";
 import { getForge } from "../forge/index.js";
 import type { Task } from "../types.js";
+import { QuickPromptStore } from "./quick-prompt-store.js";
 import { TaskStore } from "./store.js";
 import type { SchedulerDeps } from "./scheduler.js";
 
 export const taskStore = new TaskStore(CRC_STATE_DIR);
+export const quickPromptStore = new QuickPromptStore(CRC_STATE_DIR);
 
 export function broadcastTaskUpdated(task: Task): void {
   broadcastSSE("task-updated", task);

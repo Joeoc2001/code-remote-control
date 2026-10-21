@@ -19,8 +19,9 @@ import {
 import { getForge } from "./forge/index.js";
 import { fetchRepos as fetchGitHubRepos } from "./forge/github.js";
 import { fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./forge/gitlab.js";
+import { createQuickPromptsRouter } from "./tasks/quick-prompt-routes.js";
 import { tasksRouter } from "./tasks/routes.js";
-import { taskStore } from "./tasks/runtime.js";
+import { quickPromptStore, taskStore } from "./tasks/runtime.js";
 import type { ConfigSummaryFile, CreateContainerRequestV2, CreateContainersRequest, ManagedContainer } from "./types.js";
 import { getRepoNameError, isValidContainerId, isValidRepoSource } from "./validation.js";
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
@@ -28,6 +29,7 @@ import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadat
 export const router = Router();
 
 router.use(tasksRouter);
+router.use(createQuickPromptsRouter(quickPromptStore));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
