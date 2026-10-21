@@ -55,21 +55,25 @@ function describeConfig(configByStep: Record<TaskStep, string> | null): string {
   return overrides.length === 0 ? base : `${base} (${overrides.join(", ")})`;
 }
 
-function blockReason(prompt: QuickPrompt, lastInstance: Task | null): string | null {
+function blockReason(prompt: QuickPrompt, instances: Task[]): { text: string; task: Task | null } | null {
   if (!prompt.perpetual) return null;
-  if (lastInstance && lastInstance.phase === "failed") {
-    return "Blocked: the last task failed — resume or delete it to continue";
+  const unfinished = instances.find((task) => task.phase !== "merged");
+  if (unfinished?.phase === "failed") {
+    return { text: "Blocked: the last task failed — resume or delete it to continue", task: unfinished };
   }
-  if (lastInstance && lastInstance.phase === "paused") {
-    return "Blocked: the last task is paused — resume it to continue";
+  if (unfinished?.phase === "paused") {
+    return { text: "Blocked: the last task is paused — resume it to continue", task: unfinished };
   }
-  if (lastInstance && lastInstance.phase !== "merged") {
-    return "Relaunches once the current task has merged and its issue is closed";
+  if (unfinished) {
+    return { text: "Relaunches once the current task has merged and its issue is closed", task: unfinished };
   }
   if (prompt.reviewRequestIds.length > 0) {
-    return `Waiting for open PR/MR ${prompt.reviewRequestIds.map((id) => `#${id}`).join(", ")} to close`;
+    return {
+      text: `Waiting for open PR/MR ${prompt.reviewRequestIds.map((id) => `#${id}`).join(", ")} to close`,
+      task: null,
+    };
   }
-  return "Launching on the next scheduler tick";
+  return { text: "Launching on the next scheduler tick", task: null };
 }
 
 interface QuickPromptRowProps {
@@ -105,7 +109,7 @@ function QuickPromptRow({
   }, [storedConfigKey, fallbackConfig]);
 
   const lastInstance = instances[0] ?? null;
-  const reason = blockReason(prompt, lastInstance);
+  const reason = blockReason(prompt, instances);
   const configRequest = () => ({
     configName: draft.configName,
     configByStep: customised ? pickConfigOverrides(TASK_STEPS, draft.configByStep) : {},
@@ -201,7 +205,23 @@ function QuickPromptRow({
         </dd>
       </dl>
 
-      {reason && <p className="text-xs text-indigo-200">{reason}</p>}
+      {reason && (
+        <p className="text-xs text-indigo-200">
+          {reason.text}
+          {reason.task && (
+            <>
+              {" "}
+              <Link
+                to={`/tasks/${reason.task.id}`}
+                aria-label="Blocking task"
+                className="text-indigo-300 underline hover:text-indigo-200"
+              >
+                {taskTitle(reason.task)}
+              </Link>
+            </>
+          )}
+        </p>
+      )}
       {prompt.error && (
         <p className="text-xs text-rose-300 bg-rose-900/20 border border-rose-800 rounded-lg px-2.5 py-1.5 break-words">
           {prompt.error}

@@ -197,6 +197,25 @@ describe("Quick-prompts page", () => {
     }
   });
 
+  test("blocks on an older unfinished instance even when the newest one merged", async () => {
+    const { page } = await open(
+      [makePrompt("a", { text: "Older failure", perpetual: true, configByStep: ALL_DEFAULT })],
+      [
+        makeInstance("older", "a", "failed", "2026-01-01T00:00:00.000Z"),
+        makeInstance("newer", "a", "merged", "2026-02-01T00:00:00.000Z"),
+      ],
+    );
+    try {
+      const prompt = row(page, "Older failure");
+      await prompt.getByText("Blocked: the last task failed — resume or delete it to continue").waitFor();
+      assert.equal(await prompt.getByText("Launching on the next scheduler tick").count(), 0);
+      assert.equal(await prompt.getByRole("link", { name: "Instance newer" }).getAttribute("href"), "/tasks/newer");
+      assert.equal(await prompt.getByRole("link", { name: "Blocking task" }).getAttribute("href"), "/tasks/older");
+    } finally {
+      await page.close();
+    }
+  });
+
   test("toggles perpetual on with the chosen configuration and off again", async () => {
     const { page, backend } = await open([makePrompt("a", { text: "Toggle me" })]);
     try {
