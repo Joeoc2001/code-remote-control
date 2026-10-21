@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import type { Task } from "../types";
 import { deleteTask, updateTask } from "../api";
 import TaskPhaseBadge from "./TaskPhaseBadge";
+import QuickPromptBadge from "./QuickPromptBadge";
 import ReviewRequestStatusIcon from "./ReviewRequestStatusIcon";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
 import { taskTitle } from "./taskTitle";
@@ -84,6 +85,7 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
 
       <div className="flex flex-wrap items-center gap-2">
         <TaskPhaseBadge phase={task.phase} />
+        {task.quickPromptId && <QuickPromptBadge quickPromptId={task.quickPromptId} />}
         {task.completedStages.length > 0 && (
           <span className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-800/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-300">
             Stage {task.completedStages.length + 1}

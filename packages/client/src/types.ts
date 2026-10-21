@@ -9,6 +9,7 @@ export type {
   GitHubRepo,
   GitLabRepo,
   CreateContainersResponse,
+  LaunchQuickPromptRequest,
   QuickPrompt,
   RepoWorkItem,
   RepoReviewRequest,
@@ -18,6 +19,7 @@ export type {
   TaskPhase,
   TaskStage,
   TaskStep,
+  UpdateQuickPromptRequest,
   UpdateTaskRequest,
 } from "@crc/shared";
 

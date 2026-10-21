@@ -154,9 +154,16 @@ The configuration is read from `/configs/environments.json`; override the path w
 Note that the runners must be accessible from the CRC server, so must share at least one docker network.
 
 The `/data` volume holds Task state (`tasks.json` plus captured per-attempt log
-tails) so tasks survive server restarts. Override the location with
-`CRC_STATE_DIR`. Without the volume, tasks are lost whenever the container is
+tails) and the quick-prompts (`quick-prompts.json`, including each prompt's
+perpetual flag, stored configuration and the PRs/MRs it has opened) so both
+survive server restarts. Override the location with `CRC_STATE_DIR`. Without
+the volume, tasks and quick-prompts are lost whenever the container is
 recreated.
+
+A quick-prompt marked perpetual on the Quick-prompts page relaunches itself as
+a brand-new task once its last task has merged and its issue is closed (after
+every stage), provided no PR/MR opened from the prompt is still open. A failed
+or paused last task blocks the relaunch until it is resumed or deleted.
 
 Agent containers outlive the server too. Each one is labelled with the task and
 step it was spawned for, and every scheduler tick reconciles the labelled

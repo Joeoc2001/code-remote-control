@@ -13,8 +13,10 @@ import type {
   RepoWorkItem,
   ContainerCodeStatus,
   InstanceStatus,
+  LaunchQuickPromptRequest,
   QuickPrompt,
   Task,
+  UpdateQuickPromptRequest,
   UpdateTaskRequest,
 } from "./types";
 
@@ -196,10 +198,42 @@ export async function createQuickPrompt(request: CreateQuickPromptRequest): Prom
   return res.json();
 }
 
-export async function deleteQuickPrompt(id: string, repoFullName: string, repoSource: RepoSource): Promise<void> {
-  const res = await fetch(`${BASE}/quick-prompts/${encodeURIComponent(id)}?${repoQuery(repoFullName, repoSource)}`, {
-    method: "DELETE",
+export async function fetchAllQuickPrompts(): Promise<QuickPrompt[]> {
+  const res = await fetch(`${BASE}/quick-prompts`);
+  if (!res.ok) throw new Error("Failed to fetch quick-prompts");
+  return res.json();
+}
+
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    return ((await res.json()) as { error?: string }).error ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function updateQuickPrompt(id: string, patch: UpdateQuickPromptRequest): Promise<QuickPrompt> {
+  const res = await fetch(`${BASE}/quick-prompts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
   });
+  if (!res.ok) throw new Error(await errorMessage(res, "Failed to update quick-prompt"));
+  return res.json();
+}
+
+export async function launchQuickPrompt(id: string, request: LaunchQuickPromptRequest): Promise<Task> {
+  const res = await fetch(`${BASE}/quick-prompts/${encodeURIComponent(id)}/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, "Failed to launch quick-prompt"));
+  return res.json();
+}
+
+export async function deleteQuickPrompt(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/quick-prompts/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to remove quick-prompt");
 }
 
@@ -235,6 +269,8 @@ export interface EventHandlers {
   onContainerRemoved?: (id: string) => void;
   onTaskUpdated?: (task: Task) => void;
   onTaskRemoved?: (id: string) => void;
+  onQuickPromptUpdated?: (prompt: QuickPrompt) => void;
+  onQuickPromptRemoved?: (id: string) => void;
   onReconnect?: () => void;
   onConnectionError?: (connected: boolean) => void;
 }
@@ -259,6 +295,15 @@ export function subscribeToEvents(handlers: EventHandlers): () => void {
   eventSource.addEventListener("task-removed", (event) => {
     const { id } = JSON.parse(event.data) as { id: string };
     handlers.onTaskRemoved?.(id);
+  });
+
+  eventSource.addEventListener("quick-prompt-updated", (event) => {
+    handlers.onQuickPromptUpdated?.(JSON.parse(event.data) as QuickPrompt);
+  });
+
+  eventSource.addEventListener("quick-prompt-removed", (event) => {
+    const { id } = JSON.parse(event.data) as { id: string };
+    handlers.onQuickPromptRemoved?.(id);
   });
 
   eventSource.onopen = () => {

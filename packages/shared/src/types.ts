@@ -292,6 +292,7 @@ export interface Task {
   repoSource: RepoSource;
   workItem: RepoWorkItem | null;
   sourceText: string | null;
+  quickPromptId: string | null;
   createdIssueUrl: string | null;
   configByStep: Record<TaskStep, string>;
   phase: TaskPhase;
@@ -329,8 +330,26 @@ export interface CreateTaskFromTextRequest {
 
 export interface QuickPrompt {
   id: string;
+  repoSource: RepoSource;
+  repoFullName: string;
   text: string;
   createdAt: string;
+  perpetual: boolean;
+  configByStep: Record<TaskStep, string> | null;
+  reviewRequestIds: string[];
+  lastLaunchedAt: string | null;
+  error: string | null;
+}
+
+export interface UpdateQuickPromptRequest {
+  perpetual?: boolean;
+  configName?: string;
+  configByStep?: Partial<Record<TaskStep, string>>;
+}
+
+export interface LaunchQuickPromptRequest {
+  configName: string;
+  configByStep?: Partial<Record<TaskStep, string>>;
 }
 
 export interface CreateQuickPromptRequest {
@@ -354,4 +373,6 @@ export type SSEEvent =
   | { type: "container-updated"; data: ManagedContainer }
   | { type: "container-removed"; data: { id: string } }
   | { type: "task-updated"; data: Task }
-  | { type: "task-removed"; data: { id: string } };
+  | { type: "task-removed"; data: { id: string } }
+  | { type: "quick-prompt-updated"; data: QuickPrompt }
+  | { type: "quick-prompt-removed"; data: { id: string } };

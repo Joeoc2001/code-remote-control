@@ -82,6 +82,26 @@ describe("TaskStore", () => {
     assert.equal(task?.repoFullName, legacy.repoFullName);
   });
 
+  it("migrates tasks saved before quick-prompt links existed", () => {
+    const stateDir = makeStateDir();
+    const { quickPromptId: _quickPromptId, ...legacy } = makeTask();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([legacy]), "utf-8");
+
+    assert.equal(new TaskStore(stateDir).get(legacy.id)?.quickPromptId, null);
+  });
+
+  it("persists a task's quick-prompt link across instances", () => {
+    const stateDir = makeStateDir();
+    new TaskStore(stateDir).save(makeTask({ quickPromptId: "prompt-1" }));
+    assert.equal(new TaskStore(stateDir).get("task-1")?.quickPromptId, "prompt-1");
+  });
+
+  it("fails loudly on a task with a malformed quick-prompt link", () => {
+    const stateDir = makeStateDir();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), quickPromptId: 7 }]), "utf-8");
+    assert.throws(() => new TaskStore(stateDir), /task task-1 has an invalid quickPromptId/);
+  });
+
   it("fails loudly on a task with malformed stage fields", () => {
     const stateDir = makeStateDir();
     writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), completedStages: "nope" }]), "utf-8");

@@ -14,6 +14,7 @@ export function makeTask(id: string, phase: TaskPhase, createdAt: string): Task 
       kind: "issue",
     },
     sourceText: null,
+    quickPromptId: null,
     createdIssueUrl: null,
     configByStep: {
       implement: "default",
