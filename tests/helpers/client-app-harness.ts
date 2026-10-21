@@ -68,6 +68,7 @@ export interface ClientAppHarness {
   browser: Browser;
   unstubbedRequests: string[];
   sendEvent: (event: string, data: unknown) => void;
+  setStub: (path: string, response: unknown) => void;
   stop: () => Promise<void>;
 }
 
@@ -84,9 +85,8 @@ function startStubServer(
   distDir: string,
   unstubbedRequests: string[],
   eventStreams: Set<ServerResponse>,
-  extraStubs: Record<string, unknown>,
+  stubs: Record<string, unknown>,
 ): Promise<{ server: Server; origin: string }> {
-  const stubs = { ...apiStubs, ...extraStubs };
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
@@ -130,7 +130,8 @@ export async function startClientApp(extraStubs: Record<string, unknown> = {}): 
   const distDir = buildClient();
   const unstubbedRequests: string[] = [];
   const eventStreams = new Set<ServerResponse>();
-  const { server, origin } = await startStubServer(distDir, unstubbedRequests, eventStreams, extraStubs);
+  const stubs = { ...apiStubs, ...extraStubs };
+  const { server, origin } = await startStubServer(distDir, unstubbedRequests, eventStreams, stubs);
   const browser = await chromium.launch();
 
   return {
@@ -140,6 +141,9 @@ export async function startClientApp(extraStubs: Record<string, unknown> = {}): 
     sendEvent: (event, data) => {
       if (eventStreams.size === 0) throw new Error("no client is subscribed to /api/events");
       for (const stream of eventStreams) stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    },
+    setStub: (path, response) => {
+      stubs[path] = response;
     },
     stop: async () => {
       await browser.close();

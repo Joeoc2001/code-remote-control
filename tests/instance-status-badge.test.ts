@@ -1,16 +1,17 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import type { ManagedContainer } from "@crc/shared";
 import type { InstanceStatus } from "@crc/container-metadata-types";
 import { startClientApp, type ClientAppHarness } from "./helpers/client-app-harness.js";
+import { makeContainer } from "./helpers/container-fixture.js";
 
 const UPDATED_AT = "2026-08-30T10:00:00.000Z";
 
-const CASES: Array<{ id: string; status: InstanceStatus; label: string; colour: string }> = [
-  { id: "aaaa000000000000", status: { state: "working", updatedAt: UPDATED_AT }, label: "Working", colour: "sky" },
-  { id: "bbbb000000000000", status: { state: "waiting", updatedAt: UPDATED_AT }, label: "Waiting", colour: "amber" },
+const CASES: Array<{ id: string; createdAt: string; status: InstanceStatus; label: string; colour: string }> = [
+  { id: "aaaa000000000000", createdAt: "2026-08-30T09:06:00.000Z", status: { state: "working", updatedAt: UPDATED_AT }, label: "Working", colour: "sky" },
+  { id: "bbbb000000000000", createdAt: "2026-08-30T09:05:00.000Z", status: { state: "waiting", updatedAt: UPDATED_AT }, label: "Waiting", colour: "amber" },
   {
     id: "cccc000000000000",
+    createdAt: "2026-08-30T09:04:00.000Z",
     status: {
       state: "awaiting-background",
       pendingTasks: [
@@ -22,12 +23,13 @@ const CASES: Array<{ id: string; status: InstanceStatus; label: string; colour: 
     label: "Waiting on background tasks",
     colour: "violet",
   },
-  { id: "dddd000000000000", status: { state: "finished", updatedAt: UPDATED_AT }, label: "Finished", colour: "emerald" },
+  { id: "dddd000000000000", createdAt: "2026-08-30T09:03:00.000Z", status: { state: "finished", updatedAt: UPDATED_AT }, label: "Finished", colour: "emerald" },
 ];
 
-const BACKGROUND_CASES: Array<{ id: string; status: InstanceStatus; label: string }> = [
+const BACKGROUND_CASES: Array<{ id: string; createdAt: string; status: InstanceStatus; label: string }> = [
   {
     id: "eeee000000000000",
+    createdAt: "2026-08-30T09:02:00.000Z",
     status: {
       state: "awaiting-background",
       pendingTasks: [
@@ -40,6 +42,7 @@ const BACKGROUND_CASES: Array<{ id: string; status: InstanceStatus; label: strin
   },
   {
     id: "ffff000000000000",
+    createdAt: "2026-08-30T09:01:00.000Z",
     status: {
       state: "awaiting-background",
       pendingTasks: [
@@ -52,24 +55,11 @@ const BACKGROUND_CASES: Array<{ id: string; status: InstanceStatus; label: strin
   },
 ];
 
-function makeContainer(id: string): ManagedContainer {
-  return {
-    id,
-    name: `crc-${id.slice(0, 4)}`,
-    configName: "default",
-    repoName: "example/repo",
-    status: "running",
-    health: { container: "running", claude: "healthy" },
-    subdomain: `crc-${id.slice(0, 4)}`,
-    createdAt: "2026-08-30T09:00:00.000Z",
-  };
-}
-
 const stubs: Record<string, unknown> = {
-  "/api/containers": [...CASES, ...BACKGROUND_CASES].map((entry) => makeContainer(entry.id)),
+  "/api/containers": [...CASES, ...BACKGROUND_CASES].map((entry) => makeContainer(entry.id, entry.createdAt)),
 };
 for (const entry of [...CASES, ...BACKGROUND_CASES]) {
-  stubs[`/api/containers/${entry.id}`] = makeContainer(entry.id);
+  stubs[`/api/containers/${entry.id}`] = makeContainer(entry.id, entry.createdAt);
   stubs[`/api/containers/${entry.id}/instance-status`] = entry.status;
   stubs[`/api/containers/${entry.id}/code-status`] = {
     branch: "main",
@@ -161,7 +151,7 @@ describe("instance status badge", () => {
     });
   }
 
-  test("labels one badge per container on the containers list, in the order they are listed", async () => {
+  test("labels one badge per container on the containers list, with waiting and finished containers listed first", async () => {
     const page = await harness.browser.newPage();
     try {
       await page.goto(`${harness.origin}/`, { waitUntil: "networkidle" });
@@ -170,7 +160,7 @@ describe("instance status badge", () => {
 
       assert.deepEqual(
         (await badges.allTextContents()).map((text) => text.trim()),
-        [...CASES, ...BACKGROUND_CASES].map((entry) => entry.label),
+        ["Waiting", "Finished", "Working", "Waiting on background tasks", "Waiting on shells", "Waiting on agents"],
       );
     } finally {
       await page.close();

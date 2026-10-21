@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { ManagedContainer, ReviewRequestStatus } from "../types";
 import {
   fetchContainers,
@@ -11,6 +11,7 @@ import {
 import usePolledContainerData from "../hooks/usePolledContainerData";
 import Header from "../components/Header";
 import ContainerGrid from "../components/ContainerGrid";
+import { sortContainers } from "../components/containerOrder";
 import NewContainerModal from "../components/NewContainerModal";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal";
 import Footer from "../components/Footer";
@@ -122,6 +123,16 @@ export default function Home() {
     [metadataByContainerId],
   );
 
+  const getContainerInstanceStatus = useCallback(
+    (container: ManagedContainer) => instanceStatusByContainerId[container.id] || null,
+    [instanceStatusByContainerId],
+  );
+
+  const sortedContainers = useMemo(
+    () => sortContainers(containers, getContainerInstanceStatus),
+    [containers, getContainerInstanceStatus],
+  );
+
   const handleContainersCreated = useCallback((createdContainers: ManagedContainer[]) => {
     setContainers((prev) => {
       const existingIds = new Set(prev.map((container) => container.id));
@@ -193,10 +204,10 @@ export default function Home() {
           </div>
         ) : (
           <ContainerGrid
-            containers={containers}
+            containers={sortedContainers}
             getContainerTitle={getContainerTitle}
             getContainerReviewRequest={(container) => metadataByContainerId[container.id]?.reviewRequest || null}
-            getContainerInstanceStatus={(container) => instanceStatusByContainerId[container.id] || null}
+            getContainerInstanceStatus={getContainerInstanceStatus}
             onRefresh={loadContainers}
           />
         )}
