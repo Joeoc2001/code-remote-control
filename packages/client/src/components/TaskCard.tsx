@@ -17,7 +17,7 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
-  const reviewRequestState = task.phase === "merged" ? "merged" : "open";
+  const reviewRequestState = task.phase === "merged" || task.phase === "checking_closure" ? "merged" : "open";
 
   const runAction = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -84,6 +84,11 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
 
       <div className="flex flex-wrap items-center gap-2">
         <TaskPhaseBadge phase={task.phase} />
+        {task.completedStages.length > 0 && (
+          <span className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-800/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-300">
+            Stage {task.completedStages.length + 1}
+          </span>
+        )}
         {task.activeStep && (
           <span className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-800/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-300">
             {TASK_STEP_LABELS[task.activeStep]}

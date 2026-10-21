@@ -67,6 +67,27 @@ describe("TaskStore", () => {
     assert.equal(store.readAttemptLog("other-task", 0), null);
   });
 
+  it("migrates tasks saved before multi-stage tasks existed", () => {
+    const stateDir = makeStateDir();
+    const { completedStages: _stages, stageStartedAt: _startedAt, mergedAt: _mergedAt, ...legacy } = makeTask({
+      createdAt: "2026-01-02T03:04:05.000Z",
+    });
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([legacy]), "utf-8");
+
+    const task = new TaskStore(stateDir).get(legacy.id);
+
+    assert.deepEqual(task?.completedStages, []);
+    assert.equal(task?.stageStartedAt, "2026-01-02T03:04:05.000Z");
+    assert.equal(task?.mergedAt, null);
+    assert.equal(task?.repoFullName, legacy.repoFullName);
+  });
+
+  it("fails loudly on a task with malformed stage fields", () => {
+    const stateDir = makeStateDir();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), completedStages: "nope" }]), "utf-8");
+    assert.throws(() => new TaskStore(stateDir), /task task-1 has invalid stage fields/);
+  });
+
   it("fails loudly on a malformed tasks file", () => {
     const stateDir = makeStateDir();
     mkdirSync(stateDir, { recursive: true });

@@ -6,6 +6,26 @@ function isMissingFileError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
+type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt"> &
+  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt">>;
+
+function migrateTask(stored: StoredTask, tasksPath: string): Task {
+  const task: Task = {
+    ...stored,
+    completedStages: stored.completedStages ?? [],
+    stageStartedAt: stored.stageStartedAt ?? stored.createdAt,
+    mergedAt: stored.mergedAt ?? null,
+  };
+  if (
+    !Array.isArray(task.completedStages) ||
+    typeof task.stageStartedAt !== "string" ||
+    (task.mergedAt !== null && typeof task.mergedAt !== "string")
+  ) {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has invalid stage fields`);
+  }
+  return task;
+}
+
 export class TaskStore {
   private readonly tasksById = new Map<string, Task>();
   private readonly tasksPath: string;
@@ -28,8 +48,8 @@ export class TaskStore {
       if (!Array.isArray(parsed)) {
         throw new Error(`Task store file ${this.tasksPath} is malformed: expected a JSON array`);
       }
-      for (const task of parsed as Task[]) {
-        this.tasksById.set(task.id, task);
+      for (const stored of parsed as StoredTask[]) {
+        this.tasksById.set(stored.id, migrateTask(stored, this.tasksPath));
       }
     }
   }

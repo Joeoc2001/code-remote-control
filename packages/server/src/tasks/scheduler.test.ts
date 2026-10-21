@@ -19,7 +19,9 @@ import { TaskStore } from "./store.js";
 import { NIT_THREAD_REVIEW_LIMIT, REVIEW_CYCLE_CAP } from "./decide.js";
 import {
   ATTEMPT_TIMEOUT_MS,
+  CLOSURE_GRACE_MS,
   MAX_CONSECUTIVE_ERRORS,
+  MAX_STAGES,
   runTaskSchedulerTick,
   type SchedulerDeps,
 } from "./scheduler.js";
@@ -89,6 +91,7 @@ interface HarnessOptions {
   getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
   diffHash?: string | null;
+  workItemsError?: Error;
   instanceStatus?: Record<string, InstanceStatus>;
   codeStatus?: Record<string, ContainerCodeStatus>;
   now?: Date;
@@ -110,7 +113,10 @@ function makeHarness(options: HarnessOptions) {
   let nextContainer = 0;
 
   const forge: Forge = {
-    listWorkItems: async () => options.workItems ?? [],
+    listWorkItems: async () => {
+      if (options.workItemsError) throw options.workItemsError;
+      return options.workItems ?? [];
+    },
     listReviewRequests: async () => {
       if (options.listError) throw options.listError;
       return options.snapshot ?? [];
@@ -1314,7 +1320,7 @@ describe("scheduler: forge-state evaluation", () => {
     await runTaskSchedulerTick(harness.deps);
 
     assert.deepEqual(fetchedIds, ["12"]);
-    assert.equal(task.phase, "merged");
+    assert.equal(task.phase, "checking_closure");
   });
 
   it("fails the task when its PR/MR was closed without merging", async () => {
@@ -1355,7 +1361,8 @@ describe("scheduler: forge-state evaluation", () => {
     await runTaskSchedulerTick(harness.deps);
 
     assert.deepEqual(harness.merged, ["12"]);
-    assert.equal(task.phase, "merged");
+    assert.equal(task.phase, "checking_closure");
+    assert.equal(task.mergedAt, NOW.toISOString());
   });
 
   it("holds in waiting_approval until a human approves", async () => {
@@ -1883,5 +1890,343 @@ describe("scheduler: rails", () => {
     assert.equal(listCalls, 1);
     assert.equal(taskA.phase, "waiting_approval");
     assert.equal(taskB.phase, "waiting_approval");
+  });
+});
+
+describe("scheduler: multi-stage tasks", () => {
+  const MERGED_AT = "2026-08-20T11:55:00.000Z";
+  const AFTER_GRACE = new Date(Date.parse(MERGED_AT) + CLOSURE_GRACE_MS);
+  const WITHIN_GRACE = new Date(Date.parse(MERGED_AT) + CLOSURE_GRACE_MS - 1);
+
+  function openIssue(overrides: Partial<RepoWorkItem> = {}): RepoWorkItem {
+    return {
+      id: "7",
+      reference: "#7",
+      title: "Add widgets",
+      url: "https://github.com/acme/widgets/issues/7",
+      body: "Remaining: the widget export",
+      kind: "issue",
+      ...overrides,
+    };
+  }
+
+  function makeCheckingTask(overrides: Partial<Task> = {}): Task {
+    return makeLinkedTask({
+      phase: "checking_closure",
+      mergedAt: MERGED_AT,
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 3, rebase: 0, review: 1, address_comments: 0 },
+      attempts: [
+        makeAttempt({ step: "implement", containerId: "1000000000000000", finishedAt: "2026-08-20T10:30:00.000Z" }),
+        makeAttempt({ step: "fix_ci", containerId: "2000000000000000", finishedAt: "2026-08-20T10:40:00.000Z" }),
+        makeAttempt({ step: "fix_ci", containerId: "3000000000000000", finishedAt: "2026-08-20T10:50:00.000Z" }),
+        makeAttempt({ step: "fix_ci", containerId: "4000000000000000", finishedAt: "2026-08-20T11:00:00.000Z" }),
+        makeAttempt({ step: "review", containerId: "5000000000000000", finishedAt: "2026-08-20T11:10:00.000Z" }),
+      ],
+      consecutiveErrors: 1,
+      error: "transient",
+      ...overrides,
+    });
+  }
+
+  it("moves a merged task to checking_closure, then to merged once its issue is closed", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ approvedByHuman: true })],
+      workItems: [openIssue()],
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.equal(task.phase, "checking_closure");
+    assert.equal(task.mergedAt, NOW.toISOString());
+
+    options.workItems = [];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "merged");
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.equal(harness.created.length, 0);
+    assert.deepEqual(task.completedStages, []);
+    assert.equal(harness.store.get(task.id)?.phase, "merged");
+  });
+
+  it("finishes a task whose issue closed even while still inside the grace period", async () => {
+    const task = makeCheckingTask();
+    const harness = makeHarness({ tasks: [task], workItems: [openIssue({ id: "8", url: "https://github.com/acme/widgets/issues/8" })], now: WITHIN_GRACE });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "merged");
+    assert.equal(task.error, null);
+    assert.equal(task.consecutiveErrors, 0);
+  });
+
+  it("waits without starting a stage while the issue is still open inside the grace period", async () => {
+    const task = makeCheckingTask({ consecutiveErrors: 0, error: null });
+    const harness = makeHarness({ tasks: [task], workItems: [openIssue()], now: WITHIN_GRACE });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "checking_closure");
+    assert.equal(task.mergedAt, MERGED_AT);
+    assert.deepEqual(task.completedStages, []);
+    assert.equal(harness.created.length, 0);
+    assert.equal(harness.broadcasts.length, 0);
+  });
+
+  it("starts a new stage with reset limits once the grace period passes with the issue still open", async () => {
+    const task = makeCheckingTask();
+    const harness = makeHarness({ tasks: [task], workItems: [openIssue()], now: AFTER_GRACE });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "spawning");
+    assert.deepEqual(task.completedStages, [
+      {
+        reviewRequest: { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+        startedAt: "2026-08-20T10:00:00.000Z",
+        mergedAt: MERGED_AT,
+        firstAttemptIndex: 0,
+        attemptCount: 5,
+      },
+    ]);
+    assert.equal(task.reviewRequest, null);
+    assert.equal(task.lastReviewedSha, null);
+    assert.equal(task.lastReviewedDiffHash, null);
+    assert.equal(task.mergedAt, null);
+    assert.equal(task.stageStartedAt, AFTER_GRACE.toISOString());
+    assert.deepEqual(task.attemptsByStep, { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 });
+    assert.equal(task.consecutiveErrors, 0);
+    assert.equal(task.error, null);
+    assert.equal(task.workItem?.body, "Remaining: the widget export");
+    assert.equal(task.attempts.length, 5);
+    assert.equal(harness.created.length, 0);
+    assert.deepEqual(harness.store.get(task.id)?.completedStages, task.completedStages);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.created[0].spawn.step, "implement");
+    assert.match(harness.created[0].prompt, /Address issue #7/);
+    assert.match(
+      harness.created[0].prompt,
+      /Earlier pull\/merge requests for this issue \(https:\/\/github\.com\/acme\/widgets\/pull\/12\) have already been merged but did not close it/,
+    );
+    assert.match(harness.created[0].prompt, /`Closes #7`/);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts.length, 6);
+    assert.equal(task.attemptsByStep.implement, 1);
+  });
+
+  it("lets a new stage spawn fix_ci again after the previous stage used up its cap", async () => {
+    const task = makeCheckingTask();
+    const options: HarnessOptions = { tasks: [task], workItems: [openIssue()], now: AFTER_GRACE };
+    const harness = makeHarness(options);
+    await runTaskSchedulerTick(harness.deps);
+
+    task.attempts.push(makeAttempt({ step: "implement", containerId: "6000000000000000", finishedAt: AFTER_GRACE.toISOString() }));
+    task.attemptsByStep.implement = 1;
+    task.reviewRequest = { id: "13", url: "https://github.com/acme/widgets/pull/13", sourceBranch: "stage-2" };
+    options.snapshot = [makeReviewRequest({ id: "13", reference: "#13", ciState: "failed" })];
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.created[0].spawn.step, "fix_ci");
+    assert.match(harness.created[0].prompt, /#13/);
+    assert.equal(task.phase, "agent_running");
+  });
+
+  it("follows the same path when the PR/MR was merged outside the app", async () => {
+    const task = makeLinkedTask();
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [],
+      getReviewRequest: async () => makeReviewRequest({ state: "merged" }),
+      workItems: [openIssue()],
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "checking_closure");
+    assert.equal(task.mergedAt, NOW.toISOString());
+
+    options.now = new Date(NOW.getTime() + CLOSURE_GRACE_MS);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "spawning");
+    assert.equal(task.completedStages.length, 1);
+    assert.equal(task.completedStages[0].mergedAt, NOW.toISOString());
+    assert.deepEqual(harness.merged, []);
+  });
+
+  it("skips create_issue in the second stage of a text task", async () => {
+    const task = makeCheckingTask({
+      sourceText: "Add a widget dashboard",
+      createdIssueUrl: "https://github.com/acme/widgets/issues/7",
+      attemptsByStep: { create_issue: 1, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [
+        makeAttempt({ step: "create_issue", containerId: "1000000000000000", finishedAt: "2026-08-20T10:10:00.000Z" }),
+        makeAttempt({ step: "implement", containerId: "2000000000000000", finishedAt: "2026-08-20T10:30:00.000Z" }),
+      ],
+    });
+    const options: HarnessOptions = { tasks: [task], workItems: [openIssue()], now: AFTER_GRACE };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.created[0].spawn.step, "implement");
+    assert.equal(task.completedStages[0].attemptCount, 2);
+  });
+
+  it("records the attempt slice of each stage after the first", async () => {
+    const task = makeCheckingTask({
+      completedStages: [
+        {
+          reviewRequest: { id: "11", url: "https://github.com/acme/widgets/pull/11", sourceBranch: "first" },
+          startedAt: "2026-08-20T08:00:00.000Z",
+          mergedAt: "2026-08-20T09:00:00.000Z",
+          firstAttemptIndex: 0,
+          attemptCount: 2,
+        },
+      ],
+      stageStartedAt: "2026-08-20T09:02:00.000Z",
+    });
+    const harness = makeHarness({ tasks: [task], workItems: [openIssue()], now: AFTER_GRACE });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.completedStages.length, 2);
+    assert.deepEqual(task.completedStages[1], {
+      reviewRequest: { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+      startedAt: "2026-08-20T09:02:00.000Z",
+      mergedAt: MERGED_AT,
+      firstAttemptIndex: 2,
+      attemptCount: 3,
+    });
+    assert.match(
+      harness.created[0].prompt,
+      /\(https:\/\/github\.com\/acme\/widgets\/pull\/11, https:\/\/github\.com\/acme\/widgets\/pull\/12\)/,
+    );
+  });
+
+  it("fails instead of starting another stage once the stage cap is reached", async () => {
+    const earlierStages = Array.from({ length: MAX_STAGES - 1 }, (_, index) => ({
+      reviewRequest: { id: `${index}`, url: `https://github.com/acme/widgets/pull/${index}`, sourceBranch: "b" },
+      startedAt: "2026-08-20T08:00:00.000Z",
+      mergedAt: "2026-08-20T09:00:00.000Z",
+      firstAttemptIndex: 0,
+      attemptCount: 0,
+    }));
+    const task = makeCheckingTask({ completedStages: earlierStages });
+    const options: HarnessOptions = { tasks: [task], workItems: [openIssue()], now: AFTER_GRACE };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", new RegExp(`#7 is still open after ${MAX_STAGES} merged stages`));
+    assert.match(task.error ?? "", /close it by hand before resuming/);
+    assert.equal(task.completedStages.length, MAX_STAGES - 1);
+    assert.equal(harness.created.length, 0);
+
+    await resumeTask({ removeContainer: async () => {}, now: () => AFTER_GRACE }, task, false);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /still open after/);
+
+    await resumeTask({ removeContainer: async () => {}, now: () => AFTER_GRACE }, task, false);
+    assert.equal(task.phase, "checking_closure");
+    options.workItems = [];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "merged");
+  });
+
+  it("starts the last allowed stage when one below the cap", async () => {
+    const earlierStages = Array.from({ length: MAX_STAGES - 2 }, (_, index) => ({
+      reviewRequest: { id: `${index}`, url: `https://github.com/acme/widgets/pull/${index}`, sourceBranch: "b" },
+      startedAt: "2026-08-20T08:00:00.000Z",
+      mergedAt: "2026-08-20T09:00:00.000Z",
+      firstAttemptIndex: 0,
+      attemptCount: 0,
+    }));
+    const task = makeCheckingTask({ completedStages: earlierStages });
+    const harness = makeHarness({ tasks: [task], workItems: [openIssue()], now: AFTER_GRACE });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "spawning");
+    assert.equal(task.completedStages.length, MAX_STAGES - 1);
+  });
+
+  it("records a forge error during the closure check as a task error and keeps checking", async () => {
+    const task = makeCheckingTask({ consecutiveErrors: 0, error: null });
+    const options: HarnessOptions = { tasks: [task], workItemsError: new Error("forge is down"), now: AFTER_GRACE };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "checking_closure");
+    assert.equal(task.consecutiveErrors, 1);
+    assert.match(task.error ?? "", /forge is down/);
+
+    options.workItemsError = undefined;
+    options.workItems = [];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "merged");
+    assert.equal(task.error, null);
+    assert.equal(task.consecutiveErrors, 0);
+  });
+
+  it("fails the task after repeated forge errors during the closure check", async () => {
+    const task = makeCheckingTask({ consecutiveErrors: 0, error: null });
+    const harness = makeHarness({ tasks: [task], workItemsError: new Error("forge is down"), now: AFTER_GRACE });
+
+    for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
+      await runTaskSchedulerTick(harness.deps);
+    }
+
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /consecutive errors.*forge is down/);
+  });
+
+  it("does not check closure for a paused task, and resumes it into checking_closure", async () => {
+    const task = makeCheckingTask({ phase: "paused" });
+    const options: HarnessOptions = { tasks: [task], workItems: [openIssue()], now: AFTER_GRACE };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "paused");
+    assert.deepEqual(task.completedStages, []);
+
+    await resumeTask({ removeContainer: async () => {}, now: () => AFTER_GRACE }, task, false);
+    assert.equal(task.phase, "checking_closure");
+    assert.equal(task.mergedAt, MERGED_AT);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "spawning");
+    assert.equal(task.completedStages.length, 1);
+  });
+
+  it("matches the issue URL regardless of scheme, host casing, and trailing slashes", async () => {
+    const task = makeCheckingTask();
+    const harness = makeHarness({
+      tasks: [task],
+      workItems: [openIssue({ url: "http://GitHub.com/acme/widgets/issues/7/" })],
+      now: AFTER_GRACE,
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "spawning");
+    assert.equal(task.workItem?.url, "http://GitHub.com/acme/widgets/issues/7/");
   });
 });

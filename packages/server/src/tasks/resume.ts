@@ -37,5 +37,9 @@ export async function resumeTask(deps: ResumeDeps, task: Task, discardContainer:
     task.error = null;
     task.consecutiveErrors = 0;
   }
-  task.phase = task.activeContainerId ? "agent_running" : "spawning";
+  if (task.activeContainerId) {
+    task.phase = "agent_running";
+  } else {
+    task.phase = task.mergedAt !== null ? "checking_closure" : "spawning";
+  }
 }
