@@ -604,21 +604,23 @@ async function relaunchPerpetualPrompt(
     }
   }
 
-  if (prompt.configByStep === null) {
+  const names = await configNames();
+  const current = deps.quickPrompts.get(prompt.id);
+  if (!current?.perpetual || findUnfinishedInstance(deps.store, prompt.id)) return;
+  if (current.configByStep === null) {
     throw new Error("Perpetual quick-prompt has no stored configuration");
   }
-  const missingConfig = findMissingConfig(prompt.configByStep, await configNames());
+  const missingConfig = findMissingConfig(current.configByStep, names);
   if (missingConfig !== null) {
     throw new Error(`${missingConfig}; choose another configuration for this quick-prompt`);
   }
-  if (findUnfinishedInstance(deps.store, prompt.id) || !deps.quickPrompts.get(prompt.id)?.perpetual) return;
 
   const now = deps.now();
   const task = makeNewTask(
-    prompt.repoFullName,
-    prompt.repoSource,
-    prompt.configByStep,
-    { sourceText: prompt.text, quickPromptId: prompt.id },
+    current.repoFullName,
+    current.repoSource,
+    current.configByStep,
+    { sourceText: current.text, quickPromptId: current.id },
     now,
   );
   saveTask(deps, task);
@@ -646,6 +648,7 @@ async function relaunchPerpetualPrompts(
   for (const prompt of deps.quickPrompts.listAll().filter((candidate) => candidate.perpetual)) {
     try {
       await relaunchPerpetualPrompt(deps, prompt, openReviewRequests, configNames);
+      if (deps.quickPrompts.get(prompt.id)?.error) updateQuickPrompt(deps, prompt.id, { error: null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Quick-prompt ${prompt.id}: could not relaunch:`, err);

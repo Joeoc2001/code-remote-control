@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { ConfigSummary, TaskStep } from "../types";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
 
@@ -9,8 +8,8 @@ interface ConfigStepPickerProps {
   onConfigNameChange: (configName: string) => void;
   configByStep: Partial<Record<TaskStep, string>>;
   onConfigByStepChange: (configByStep: Partial<Record<TaskStep, string>>) => void;
-  initiallyCustomised?: boolean;
-  onCustomisedChange?: (customised: boolean) => void;
+  customised: boolean;
+  onCustomisedChange: (customised: boolean) => void;
   label?: string;
 }
 
@@ -28,12 +27,10 @@ export default function ConfigStepPicker({
   onConfigNameChange,
   configByStep,
   onConfigByStepChange,
-  initiallyCustomised = false,
+  customised,
   onCustomisedChange,
   label = "Configuration",
 }: ConfigStepPickerProps) {
-  const [customised, setCustomised] = useState(initiallyCustomised);
-
   return (
     <div>
       <label className="block text-sm font-medium text-slate-300 mb-1">
@@ -52,10 +49,7 @@ export default function ConfigStepPicker({
       </label>
       <button
         type="button"
-        onClick={() => {
-          setCustomised(!customised);
-          onCustomisedChange?.(!customised);
-        }}
+        onClick={() => onCustomisedChange(!customised)}
         className="mt-2 text-xs text-slate-400 hover:text-slate-100"
       >
         {customised ? "▾ Customise per step" : "▸ Customise per step"}

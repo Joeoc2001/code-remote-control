@@ -91,6 +91,7 @@ interface HarnessOptions {
   workItems?: RepoWorkItem[];
   listError?: Error;
   listErrorFor?: string;
+  onListReviewRequests?: (repoFullName: string) => void;
   configFile?: ResolvedConfigFile;
   getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
@@ -126,6 +127,7 @@ function makeHarness(options: HarnessOptions) {
     },
     listReviewRequests: async (repoFullName) => {
       reviewRequestListings.push(repoFullName);
+      options.onListReviewRequests?.(repoFullName);
       if (options.listError) throw options.listError;
       if (options.listErrorFor === repoFullName) throw new Error(`listing ${repoFullName} failed`);
       return options.snapshot ?? [];
@@ -2489,6 +2491,60 @@ describe("scheduler: perpetual quick-prompts", () => {
     assert.deepEqual(instancesOf(harness, broken), []);
     assert.equal(harness.quickPrompts.get(broken.id)?.error, "listing acme/broken failed");
     assert.equal(relaunched(harness, healthy).length, 1);
+  });
+
+  it("clears a recorded error once a later pass succeeds while the PR/MR is still open", async () => {
+    const options: HarnessOptions = {
+      tasks: [],
+      listErrorFor: "acme/widgets",
+      snapshot: [makeReviewRequest({ id: "12" })],
+    };
+    const harness = makeHarness(options);
+    const prompt = addPrompt(harness, { reviewRequestIds: ["12"] });
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(harness.quickPrompts.get(prompt.id)?.error, "listing acme/widgets failed");
+
+    options.listErrorFor = undefined;
+    await runTaskSchedulerTick(harness.deps);
+
+    const stored = harness.quickPrompts.get(prompt.id);
+    assert.equal(stored?.error, null);
+    assert.deepEqual(stored?.reviewRequestIds, ["12"]);
+    assert.deepEqual(harness.promptBroadcasts.at(-1), stored);
+    assert.deepEqual(instancesOf(harness, prompt), []);
+  });
+
+  it("relaunches with the configuration stored while the PR/MR listing was in flight", async () => {
+    const options: HarnessOptions = { tasks: [] };
+    const harness = makeHarness(options);
+    const prompt = addPrompt(harness, {
+      configByStep: { ...CONFIG_BY_STEP, review: "retired" },
+      reviewRequestIds: ["12"],
+    });
+    options.onListReviewRequests = () => {
+      harness.quickPrompts.update(prompt.id, { configByStep: CONFIG_BY_STEP });
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    const [task] = relaunched(harness, prompt);
+    assert.ok(task, "no new instance was created");
+    assert.deepEqual(task.configByStep, CONFIG_BY_STEP);
+    assert.equal(harness.quickPrompts.get(prompt.id)?.error, null);
+  });
+
+  it("does not relaunch when the prompt stops being perpetual while the PR/MR listing is in flight", async () => {
+    const options: HarnessOptions = { tasks: [] };
+    const harness = makeHarness(options);
+    const prompt = addPrompt(harness, { reviewRequestIds: ["12"] });
+    options.onListReviewRequests = () => {
+      harness.quickPrompts.update(prompt.id, { perpetual: false });
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(instancesOf(harness, prompt), []);
   });
 
   it("reuses the tick's open PR/MR listing for a repository instead of fetching it again", async () => {

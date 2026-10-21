@@ -253,6 +253,30 @@ describe("Quick-prompts page", () => {
     }
   });
 
+  test("keeps per-step overrides that arrive from the event stream when saving the configuration", async () => {
+    const stored = makePrompt("a", { text: "Overridden elsewhere", configByStep: ALL_DEFAULT });
+    const { page, backend } = await open([stored]);
+    try {
+      const prompt = row(page, "Overridden elsewhere");
+      await prompt.getByText("Edit configuration").click();
+      assert.equal(await prompt.getByRole("combobox", { name: "Review" }).count(), 0);
+
+      harness.sendEvent("quick-prompt-updated", { ...stored, configByStep: { ...ALL_DEFAULT, review: "big" } });
+      await prompt.getByTestId("stored-config").filter({ hasText: "default (Review: big)" }).waitFor();
+      assert.equal(await prompt.getByRole("combobox", { name: "Review" }).inputValue(), "big");
+
+      await Promise.all([
+        page.waitForResponse((response) => response.request().method() === "PATCH"),
+        prompt.getByRole("button", { name: "Save configuration" }).click(),
+      ]);
+      assert.deepEqual(backend.requests.filter((r) => r.method === "PATCH").map((r) => r.body), [
+        { configName: "default", configByStep: { review: "big" } },
+      ]);
+    } finally {
+      await page.close();
+    }
+  });
+
   test("launches an instance now and shows it as the last task", async () => {
     const { page, backend } = await open([makePrompt("a", { text: "Launch me" })], [
       makeInstance("older", "a", "merged", "2026-01-01T00:00:00.000Z"),

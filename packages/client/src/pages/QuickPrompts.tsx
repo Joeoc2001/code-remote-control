@@ -99,7 +99,9 @@ function QuickPromptRow({
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    setDraft(configDraftFrom(prompt, fallbackConfig));
+    const next = configDraftFrom(prompt, fallbackConfig);
+    setDraft(next);
+    setCustomised(Object.keys(next.configByStep).length > 0);
   }, [storedConfigKey, fallbackConfig]);
 
   const lastInstance = instances[0] ?? null;
@@ -224,7 +226,7 @@ function QuickPromptRow({
             onConfigNameChange={(configName) => setDraft((prev) => ({ ...prev, configName }))}
             configByStep={draft.configByStep}
             onConfigByStepChange={(configByStep) => setDraft((prev) => ({ ...prev, configByStep }))}
-            initiallyCustomised={customised}
+            customised={customised}
             onCustomisedChange={setCustomised}
           />
           <button type="button" onClick={handleSaveConfig} disabled={busy || !draft.configName} className={buttonClass}>

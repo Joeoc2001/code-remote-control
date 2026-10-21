@@ -315,6 +315,7 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
                 onConfigNameChange={setSelectedConfig}
                 configByStep={configByStep}
                 onConfigByStepChange={setConfigByStep}
+                customised={customisePerStep}
                 onCustomisedChange={setCustomisePerStep}
               />
 
