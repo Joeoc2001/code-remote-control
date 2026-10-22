@@ -5,6 +5,7 @@ import {
   buildRebasePrompt,
   buildReviewCommentsPrompt,
   buildReviewRequestPrompt,
+  buildStallPokePrompt,
   buildTaskImplementPrompt,
 } from "@crc/shared/prompts";
 import type {
@@ -29,7 +30,8 @@ import type { QuickPromptPatch, QuickPromptStore } from "./quick-prompt-store.js
 import { completedReviews, decide, NIT_THREAD_REVIEW_LIMIT, type TaskDecision } from "./decide.js";
 
 export const TASK_TICK_INTERVAL_MS = 30_000;
-export const ATTEMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+export const STALL_POKE_INTERVAL_MS = 30 * 60 * 1000;
+export const ATTEMPT_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 export const MAX_CONSECUTIVE_ERRORS = 5;
 export const CLOSURE_GRACE_MS = 2 * 60 * 1000;
 export const MAX_STAGES = 5;
@@ -53,6 +55,7 @@ export interface SchedulerDeps {
   getContainerLogTail(id: string): Promise<string>;
   fetchInstanceStatus(containerName: string): Promise<InstanceStatus>;
   fetchCodeStatus(containerName: string): Promise<ContainerCodeStatus>;
+  pokeAgent(containerId: string, message: string): Promise<void>;
   broadcastTaskUpdated(task: Task): void;
   broadcastQuickPromptUpdated(prompt: QuickPrompt): void;
   now(): Date;
@@ -286,12 +289,27 @@ async function checkWorkItemClosure(deps: SchedulerDeps, forge: Forge, task: Tas
   startNextStage(deps, task, openItem);
 }
 
-function attemptActiveSince(attempt: TaskAttempt, status: InstanceStatus | null): number {
-  const startedAt = Date.parse(attempt.startedAt);
-  if (status === null || status.updatedAt === null) {
-    return startedAt;
-  }
-  return Math.max(startedAt, Date.parse(status.updatedAt));
+function latestTime(...timestamps: Array<string | null>): number {
+  return Math.max(...timestamps.filter((t): t is string => t !== null).map((t) => Date.parse(t)));
+}
+
+function isSettledState(status: InstanceStatus | null): boolean {
+  return status?.state === "waiting" || status?.state === "finished";
+}
+
+function isStalled(attempt: TaskAttempt, status: InstanceStatus | null, now: number): boolean {
+  if (isSettledState(status)) return false;
+  const lastSignOfLife = latestTime(attempt.startedAt, attempt.resumedAt, attempt.lastPokedAt, status?.lastActivityAt ?? status?.updatedAt ?? null);
+  return now - lastSignOfLife >= STALL_POKE_INTERVAL_MS;
+}
+
+function hasOutlivedLifetime(attempt: TaskAttempt, status: InstanceStatus | null, now: number): boolean {
+  if (isSettledState(status)) return false;
+  return now - latestTime(attempt.startedAt, attempt.resumedAt) >= ATTEMPT_MAX_LIFETIME_MS;
+}
+
+function pluralise(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"settle" | "evaluate"> {
@@ -329,20 +347,29 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     status = null;
   }
 
-  const elapsedMs = deps.now().getTime() - attemptActiveSince(attempt, status);
-  if (status?.state !== "waiting" && status?.state !== "finished" && elapsedMs > ATTEMPT_TIMEOUT_MS) {
+  const now = deps.now();
+  if (hasOutlivedLifetime(attempt, status, now.getTime())) {
     try {
       captureContainerLinks(deps, task, attempt, await deps.fetchCodeStatus(container.name));
     } catch (err) {
-      console.error(`Task ${task.id}: could not capture code status before timing out attempt:`, err);
+      console.error(`Task ${task.id}: could not capture code status before failing the stalled attempt:`, err);
     }
     await holdAttempt(
       deps,
       task,
       attemptIndex,
-      `Attempt timed out after ${Math.round(ATTEMPT_TIMEOUT_MS / 60_000)} minutes${HELD_CONTAINER_SUFFIX}`,
+      `Attempt still not finished after ${pluralise(Math.round(ATTEMPT_MAX_LIFETIME_MS / 3_600_000), "hour")} (poked ${pluralise(attempt.pokeCount, "time")})${HELD_CONTAINER_SUFFIX}`,
     );
     return "settle";
+  }
+
+  if (isStalled(attempt, status, now.getTime())) {
+    const pendingTasks = status?.state === "awaiting-background" ? status.pendingTasks ?? [] : null;
+    await deps.pokeAgent(containerId, buildStallPokePrompt(pendingTasks, Math.round(STALL_POKE_INTERVAL_MS / 60_000)));
+    attempt.pokeCount += 1;
+    attempt.lastPokedAt = now.toISOString();
+    clearTaskError(task);
+    saveTask(deps, task);
   }
 
   if (status === null) {
@@ -469,6 +496,9 @@ function recordSpawnedAgent(
     finishedAt: null,
     finishedObservation: null,
     error: null,
+    pokeCount: 0,
+    lastPokedAt: null,
+    resumedAt: null,
   });
   task.attemptsByStep[spawn.step] += 1;
   task.activeContainerId = container.id;

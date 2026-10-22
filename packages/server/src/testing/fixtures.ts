@@ -94,6 +94,9 @@ export function makeAttempt(overrides: Partial<TaskAttempt> = {}): TaskAttempt {
     finishedAt: null,
     finishedObservation: null,
     error: null,
+    pokeCount: 0,
+    lastPokedAt: null,
+    resumedAt: null,
     ...overrides,
   };
 }

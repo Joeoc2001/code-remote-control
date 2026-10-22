@@ -20,10 +20,11 @@ import { TaskStore } from "./store.js";
 import { QuickPromptStore } from "./quick-prompt-store.js";
 import { NIT_THREAD_REVIEW_LIMIT, REVIEW_CYCLE_CAP } from "./decide.js";
 import {
-  ATTEMPT_TIMEOUT_MS,
+  ATTEMPT_MAX_LIFETIME_MS,
   CLOSURE_GRACE_MS,
   MAX_CONSECUTIVE_ERRORS,
   MAX_STAGES,
+  STALL_POKE_INTERVAL_MS,
   runTaskSchedulerTick,
   type SchedulerDeps,
 } from "./scheduler.js";
@@ -32,6 +33,7 @@ import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask 
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
 const RECENT_START = "2026-08-20T11:30:00.000Z";
+const minutesAgo = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000).toISOString();
 const CONTAINER_ID = "c0ffee0000000000";
 const CONTAINER_NAME = "crc-test-c0ffee";
 
@@ -52,6 +54,14 @@ function makeContainer(id: string, name: string, status = "running"): ManagedCon
     subdomain: name,
     createdAt: RECENT_START,
   };
+}
+
+function instanceStatus(
+  state: InstanceStatus["state"],
+  updatedAt: string | null,
+  lastActivityAt: string | null = updatedAt,
+): InstanceStatus {
+  return { state, updatedAt, lastActivityAt };
 }
 
 function makeCodeStatus(
@@ -99,6 +109,7 @@ interface HarnessOptions {
   workItemsError?: Error;
   instanceStatus?: Record<string, InstanceStatus>;
   codeStatus?: Record<string, ContainerCodeStatus>;
+  pokeError?: Error;
   now?: Date;
 }
 
@@ -114,6 +125,7 @@ function makeHarness(options: HarnessOptions) {
   const rebased: string[] = [];
   const diffHashFetches: string[] = [];
   const merged: string[] = [];
+  const pokes: Array<{ containerId: string; message: string }> = [];
   const broadcasts: Task[] = [];
   const containers = new Map(
     [...(options.containers ?? []), ...(options.taskContainers ?? []).map((tc) => tc.container)].map((c) => [c.id, c]),
@@ -183,6 +195,10 @@ function makeHarness(options: HarnessOptions) {
       if (!status) throw new Error(`No code status stubbed for ${name}`);
       return status;
     },
+    pokeAgent: async (containerId, message) => {
+      if (options.pokeError) throw options.pokeError;
+      pokes.push({ containerId, message });
+    },
     broadcastTaskUpdated: (task) => broadcasts.push(structuredClone(task)),
     broadcastQuickPromptUpdated: (prompt) => promptBroadcasts.push(structuredClone(prompt)),
     now: () => options.now ?? NOW,
@@ -196,6 +212,7 @@ function makeHarness(options: HarnessOptions) {
     removed,
     rebased,
     merged,
+    pokes,
     broadcasts,
     promptBroadcasts,
     reviewRequestListings,
@@ -463,7 +480,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: RECENT_START } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", RECENT_START) },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -479,7 +496,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "waiting", updatedAt: RECENT_START } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("waiting", RECENT_START) },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -494,7 +511,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "awaiting-background", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("awaiting-background", NOW.toISOString()) },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -511,7 +528,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -535,7 +552,7 @@ describe("scheduler: watching a running agent", () => {
     const options: HarnessOptions = {
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     };
     const harness = makeHarness(options);
@@ -543,12 +560,12 @@ describe("scheduler: watching a running agent", () => {
     await runTaskSchedulerTick(harness.deps);
     assert.ok(task.attempts[1].finishedObservation);
 
-    options.instanceStatus = { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } };
+    options.instanceStatus = { [CONTAINER_NAME]: instanceStatus("working", NOW.toISOString()) };
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.attempts[1].finishedObservation, null);
     assert.equal(harness.removed.length, 0);
 
-    options.instanceStatus = { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } };
+    options.instanceStatus = { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) };
     await runTaskSchedulerTick(harness.deps);
     assert.equal(harness.removed.length, 0);
 
@@ -561,7 +578,7 @@ describe("scheduler: watching a running agent", () => {
     const options: HarnessOptions = {
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     };
     const harness = makeHarness(options);
@@ -585,7 +602,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: {
         [CONTAINER_NAME]: makeCodeStatus({
           id: "12",
@@ -634,7 +651,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -645,50 +662,241 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(task.lastReviewedDiffHash, "diff-hash-1");
   });
 
-  it("times out a wedged attempt by failing the task but holding its container", async () => {
-    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
-    const task = makeActiveTask({
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
+  function makeLongRunningTask(attempt: Partial<TaskAttempt>, overrides: Partial<Task> = {}): Task {
+    return makeActiveTask({
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, ...attempt })],
       attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+      ...overrides,
     });
+  }
+
+  const PENDING_TASKS = [
+    { id: "bq17zaptz", kind: "shell" as const, label: "Wait for CI" },
+    { id: "agent-a1b", kind: "agent" as const, label: "Review the diff" },
+  ];
+
+  it("pokes an agent that has been awaiting background work for 30 minutes and records the poke", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180) });
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: startedAt } },
+      instanceStatus: {
+        [CONTAINER_NAME]: { ...instanceStatus("awaiting-background", minutesAgo(31)), pendingTasks: PENDING_TASKS },
+      },
     });
 
     await runTaskSchedulerTick(harness.deps);
 
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(harness.pokes[0].containerId, CONTAINER_ID);
+    assert.match(harness.pokes[0].message, /waiting on background work for over 30 minutes/);
+    assert.match(harness.pokes[0].message, /shell "Wait for CI", agent "Review the diff"/);
+    assert.match(harness.pokes[0].message, /TaskStop/);
+    assert.equal(task.attempts[0].pokeCount, 1);
+    assert.equal(task.attempts[0].lastPokedAt, NOW.toISOString());
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.error, null);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(harness.store.get(task.id)?.attempts[0].pokeCount, 1);
+    assert.equal(harness.broadcasts.at(-1)?.attempts[0].pokeCount, 1);
+  });
+
+  it("does not poke an agent that started awaiting background work under 30 minutes ago", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180) });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: {
+        [CONTAINER_NAME]: { ...instanceStatus("awaiting-background", minutesAgo(29)), pendingTasks: PENDING_TASKS },
+      },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.equal(task.attempts[0].pokeCount, 0);
+    assert.equal(task.phase, "agent_running");
+  });
+
+  it("does not poke again until 30 minutes after the last poke", async () => {
+    const lastPokedAt = minutesAgo(29);
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180), pokeCount: 2, lastPokedAt });
+    const options: HarnessOptions = {
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: {
+        [CONTAINER_NAME]: { ...instanceStatus("awaiting-background", minutesAgo(120)), pendingTasks: PENDING_TASKS },
+      },
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.equal(task.attempts[0].pokeCount, 2);
+    assert.equal(task.attempts[0].lastPokedAt, lastPokedAt);
+
+    options.now = new Date(NOW.getTime() + 60_000);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(task.attempts[0].pokeCount, 3);
+    assert.equal(task.attempts[0].lastPokedAt, options.now.toISOString());
+  });
+
+  it("does not poke a busy working agent whose state last changed hours ago", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(23 * 60) });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", minutesAgo(22 * 60), minutesAgo(2)) },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[0].error, null);
+  });
+
+  it("pokes a working agent that has recorded no activity for 30 minutes", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180) });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", minutesAgo(170), minutesAgo(30)) },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.match(harness.pokes[0].message, /No activity has been recorded in this session for over 30 minutes/);
+    assert.match(harness.pokes[0].message, /interrupt it and retry it in the background/);
+    assert.equal(task.attempts[0].pokeCount, 1);
+    assert.equal(task.phase, "agent_running");
+  });
+
+  it("uses the state-change time as the activity of an agent whose metadata server predates the heartbeat", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180) });
+    const legacyStatus = { state: "working", updatedAt: minutesAgo(5) } as InstanceStatus;
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: legacyStatus },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.pokes, []);
+  });
+
+  it("never pokes or fails an agent that is waiting on the user, however long it has been alive", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 60 * 60_000).toISOString();
+    const task = makeLongRunningTask({ startedAt });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("waiting", startedAt) },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[0].finishedAt, null);
+    assert.equal(task.attempts[0].error, null);
+  });
+
+  it("does not poke a freshly started agent whose metadata server is not up yet", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(10) });
+    const harness = makeHarness({ tasks: [task], containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.equal(task.phase, "agent_running");
+  });
+
+  it("fails the task but holds its container once the attempt has been alive for 24 hours", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 60_000).toISOString();
+    const task = makeLongRunningTask({ startedAt, pokeCount: 47, lastPokedAt: minutesAgo(40) });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: {
+        [CONTAINER_NAME]: { ...instanceStatus("awaiting-background", minutesAgo(45)), pendingTasks: PENDING_TASKS },
+      },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.pokes, []);
     assert.deepEqual(harness.removed, []);
     assert.equal(task.phase, "failed");
     assert.equal(task.activeContainerId, CONTAINER_ID);
     assert.equal(task.activeStep, "fix_ci");
     assert.equal(task.attempts[0].finishedAt, null);
-    assert.match(task.attempts[0].error ?? "", /timed out after 120 minutes; its container was kept/);
-    assert.match(task.error ?? "", /timed out after 120 minutes; its container was kept/);
+    assert.match(task.attempts[0].error ?? "", /^Attempt still not finished after 24 hours \(poked 47 times\); its container was kept/);
+    assert.match(task.error ?? "", /^Attempt still not finished after 24 hours \(poked 47 times\); its container was kept/);
     assert.equal(harness.store.readAttemptLog(task.id, 0), "captured log tail");
     assert.equal(harness.created.length, 0);
 
     const broadcastsBefore = harness.broadcasts.length;
     await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.pokes, []);
     assert.deepEqual(harness.removed, []);
     assert.equal(harness.created.length, 0);
     assert.equal(harness.broadcasts.length, broadcastsBefore);
     assert.equal(harness.store.get(task.id)?.phase, "failed");
   });
 
-  it("still records a PR/MR the agent opened right before timing out", async () => {
-    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
-    const task = makeActiveTask({
-      reviewRequest: null,
-      activeStep: "implement",
-      attempts: [makeAttempt({ step: "implement", containerId: CONTAINER_ID, startedAt })],
-      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
-    });
+  it("holds a busy working agent once the attempt has been alive for 24 hours", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS).toISOString();
+    const task = makeLongRunningTask({ startedAt, pokeCount: 1 });
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: startedAt } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", minutesAgo(600), minutesAgo(1)) },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.match(task.error ?? "", /not finished after 24 hours \(poked 1 time\)/);
+  });
+
+  it("does not hold an attempt that is a minute short of 24 hours old", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS + 60_000).toISOString();
+    const task = makeLongRunningTask({ startedAt });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", minutesAgo(600), minutesAgo(1)) },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[0].error, null);
+  });
+
+  it("still records a PR/MR the agent opened right before the 24-hour limit", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 60_000).toISOString();
+    const task = makeLongRunningTask(
+      { step: "implement", startedAt },
+      {
+        reviewRequest: null,
+        activeStep: "implement",
+        attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      },
+    );
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", startedAt) },
       codeStatus: {
         [CONTAINER_NAME]: makeCodeStatus({
           id: "12",
@@ -706,105 +914,133 @@ describe("scheduler: watching a running agent", () => {
     assert.deepEqual(harness.removed, []);
   });
 
-  it("never times out an attempt whose agent is waiting on the user", async () => {
-    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
-    const task = makeActiveTask({
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
-      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
-    });
+  it("counts a failed poke as a task error and holds the container after repeated failures", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180) });
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "waiting", updatedAt: startedAt } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("awaiting-background", minutesAgo(60)) },
+      pokeError: new Error("'tmux send-keys -t' exited with status 1"),
     });
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.equal(harness.removed.length, 0);
-    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.consecutiveErrors, 1);
+    assert.match(task.error ?? "", /tmux send-keys -t' exited with status 1/);
+    assert.equal(task.attempts[0].pokeCount, 0);
+    assert.equal(task.attempts[0].lastPokedAt, null);
     assert.equal(task.phase, "agent_running");
-    assert.equal(task.attempts[0].finishedAt, null);
+
+    for (let tick = 1; tick < MAX_CONSECUTIVE_ERRORS; tick++) {
+      await runTaskSchedulerTick(harness.deps);
+    }
+
+    assert.equal(task.phase, "failed");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.match(task.error ?? "", /Failed after 5 consecutive errors, most recently: 'tmux send-keys -t' exited with status 1; its container was kept/);
+    assert.deepEqual(harness.removed, []);
   });
 
-  it("restarts the timeout clock when the agent resumes working after waiting", async () => {
-    const startedAt = new Date(NOW.getTime() - 3 * 60 * 60 * 1000).toISOString();
-    const resumedAt = new Date(NOW.getTime() - 10 * 60_000).toISOString();
-    const task = makeActiveTask({
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
-      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
-    });
-    const harness = makeHarness({
+  it("clears the task error once a poke succeeds after a failed one", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180) });
+    const options: HarnessOptions = {
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: resumedAt } },
-    });
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("awaiting-background", minutesAgo(60)) },
+      pokeError: new Error("'tmux send-keys -t' exited with status 1"),
+    };
+    const harness = makeHarness(options);
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.equal(harness.removed.length, 0);
-    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.consecutiveErrors, 1);
+    assert.notEqual(task.error, null);
+
+    options.pokeError = undefined;
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(task.attempts[0].pokeCount, 1);
+    assert.equal(task.consecutiveErrors, 0);
+    assert.equal(task.error, null);
+    assert.equal(harness.store.get(task.id)?.consecutiveErrors, 0);
+    assert.equal(harness.store.get(task.id)?.error, null);
     assert.equal(task.phase, "agent_running");
-    assert.equal(task.attempts[0].finishedAt, null);
   });
 
-  it("times out an attempt once the restarted clock expires", async () => {
-    const startedAt = new Date(NOW.getTime() - 3 * 60 * 60 * 1000).toISOString();
-    const resumedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
-    const task = makeActiveTask({
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
-      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
-    });
-    const harness = makeHarness({
-      tasks: [task],
+  it("pokes an agent whose metadata server is unreachable and holds it at 24 hours", async () => {
+    const options: HarnessOptions = {
+      tasks: [makeLongRunningTask({ startedAt: minutesAgo(31) })],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: resumedAt } },
-    });
+    };
+    const harness = makeHarness(options);
+    const task = options.tasks[0];
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(harness.removed, []);
+    assert.equal(harness.pokes.length, 1);
+    assert.match(harness.pokes[0].message, /No activity has been recorded/);
+    assert.equal(task.attempts[0].pokeCount, 1);
+    assert.equal(task.phase, "agent_running");
+
+    options.now = new Date(Date.parse(task.attempts[0].startedAt) + ATTEMPT_MAX_LIFETIME_MS);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.pokes.length, 1);
     assert.equal(task.phase, "failed");
     assert.equal(task.activeContainerId, CONTAINER_ID);
-    assert.match(task.attempts[0].error ?? "", /timed out/);
+    assert.match(task.error ?? "", /not finished after 24 hours \(poked 1 time\); its container was kept/);
   });
 
-  it("times out an attempt whose metadata server is unreachable", async () => {
-    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
-    const task = makeActiveTask({
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
-      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
-    });
-    const harness = makeHarness({
-      tasks: [task],
+  it("pokes an agent that never wrote a status file and holds it at 24 hours", async () => {
+    const options: HarnessOptions = {
+      tasks: [makeLongRunningTask({ startedAt: minutesAgo(31) })],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-    });
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", null) },
+    };
+    const harness = makeHarness(options);
+    const task = options.tasks[0];
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(harness.removed, []);
-    assert.equal(task.phase, "failed");
-    assert.equal(task.activeContainerId, CONTAINER_ID);
-    assert.match(task.attempts[0].error ?? "", /timed out/);
-  });
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(task.attempts[0].pokeCount, 1);
 
-  it("times out an attempt that never wrote a status file", async () => {
-    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
-    const task = makeActiveTask({
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt })],
-      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
-    });
-    const harness = makeHarness({
-      tasks: [task],
-      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: null } },
-    });
-
+    options.now = new Date(Date.parse(task.attempts[0].startedAt) + ATTEMPT_MAX_LIFETIME_MS);
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(harness.removed, []);
     assert.equal(task.phase, "failed");
-    assert.equal(task.activeContainerId, CONTAINER_ID);
-    assert.match(task.attempts[0].error ?? "", /timed out/);
+    assert.match(task.error ?? "", /not finished after 24 hours/);
+  });
+
+  it("keeps poking every 30 minutes until the attempt reaches 24 hours", async () => {
+    const startedAt = NOW.toISOString();
+    const options: HarnessOptions = {
+      tasks: [makeLongRunningTask({ startedAt })],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: {
+        [CONTAINER_NAME]: { ...instanceStatus("awaiting-background", startedAt), pendingTasks: PENDING_TASKS },
+      },
+    };
+    const harness = makeHarness(options);
+    const task = options.tasks[0];
+
+    for (let elapsed = 0; elapsed < ATTEMPT_MAX_LIFETIME_MS; elapsed += 30_000) {
+      options.now = new Date(NOW.getTime() + elapsed);
+      await runTaskSchedulerTick(harness.deps);
+    }
+
+    const expectedPokes = ATTEMPT_MAX_LIFETIME_MS / STALL_POKE_INTERVAL_MS - 1;
+    assert.equal(harness.pokes.length, expectedPokes);
+    assert.equal(task.attempts[0].pokeCount, expectedPokes);
+    assert.equal(task.phase, "agent_running");
+
+    options.now = new Date(NOW.getTime() + ATTEMPT_MAX_LIFETIME_MS);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.pokes.length, expectedPokes);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", new RegExp(`not finished after 24 hours \\(poked ${expectedPokes} times\\)`));
   });
 
   it("records the attempt as failed and re-evaluates when the container vanished", async () => {
@@ -865,7 +1101,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -899,7 +1135,7 @@ describe("scheduler: watching a running agent", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
       snapshot: [makeReviewRequest({ ciState: "pending" })],
     });
@@ -940,7 +1176,7 @@ describe("scheduler: resuming a held attempt", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: {
         [CONTAINER_NAME]: {
           ...makeCodeStatus({ id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" }),
@@ -980,7 +1216,7 @@ describe("scheduler: resuming a held attempt", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -997,14 +1233,14 @@ describe("scheduler: resuming a held attempt", () => {
     assert.equal(harness.created.length, 0);
   });
 
-  it("advances a retried finished agent even when it last changed state longer ago than the timeout", async () => {
-    const startedAt = new Date(NOW.getTime() - 5 * 60 * 60_000).toISOString();
-    const finishedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+  it("advances a retried finished agent even when it started longer ago than the attempt lifetime", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 5 * 60 * 60_000).toISOString();
+    const finishedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 60_000).toISOString();
     const task = makeHeldImplementTask(startedAt);
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: finishedAt } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", finishedAt) },
       codeStatus: {
         [CONTAINER_NAME]: {
           ...makeCodeStatus({ id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" }),
@@ -1031,14 +1267,14 @@ describe("scheduler: resuming a held attempt", () => {
     assert.equal(harness.created[0].spawn.step, "fix_ci");
   });
 
-  it("reports the missing deliverable, not a timeout, when a stale finished agent is retried unchanged", async () => {
-    const startedAt = new Date(NOW.getTime() - 5 * 60 * 60_000).toISOString();
-    const finishedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+  it("reports the missing deliverable, not the lifetime limit, when a stale finished agent is retried unchanged", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 5 * 60 * 60_000).toISOString();
+    const finishedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 60_000).toISOString();
     const task = makeHeldImplementTask(startedAt);
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: finishedAt } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", finishedAt) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -1048,58 +1284,81 @@ describe("scheduler: resuming a held attempt", () => {
 
     assert.equal(task.phase, "failed");
     assert.match(task.error ?? "", /without opening a PR\/MR; its container was kept/);
-    assert.doesNotMatch(task.error ?? "", /timed out/);
+    assert.doesNotMatch(task.error ?? "", /not finished after/);
     assert.equal(task.activeContainerId, CONTAINER_ID);
     assert.deepEqual(harness.removed, []);
     assert.equal(harness.created.length, 0);
   });
 
-  it("holds a timed-out container again when it is retried without the agent changing state", async () => {
-    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
+  it("gives a retried 24-hour attempt a fresh window when its container is kept", async () => {
+    const startedAt = new Date(NOW.getTime() - ATTEMPT_MAX_LIFETIME_MS - 60 * 60_000).toISOString();
+    const heldError = "Attempt still not finished after 24 hours (poked 47 times)";
     const task = makeActiveTask({
       phase: "failed",
-      error: "Attempt timed out",
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt, error: "Attempt timed out" })],
+      error: heldError,
+      attempts: [
+        makeAttempt({
+          step: "fix_ci",
+          containerId: CONTAINER_ID,
+          startedAt,
+          error: heldError,
+          pokeCount: 47,
+          lastPokedAt: minutesAgo(70),
+        }),
+      ],
       attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
     });
-    const harness = makeHarness({
+    const options: HarnessOptions = {
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: startedAt } },
-    });
+      instanceStatus: {
+        [CONTAINER_NAME]: { ...instanceStatus("awaiting-background", minutesAgo(80)), pendingTasks: [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }] },
+      },
+    };
+    const harness = makeHarness(options);
 
     await resumeTask(harness.deps, task, false);
     harness.store.save(task);
-    await runTaskSchedulerTick(harness.deps);
 
-    assert.equal(task.phase, "failed");
-    assert.match(task.error ?? "", /timed out/);
-    assert.equal(task.activeContainerId, CONTAINER_ID);
-    assert.deepEqual(harness.removed, []);
-  });
+    assert.equal(task.attempts[0].resumedAt, NOW.toISOString());
+    assert.equal(task.attempts[0].error, null);
+    assert.equal(task.attempts[0].pokeCount, 47);
 
-  it("keeps watching a retried timed-out agent once prompting it has restarted the clock", async () => {
-    const startedAt = new Date(NOW.getTime() - ATTEMPT_TIMEOUT_MS - 60_000).toISOString();
-    const task = makeActiveTask({
-      phase: "failed",
-      error: "Attempt timed out",
-      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt, error: "Attempt timed out" })],
-      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
-    });
-    const harness = makeHarness({
-      tasks: [task],
-      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
-    });
-
-    await resumeTask(harness.deps, task, false);
-    harness.store.save(task);
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(task.phase, "agent_running");
     assert.equal(task.attempts[0].error, null);
+    assert.deepEqual(harness.pokes, []);
+
+    options.now = new Date(NOW.getTime() + STALL_POKE_INTERVAL_MS);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(task.attempts[0].pokeCount, 48);
+    assert.equal(task.phase, "agent_running");
+
+    options.now = new Date(NOW.getTime() + ATTEMPT_MAX_LIFETIME_MS);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.phase, "failed");
     assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.match(task.error ?? "", /not finished after 24 hours \(poked 48 times\); its container was kept/);
     assert.deepEqual(harness.removed, []);
+  });
+
+  it("does not mark an attempt as resumed when its container is discarded", async () => {
+    const task = makeActiveTask({
+      phase: "failed",
+      error: "Attempt still not finished after 24 hours (poked 47 times)",
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt: minutesAgo(25 * 60) })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 1, rebase: 0, review: 0, address_comments: 0 },
+    });
+    const harness = makeHarness({ tasks: [task], containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)] });
+
+    await resumeTask(harness.deps, task, true);
+
+    assert.equal(task.attempts[0].resumedAt, null);
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
   });
 
   it("removes the kept container on discard, closes the attempt, and spawns a fresh agent next tick", async () => {
@@ -1113,6 +1372,7 @@ describe("scheduler: resuming a held attempt", () => {
     harness.store.save(task);
 
     assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(task.attempts[0].resumedAt, null);
     assert.equal(task.phase, "spawning");
     assert.equal(task.activeContainerId, null);
     assert.equal(task.activeStep, null);
@@ -1199,7 +1459,7 @@ describe("scheduler: text tasks", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null, ISSUE_URL) },
       workItems: [createdIssue],
     });
@@ -1225,7 +1485,7 @@ describe("scheduler: text tasks", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
     });
 
@@ -1248,7 +1508,7 @@ describe("scheduler: text tasks", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: {
         [CONTAINER_NAME]: makeCodeStatus(
           { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
@@ -1514,7 +1774,7 @@ describe("scheduler: re-review after a history rewrite", () => {
       tasks: [task],
       snapshot: [makeReviewRequest({ headSha: "abc123" })],
       diffHash: "diff-hash-1",
-      instanceStatus: { [SPAWNED_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [SPAWNED_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: { [SPAWNED_NAME]: makeCodeStatus(null) },
     };
     const harness = makeHarness(options);
@@ -1559,7 +1819,7 @@ describe("scheduler: recovering agent containers after a restart", () => {
         makeTaskContainer({ taskId: task.id, step: "review", headShaBefore: "abc123", diffHashBefore: "diff-hash-1" }),
       ],
       snapshot: [makeReviewRequest()],
-      instanceStatus: { [ORPHAN_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [ORPHAN_NAME]: instanceStatus("working", NOW.toISOString()) },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -1580,6 +1840,9 @@ describe("scheduler: recovering agent containers after a restart", () => {
       finishedAt: null,
       finishedObservation: null,
       error: null,
+      pokeCount: 0,
+      lastPokedAt: null,
+      resumedAt: null,
     });
     assert.equal(harness.store.list()[0].activeContainerId, ORPHAN_ID);
   });
@@ -1661,7 +1924,7 @@ describe("scheduler: recovering agent containers after a restart", () => {
           spawn: { taskId: task.id, step: "fix_ci", headShaBefore: null, diffHashBefore: null },
         },
       ],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", NOW.toISOString()) },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -1733,7 +1996,7 @@ describe("scheduler: recovering agent containers after a restart", () => {
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
       taskContainers: [makeTaskContainer({ taskId: task.id, step: "fix_ci", headShaBefore: null, diffHashBefore: null })],
-      instanceStatus: { [CONTAINER_NAME]: { state: "working", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", NOW.toISOString()) },
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -1836,7 +2099,7 @@ describe("scheduler: rails", () => {
     const harness = makeHarness({
       tasks: [task],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
     });
 
     for (let i = 0; i < MAX_CONSECUTIVE_ERRORS - 1; i++) {
@@ -2564,7 +2827,7 @@ describe("scheduler: perpetual quick-prompts", () => {
     const harness = makeHarness({
       tasks: [],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: {
         [CONTAINER_NAME]: makeCodeStatus({
           id: "12",
@@ -2596,7 +2859,7 @@ describe("scheduler: perpetual quick-prompts", () => {
     const harness = makeHarness({
       tasks: [makeActiveTask({ reviewRequest: null, quickPromptId: "deleted-prompt" })],
       containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
-      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
       codeStatus: {
         [CONTAINER_NAME]: makeCodeStatus({
           id: "12",

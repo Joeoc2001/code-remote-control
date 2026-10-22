@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { INSTANCE_STATES, instanceStatusPath, writeInstanceStatus } = require("../claude/hooks/instance-status.js");
+const { ACTIVITY_REFRESH_MS, INSTANCE_STATES, instanceStatusPath, writeInstanceStatus } = require("../claude/hooks/instance-status.js");
 
 const HOOK_SCRIPT = path.join(__dirname, "..", "claude", "hooks", "instance-status.js");
 
@@ -40,13 +40,14 @@ describe("instance-status hook", () => {
   });
 
   for (const state of INSTANCE_STATES) {
-    test(`writes { state: "${state}", updatedAt }`, () => {
+    test(`writes { state: "${state}", updatedAt, lastActivityAt }`, () => {
       assert.equal(writeInstanceStatus(state), true);
 
       const status = readStatus();
-      assert.deepEqual(Object.keys(status).sort(), ["state", "updatedAt"]);
+      assert.deepEqual(Object.keys(status).sort(), ["lastActivityAt", "state", "updatedAt"]);
       assert.equal(status.state, state);
       assert.equal(new Date(status.updatedAt).toISOString(), status.updatedAt);
+      assert.equal(status.lastActivityAt, status.updatedAt);
     });
   }
 
@@ -67,11 +68,56 @@ describe("instance-status hook", () => {
     assert.equal(statusInode(), inodeBefore);
   });
 
+  test("refreshes lastActivityAt but keeps updatedAt once the stored activity is stale", () => {
+    const changedAt = "2026-08-30T10:00:00.000Z";
+    const staleActivity = new Date(Date.now() - ACTIVITY_REFRESH_MS - 1_000).toISOString();
+    writeFileSync(statusPath, JSON.stringify({ state: "working", updatedAt: changedAt, lastActivityAt: staleActivity }));
+    const before = Date.now();
+
+    assert.equal(writeInstanceStatus("working"), true);
+
+    const status = readStatus();
+    assert.equal(status.state, "working");
+    assert.equal(status.updatedAt, changedAt);
+    assert.ok(Date.parse(status.lastActivityAt) >= before);
+  });
+
+  test("skips the write while the stored activity is still fresh", () => {
+    const changedAt = "2026-08-30T10:00:00.000Z";
+    const freshActivity = new Date(Date.now() - ACTIVITY_REFRESH_MS + 10_000).toISOString();
+    writeFileSync(statusPath, JSON.stringify({ state: "working", updatedAt: changedAt, lastActivityAt: freshActivity }));
+
+    assert.equal(writeInstanceStatus("working"), false);
+    assert.deepEqual(readStatus(), { state: "working", updatedAt: changedAt, lastActivityAt: freshActivity });
+  });
+
+  test("adds lastActivityAt to a status file written before it existed, keeping updatedAt", () => {
+    const changedAt = "2026-08-30T10:00:00.000Z";
+    writeFileSync(statusPath, JSON.stringify({ state: "awaiting-background", pendingTasks: [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }], updatedAt: changedAt }));
+
+    assert.equal(writeInstanceStatus("awaiting-background", { pendingTasks: [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }] }), true);
+
+    const status = readStatus();
+    assert.equal(status.updatedAt, changedAt);
+    assert.equal(typeof status.lastActivityAt, "string");
+    assert.deepEqual(status.pendingTasks, [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }]);
+  });
+
+  test("moves updatedAt forward when the state changes", () => {
+    writeFileSync(statusPath, JSON.stringify({ state: "awaiting-background", updatedAt: "2026-08-30T10:00:00.000Z", lastActivityAt: "2026-08-30T10:00:00.000Z" }));
+
+    assert.equal(writeInstanceStatus("working"), true);
+
+    const status = readStatus();
+    assert.notEqual(status.updatedAt, "2026-08-30T10:00:00.000Z");
+    assert.equal(status.updatedAt, status.lastActivityAt);
+  });
+
   test("records which background tasks the agent is waiting on", () => {
     assert.equal(writeInstanceStatus("awaiting-background", { pendingTasks: [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }, { id: "agent-a1b", kind: "agent", label: "Review the diff" }] }), true);
 
     const status = readStatus();
-    assert.deepEqual(Object.keys(status).sort(), ["pendingTasks", "state", "updatedAt"]);
+    assert.deepEqual(Object.keys(status).sort(), ["lastActivityAt", "pendingTasks", "state", "updatedAt"]);
     assert.deepEqual(status.pendingTasks, [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }, { id: "agent-a1b", kind: "agent", label: "Review the diff" }]);
   });
 
@@ -94,7 +140,7 @@ describe("instance-status hook", () => {
     writeInstanceStatus("awaiting-background", { pendingTasks: [{ id: "bq17zaptz", kind: "shell", label: "Wait for CI" }] });
 
     assert.equal(writeInstanceStatus("finished"), true);
-    assert.deepEqual(Object.keys(readStatus()).sort(), ["state", "updatedAt"]);
+    assert.deepEqual(Object.keys(readStatus()).sort(), ["lastActivityAt", "state", "updatedAt"]);
   });
 
   test("rewrites the file atomically when the state changes", () => {

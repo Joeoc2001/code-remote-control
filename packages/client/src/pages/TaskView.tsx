@@ -29,6 +29,26 @@ function formatDuration(startedAt: string, finishedAt: string): string {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
+function formatTimeAgo(value: string, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - Date.parse(value)) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m ago`;
+}
+
+function PokeSummary({ attempt }: { attempt: TaskAttempt }) {
+  if (attempt.pokeCount === 0 || attempt.lastPokedAt === null) return null;
+  return (
+    <span
+      className="text-xs text-amber-300/90"
+      title={`Nudged by the scheduler after it stalled; last poke ${formatTimestamp(attempt.lastPokedAt)}`}
+    >
+      Poked {attempt.pokeCount}× · last {formatTimeAgo(attempt.lastPokedAt, Date.now())}
+    </span>
+  );
+}
+
 interface AttemptRowProps {
   taskId: string;
   attempt: TaskAttempt;
@@ -92,6 +112,7 @@ function AttemptRow({ taskId, attempt, index, isActive, activeContainerId }: Att
           {formatTimestamp(attempt.startedAt)}
           {attempt.finishedAt && ` · ${formatDuration(attempt.startedAt, attempt.finishedAt)}`}
         </span>
+        <PokeSummary attempt={attempt} />
         <div className="ml-auto flex items-center gap-2">
           {isActive && activeContainerId && (
             <Link

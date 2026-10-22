@@ -35,7 +35,7 @@ export async function readInstanceStatus(): Promise<InstanceStatus> {
     raw = await readFile(path, "utf-8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { state: "working", updatedAt: null };
+      return { state: "working", updatedAt: null, lastActivityAt: null };
     }
     throw error;
   }
@@ -47,10 +47,14 @@ export async function readInstanceStatus(): Promise<InstanceStatus> {
   if (parsed.pendingTasks !== undefined && !isPendingTaskList(parsed.pendingTasks)) {
     throw new Error(`Instance status file ${path} has a malformed pendingTasks list`);
   }
+  if (parsed.lastActivityAt !== undefined && typeof parsed.lastActivityAt !== "string") {
+    throw new Error(`Instance status file ${path} has a malformed lastActivityAt`);
+  }
 
   return {
     state: parsed.state,
     ...(parsed.pendingTasks === undefined ? {} : { pendingTasks: parsed.pendingTasks }),
     updatedAt: parsed.updatedAt,
+    lastActivityAt: parsed.lastActivityAt ?? parsed.updatedAt,
   };
 }

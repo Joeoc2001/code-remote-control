@@ -31,7 +31,7 @@ describe("container metadata server: instance status", () => {
   });
 
   test("reports working when no hook has run yet", async () => {
-    assert.deepEqual(await readInstanceStatus(), { state: "working", updatedAt: null });
+    assert.deepEqual(await readInstanceStatus(), { state: "working", updatedAt: null, lastActivityAt: null });
   });
 
   for (const state of ["working", "waiting", "awaiting-background", "finished"] as const) {
@@ -73,6 +73,36 @@ describe("container metadata server: instance status", () => {
       await assert.rejects(readInstanceStatus(), /malformed pendingTasks/);
     });
   }
+
+  test("round-trips the activity heartbeat separately from the state-change time", async () => {
+    writeFileSync(statusPath, JSON.stringify({ state: "working", updatedAt: "2026-08-30T10:00:00.000Z", lastActivityAt: "2026-08-30T12:30:00.000Z" }));
+
+    assert.deepEqual(await readInstanceStatus(), {
+      state: "working",
+      updatedAt: "2026-08-30T10:00:00.000Z",
+      lastActivityAt: "2026-08-30T12:30:00.000Z",
+    });
+  });
+
+  test("falls back to updatedAt for a status file written before the heartbeat existed", async () => {
+    writeFileSync(statusPath, JSON.stringify({ state: "working", updatedAt: "2026-08-30T10:00:00.000Z" }));
+
+    assert.equal((await readInstanceStatus()).lastActivityAt, "2026-08-30T10:00:00.000Z");
+  });
+
+  test("reports the hook's heartbeat", async () => {
+    writeInstanceStatus("working");
+
+    const status = await readInstanceStatus();
+    assert.equal(typeof status.lastActivityAt, "string");
+    assert.equal(status.lastActivityAt, status.updatedAt);
+  });
+
+  test("fails loudly on a heartbeat that is not a timestamp string", async () => {
+    writeFileSync(statusPath, JSON.stringify({ state: "working", updatedAt: "2026-08-30T10:00:00.000Z", lastActivityAt: 12 }));
+
+    await assert.rejects(readInstanceStatus(), /malformed lastActivityAt/);
+  });
 
   test("fails loudly on a state it does not know", async () => {
     writeFileSync(statusPath, JSON.stringify({ state: "confused", updatedAt: "2026-08-30T10:00:00.000Z" }));
