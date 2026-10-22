@@ -941,6 +941,33 @@ describe("scheduler: watching a running agent", () => {
     assert.deepEqual(harness.removed, []);
   });
 
+  it("clears the task error once a poke succeeds after a failed one", async () => {
+    const task = makeLongRunningTask({ startedAt: minutesAgo(180) });
+    const options: HarnessOptions = {
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("awaiting-background", minutesAgo(60)) },
+      pokeError: new Error("'tmux send-keys -t' exited with status 1"),
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.consecutiveErrors, 1);
+    assert.notEqual(task.error, null);
+
+    options.pokeError = undefined;
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(task.attempts[0].pokeCount, 1);
+    assert.equal(task.consecutiveErrors, 0);
+    assert.equal(task.error, null);
+    assert.equal(harness.store.get(task.id)?.consecutiveErrors, 0);
+    assert.equal(harness.store.get(task.id)?.error, null);
+    assert.equal(task.phase, "agent_running");
+  });
+
   it("pokes an agent whose metadata server is unreachable and holds it at 24 hours", async () => {
     const options: HarnessOptions = {
       tasks: [makeLongRunningTask({ startedAt: minutesAgo(31) })],

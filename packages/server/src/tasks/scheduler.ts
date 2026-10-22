@@ -368,6 +368,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     await deps.pokeAgent(containerId, buildStallPokePrompt(pendingTasks, Math.round(STALL_POKE_INTERVAL_MS / 60_000)));
     attempt.pokeCount += 1;
     attempt.lastPokedAt = now.toISOString();
+    clearTaskError(task);
     saveTask(deps, task);
   }
 
