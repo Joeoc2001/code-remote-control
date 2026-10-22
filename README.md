@@ -111,9 +111,20 @@ by the container metadata server on `/api/instance-status`, proxied by the app o
 Working/Waiting/Waiting-on-shells/Waiting-on-agents/Finished badge in the UI
 ("Waiting on background tasks" when both kinds are outstanding).
 
+Alongside `updatedAt` (the time the state last changed, which the badge and card
+ordering use), the status file carries a `lastActivityAt` heartbeat. Every hook
+invocation (each prompt and each completed tool call) refreshes it, but while
+the state is unchanged the hook rewrites the file at most once a minute and
+keeps the original `updatedAt`. Files written by older hooks without
+`lastActivityAt` fall back to `updatedAt`.
+
 Known limitation: interrupting a turn from the terminal (Esc) fires no hook, so the
 badge keeps reading "Working" until the next stop or session end. The badge tooltip
 shows when the state last changed, which makes a stale "Working" recognisable.
+
+When a task's agent stalls, the server pokes it by typing a one-line prompt into
+the container's tmux session (named by `CRC_TMUX_SESSION`, which the server passes
+to the container) with `docker exec tmux send-keys`, followed by Enter.
 
 The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
 
@@ -264,26 +275,30 @@ The task detail page shows the full attempt timeline with the captured logs.
 
 Safety rails: fix-CI and rebase each spawn at most 3 times, an implement agent
 that ends without opening a PR/MR is never retried automatically, and a task
-spawns at most 12 agents in total before failing; a wedged attempt is held
-2 hours after the agent last changed state (an interrupted agent can otherwise
-report "working" forever — see the known limitation above), but never while it
-reports "waiting", so an agent parked on a question survives until someone
-answers and the clock restarts once it does; repeated forge errors fail the
-task; paused tasks are never evaluated; and each work item can have only one
-live task.
+spawns at most 12 agents in total before failing; a stalled attempt is poked
+every 30 minutes, where stalled means it is not `waiting` or `finished` and none
+of its start, resume, last poke or `lastActivityAt` heartbeat is less than 30
+minutes old (this covers `awaiting-background` agents, silently hung `working`
+agents, and unreachable metadata servers); an attempt is held once 24 hours have
+passed since it started or was resumed, however often it has been poked; an
+agent reporting `waiting` is never poked or held, so an agent parked on a
+question survives until someone answers; repeated errors (forge errors, or five
+back-to-back poke failures) fail the task; paused tasks are never evaluated; and
+each work item can have only one live task.
 
-When an attempt times out, finishes without its deliverable (an implement agent
-that never opened a PR/MR, or an issue-creating agent that never reported an
-issue URL), or its task fails on repeated errors, the task fails but the agent
-container is **held** rather than removed: it stays the task's active container,
-its log tail is captured, and the attempt shows as *Held* with a Terminal link
-so you can inspect the agent or prompt it to continue by hand. A held task
-offers two retries: **Retry with same agent** puts the container back under the
-scheduler's watch (if the agent has since opened its PR/MR the task advances; if
-nothing changed it is held again on the next tick), and **Discard & retry**
-removes the container and spawns a fresh agent. Held containers keep running
-and consuming resources until the task is retried with discard, deleted, or the
-container is removed by hand from the Home grid.
+When an attempt is still unfinished after 24 hours, finishes without its
+deliverable (an implement agent that never opened a PR/MR, or an issue-creating
+agent that never reported an issue URL), or its task fails on repeated errors,
+the task fails but the agent container is **held** rather than removed: it stays
+the task's active container, its log tail is captured, and the attempt shows as
+*Held* with a Terminal link so you can inspect the agent or prompt it to
+continue by hand. A held task offers two retries: **Retry with same agent** puts
+the container back under the scheduler's watch with a fresh 24-hour window and a
+30-minute grace period before its next poke (if the agent has since opened its
+PR/MR the task advances), and **Discard & retry** removes the container and
+spawns a fresh agent. Held containers keep running and consuming resources until
+the task is retried with discard, deleted, or the container is removed by hand
+from the Home grid.
 
 ## Authentication
 
