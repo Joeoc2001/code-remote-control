@@ -11,10 +11,11 @@ import {
   fetchQuickPrompts,
   createQuickPrompt,
   deleteQuickPrompt,
+  launchQuickPrompt,
 } from "../api";
 import RepoPicker, { type RepoEntry } from "./RepoPicker";
 import ProseTextArea from "./ProseTextArea";
-import { TASK_STEP_LABELS } from "./taskStepLabels";
+import ConfigStepPicker, { pickConfigOverrides } from "./ConfigStepPicker";
 
 interface NewTaskModalProps {
   onClose: () => void;
@@ -49,10 +50,7 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
   const usesTextPipeline = mode !== "work_items";
   const selectedQuickPrompt = quickPrompts?.find((prompt) => prompt.id === selectedQuickPromptId) ?? null;
   const stepsForMode = usesTextPipeline ? TASK_STEPS : TASK_STEPS.filter((step) => step !== "create_issue");
-  const configByStepForMode = () =>
-    customisePerStep
-      ? Object.fromEntries(stepsForMode.flatMap((step) => (configByStep[step] ? [[step, configByStep[step]]] : [])))
-      : undefined;
+  const configByStepForMode = () => (customisePerStep ? pickConfigOverrides(stepsForMode, configByStep) : undefined);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -185,18 +183,12 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
     }
   };
 
-  const submitText = async (text: string) => {
+  const submitTask = async (create: () => Promise<Task>) => {
     if (!selectedConfig || !selectedRepo) return;
     setWorking(true);
     setError(null);
     try {
-      const task = await createTaskFromText({
-        repoFullName: selectedRepo.fullName,
-        repoSource: selectedRepo.source,
-        text,
-        configName: selectedConfig,
-        configByStep: configByStepForMode(),
-      });
+      const task = await create();
       onCreated([task]);
       onClose();
     } catch (err) {
@@ -212,7 +204,16 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
       setError("Paste a description of the work first");
       return;
     }
-    await submitText(text);
+    if (!selectedRepo) return;
+    await submitTask(() =>
+      createTaskFromText({
+        repoFullName: selectedRepo.fullName,
+        repoSource: selectedRepo.source,
+        text,
+        configName: selectedConfig,
+        configByStep: configByStepForMode(),
+      }),
+    );
   };
 
   const handleCreateFromQuickPrompt = async () => {
@@ -220,7 +221,12 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
       setError("Select a quick-prompt first");
       return;
     }
-    await submitText(selectedQuickPrompt.text);
+    await submitTask(() =>
+      launchQuickPrompt(selectedQuickPrompt.id, {
+        configName: selectedConfig,
+        configByStep: configByStepForMode(),
+      }),
+    );
   };
 
   const saveQuickPrompt = async (text: string): Promise<QuickPrompt | null> => {
@@ -256,7 +262,7 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
     setWorking(true);
     setError(null);
     try {
-      await deleteQuickPrompt(id, selectedRepo.fullName, selectedRepo.source);
+      await deleteQuickPrompt(id);
       setQuickPrompts((prompts) => (prompts ? prompts.filter((prompt) => prompt.id !== id) : prompts));
       setSelectedQuickPromptId((selected) => (selected === id ? null : selected));
     } catch (err) {
@@ -302,51 +308,16 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
             </div>
           ) : (
             <>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1">
-                  Configuration
-                </label>
-                <select
-                  value={selectedConfig}
-                  onChange={(e) => setSelectedConfig(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
-                >
-                  {configs.map((c) => (
-                    <option key={c.name} value={c.name}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => setCustomisePerStep((value) => !value)}
-                  className="mt-2 text-xs text-slate-400 hover:text-slate-100"
-                >
-                  {customisePerStep ? "▾ Customise per step" : "▸ Customise per step"}
-                </button>
-                {customisePerStep && (
-                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 border border-slate-700 rounded-lg p-3">
-                    {stepsForMode.map((step) => (
-                      <label key={step} className="text-xs text-slate-400">
-                        {TASK_STEP_LABELS[step]}
-                        <select
-                          value={configByStep[step] ?? selectedConfig}
-                          onChange={(e) =>
-                            setConfigByStep((prev) => ({ ...prev, [step]: e.target.value }))
-                          }
-                          className="mt-1 w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-2 py-1.5 text-sm"
-                        >
-                          {configs.map((c) => (
-                            <option key={c.name} value={c.name}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <ConfigStepPicker
+                configs={configs}
+                steps={stepsForMode}
+                configName={selectedConfig}
+                onConfigNameChange={setSelectedConfig}
+                configByStep={configByStep}
+                onConfigByStepChange={setConfigByStep}
+                customised={customisePerStep}
+                onCustomisedChange={setCustomisePerStep}
+              />
 
               <RepoPicker
                 repos={repos}
@@ -428,6 +399,14 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
                               />
                               <span className="break-words whitespace-pre-wrap min-w-0">{prompt.text}</span>
                             </label>
+                            {prompt.perpetual && (
+                              <span
+                                title="Relaunches itself whenever its last task finishes"
+                                className="shrink-0 text-[10px] uppercase tracking-wide text-indigo-200 border border-indigo-500/50 rounded px-1.5 py-0.5"
+                              >
+                                Perpetual
+                              </span>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleRemoveQuickPrompt(prompt.id)}

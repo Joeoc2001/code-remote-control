@@ -4,6 +4,7 @@ import ContainerLogs from "./pages/ContainerLogs";
 import ContainerView from "./pages/ContainerView";
 import Tasks from "./pages/Tasks";
 import TaskView from "./pages/TaskView";
+import QuickPrompts from "./pages/QuickPrompts";
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/view/:id" element={<ContainerView />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/tasks/:id" element={<TaskView />} />
+        <Route path="/quick-prompts" element={<QuickPrompts />} />
       </Routes>
     </BrowserRouter>
   );

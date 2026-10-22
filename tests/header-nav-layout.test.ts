@@ -15,11 +15,13 @@ const ROUTES = [
   { path: "/", name: "Containers page" },
   { path: "/tasks", name: "Tasks page" },
   { path: "/tasks/task-1", name: "Task detail page" },
+  { path: "/quick-prompts", name: "Quick-prompts page" },
 ];
 
 const EXPECTED_SEGMENTS = [
   { label: "Containers", href: "/" },
   { label: "Tasks", href: "/tasks" },
+  { label: "Quick-prompts", href: "/quick-prompts" },
 ];
 
 interface Box {
@@ -173,7 +175,7 @@ describe("header nav layout", () => {
     }
   }
 
-  test("the phone-width nav navigates between Containers and Tasks when tapped at its own coordinates", async () => {
+  test("the phone-width nav navigates between every segment when tapped at its own coordinates", async () => {
     const page = await harness.browser.newPage({
       viewport: { width: 390, height: 844 },
       hasTouch: true,
@@ -184,6 +186,7 @@ describe("header nav layout", () => {
 
       for (const step of [
         { label: "Tasks", expectedPath: "/tasks" },
+        { label: "Quick-prompts", expectedPath: "/quick-prompts" },
         { label: "Containers", expectedPath: "/" },
       ]) {
         await page.locator("header nav").getByRole("link", { name: step.label, exact: true }).waitFor();
@@ -218,6 +221,9 @@ describe("header nav layout", () => {
 
       await page.goto(`${harness.origin}/tasks/task-1`, { waitUntil: "networkidle" });
       assert.equal(await currentSegment(), "Tasks");
+
+      await page.goto(`${harness.origin}/quick-prompts`, { waitUntil: "networkidle" });
+      assert.equal(await currentSegment(), "Quick-prompts");
     } finally {
       await page.close();
     }

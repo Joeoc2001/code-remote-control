@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
 import type {
   ManagedContainer,
+  QuickPrompt,
   RepoReviewRequest,
   RepoWorkItem,
   ResolvedConfigFile,
@@ -16,6 +17,7 @@ import type {
 } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import { TaskStore } from "./store.js";
+import { QuickPromptStore } from "./quick-prompt-store.js";
 import { NIT_THREAD_REVIEW_LIMIT, REVIEW_CYCLE_CAP } from "./decide.js";
 import {
   ATTEMPT_TIMEOUT_MS,
@@ -88,6 +90,9 @@ interface HarnessOptions {
   snapshot?: RepoReviewRequest[];
   workItems?: RepoWorkItem[];
   listError?: Error;
+  listErrorFor?: string;
+  onListReviewRequests?: (repoFullName: string) => void;
+  configFile?: ResolvedConfigFile;
   getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
   diffHash?: string | null;
@@ -100,6 +105,9 @@ interface HarnessOptions {
 function makeHarness(options: HarnessOptions) {
   const store = new TaskStore(mkdtempSync(join(tmpdir(), "crc-scheduler-")));
   for (const task of options.tasks) store.save(task);
+  const quickPrompts = new QuickPromptStore(mkdtempSync(join(tmpdir(), "crc-scheduler-prompts-")));
+  const promptBroadcasts: QuickPrompt[] = [];
+  const reviewRequestListings: string[] = [];
 
   const created: Array<{ configName: string; repoFullName: string; prompt: string; spawn: TaskSpawn }> = [];
   const removed: string[] = [];
@@ -117,8 +125,11 @@ function makeHarness(options: HarnessOptions) {
       if (options.workItemsError) throw options.workItemsError;
       return options.workItems ?? [];
     },
-    listReviewRequests: async () => {
+    listReviewRequests: async (repoFullName) => {
+      reviewRequestListings.push(repoFullName);
+      options.onListReviewRequests?.(repoFullName);
       if (options.listError) throw options.listError;
+      if (options.listErrorFor === repoFullName) throw new Error(`listing ${repoFullName} failed`);
       return options.snapshot ?? [];
     },
     getReviewRequest:
@@ -140,8 +151,9 @@ function makeHarness(options: HarnessOptions) {
 
   const deps: SchedulerDeps = {
     store,
+    quickPrompts,
     getForge: () => forge,
-    loadConfigurations: async () => CONFIG_FILE,
+    loadConfigurations: async () => options.configFile ?? CONFIG_FILE,
     getContainer: async (id) => {
       if (options.getContainerError) throw options.getContainerError;
       return containers.get(id) ?? null;
@@ -172,10 +184,23 @@ function makeHarness(options: HarnessOptions) {
       return status;
     },
     broadcastTaskUpdated: (task) => broadcasts.push(structuredClone(task)),
+    broadcastQuickPromptUpdated: (prompt) => promptBroadcasts.push(structuredClone(prompt)),
     now: () => options.now ?? NOW,
   };
 
-  return { deps, store, created, removed, rebased, merged, broadcasts, diffHashFetches };
+  return {
+    deps,
+    store,
+    quickPrompts,
+    created,
+    removed,
+    rebased,
+    merged,
+    broadcasts,
+    promptBroadcasts,
+    reviewRequestListings,
+    diffHashFetches,
+  };
 }
 
 function makeActiveTask(overrides: Partial<Task> = {}): Task {
@@ -2228,5 +2253,365 @@ describe("scheduler: multi-stage tasks", () => {
 
     assert.equal(task.phase, "spawning");
     assert.equal(task.workItem?.url, "http://GitHub.com/acme/widgets/issues/7/");
+  });
+});
+
+describe("scheduler: perpetual quick-prompts", () => {
+  const PROMPT_TEXT = "Keep the dependencies up to date";
+  const CONFIG_BY_STEP = makeTask().configByStep;
+  const MERGED_AT = "2026-08-20T11:00:00.000Z";
+
+  type Harness = ReturnType<typeof makeHarness>;
+
+  function addPrompt(harness: Harness, overrides: Partial<QuickPrompt> = {}): QuickPrompt {
+    const prompt = harness.quickPrompts.add("github", "acme/widgets", PROMPT_TEXT);
+    return harness.quickPrompts.update(prompt.id, { perpetual: true, configByStep: CONFIG_BY_STEP, ...overrides })!;
+  }
+
+  function saveInstance(harness: Harness, prompt: QuickPrompt, overrides: Partial<Task> = {}): Task {
+    const task = makeLinkedTask({
+      id: `instance-${harness.store.list().length + 1}`,
+      sourceText: PROMPT_TEXT,
+      quickPromptId: prompt.id,
+      phase: "merged",
+      mergedAt: MERGED_AT,
+      ...overrides,
+    });
+    harness.store.save(task);
+    return task;
+  }
+
+  function instancesOf(harness: Harness, prompt: QuickPrompt): Task[] {
+    return harness.store.list().filter((task) => task.quickPromptId === prompt.id);
+  }
+
+  function relaunched(harness: Harness, prompt: QuickPrompt): Task[] {
+    return instancesOf(harness, prompt).filter((task) => task.phase !== "merged");
+  }
+
+  it("relaunches a perpetual prompt as a brand-new task once its last instance has merged", async () => {
+    const harness = makeHarness({ tasks: [] });
+    const prompt = addPrompt(harness, { reviewRequestIds: ["12"] });
+    const previous = saveInstance(harness, prompt);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    const [task] = relaunched(harness, prompt);
+    assert.ok(task, "no new instance was created");
+    assert.notEqual(task.id, previous.id);
+    assert.equal(task.phase, "spawning");
+    assert.equal(task.sourceText, PROMPT_TEXT);
+    assert.equal(task.workItem, null);
+    assert.equal(task.reviewRequest, null);
+    assert.deepEqual(task.completedStages, []);
+    assert.deepEqual(task.attempts, []);
+    assert.equal(task.repoSource, "github");
+    assert.equal(task.repoFullName, "acme/widgets");
+    assert.deepEqual(task.configByStep, CONFIG_BY_STEP);
+    assert.equal(task.createdAt, NOW.toISOString());
+    assert.equal(harness.store.get(previous.id)?.phase, "merged");
+    assert.ok(harness.broadcasts.some((broadcast) => broadcast.id === task.id));
+
+    const stored = harness.quickPrompts.get(prompt.id);
+    assert.equal(stored?.lastLaunchedAt, NOW.toISOString());
+    assert.deepEqual(stored?.reviewRequestIds, []);
+    assert.equal(stored?.error, null);
+    assert.deepEqual(harness.promptBroadcasts.at(-1), stored);
+    assert.equal(harness.created.length, 0);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.created[0].spawn.taskId, task.id);
+    assert.equal(harness.created[0].spawn.step, "create_issue");
+    assert.match(harness.created[0].prompt, new RegExp(PROMPT_TEXT));
+  });
+
+  it("relaunches on the tick in which the last instance's issue closes after every stage", async () => {
+    const harness = makeHarness({ tasks: [], workItems: [] });
+    const prompt = addPrompt(harness, { reviewRequestIds: ["11", "12"] });
+    const instance = saveInstance(harness, prompt, {
+      phase: "checking_closure",
+      mergedAt: "2026-08-20T11:59:00.000Z",
+      completedStages: [
+        {
+          reviewRequest: { id: "11", url: "https://github.com/acme/widgets/pull/11", sourceBranch: "first" },
+          startedAt: "2026-08-20T10:00:00.000Z",
+          mergedAt: "2026-08-20T10:30:00.000Z",
+          firstAttemptIndex: 0,
+          attemptCount: 0,
+        },
+      ],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.store.get(instance.id)?.phase, "merged");
+    assert.equal(relaunched(harness, prompt).length, 1);
+    assert.deepEqual(harness.reviewRequestListings, ["acme/widgets"]);
+  });
+
+  for (const { label, overrides } of [
+    { label: "checking issue closure", overrides: { phase: "checking_closure", mergedAt: "2026-08-20T11:59:00.000Z" } },
+    {
+      label: "spawning a further stage",
+      overrides: {
+        phase: "spawning",
+        reviewRequest: null,
+        mergedAt: null,
+        completedStages: [
+          {
+            reviewRequest: { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+            startedAt: "2026-08-20T10:00:00.000Z",
+            mergedAt: MERGED_AT,
+            firstAttemptIndex: 0,
+            attemptCount: 0,
+          },
+        ],
+      },
+    },
+    { label: "paused", overrides: { phase: "paused" } },
+    { label: "failed", overrides: { phase: "failed", error: "Something broke" } },
+  ] satisfies Array<{ label: string; overrides: Partial<Task> }>) {
+    it(`does not relaunch while the last instance is ${label}`, async () => {
+      const harness = makeHarness({ tasks: [], workItems: [makeTask().workItem!] });
+      const prompt = addPrompt(harness);
+      saveInstance(harness, prompt);
+      const live = saveInstance(harness, prompt, overrides);
+
+      await runTaskSchedulerTick(harness.deps);
+      await runTaskSchedulerTick(harness.deps);
+
+      assert.deepEqual(
+        instancesOf(harness, prompt).map((task) => task.id).sort(),
+        ["instance-1", live.id].sort(),
+      );
+      assert.equal(harness.quickPrompts.get(prompt.id)?.lastLaunchedAt, null);
+    });
+  }
+
+  it("does not relaunch while a PR/MR opened from the prompt is still open, even after its task was deleted", async () => {
+    const options: HarnessOptions = { tasks: [], snapshot: [makeReviewRequest({ id: "12" })] };
+    const harness = makeHarness(options);
+    const prompt = addPrompt(harness, { reviewRequestIds: ["12"] });
+    const failed = saveInstance(harness, prompt, { phase: "failed" });
+    harness.store.remove(failed.id);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(instancesOf(harness, prompt), []);
+    assert.deepEqual(harness.quickPrompts.get(prompt.id)?.reviewRequestIds, ["12"]);
+    assert.equal(harness.promptBroadcasts.length, 0);
+
+    options.snapshot = [];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(relaunched(harness, prompt).length, 1);
+    assert.deepEqual(harness.quickPrompts.get(prompt.id)?.reviewRequestIds, []);
+  });
+
+  it("prunes tracked PR/MR ids that are no longer open while another one still blocks the relaunch", async () => {
+    const harness = makeHarness({ tasks: [], snapshot: [makeReviewRequest({ id: "13" })] });
+    const prompt = addPrompt(harness, { reviewRequestIds: ["11", "13"] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(instancesOf(harness, prompt), []);
+    assert.deepEqual(harness.quickPrompts.get(prompt.id)?.reviewRequestIds, ["13"]);
+    assert.deepEqual(harness.promptBroadcasts.at(-1)?.reviewRequestIds, ["13"]);
+  });
+
+  it("launches the first instance of a newly perpetual prompt that has no tasks", async () => {
+    const harness = makeHarness({ tasks: [] });
+    const prompt = addPrompt(harness);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(relaunched(harness, prompt).length, 1);
+    assert.deepEqual(harness.reviewRequestListings, []);
+  });
+
+  it("creates exactly one instance per prompt however many ticks run", async () => {
+    const harness = makeHarness({ tasks: [] });
+    const first = addPrompt(harness);
+    const second = harness.quickPrompts.update(harness.quickPrompts.add("github", "acme/widgets", "Other").id, {
+      perpetual: true,
+      configByStep: CONFIG_BY_STEP,
+    })!;
+
+    for (let tick = 0; tick < 3; tick += 1) await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(instancesOf(harness, first).length, 1);
+    assert.equal(instancesOf(harness, second).length, 1);
+  });
+
+  it("never relaunches a prompt that is not perpetual", async () => {
+    const harness = makeHarness({ tasks: [] });
+    const prompt = addPrompt(harness, { perpetual: false });
+    saveInstance(harness, prompt);
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(relaunched(harness, prompt).length, 0);
+  });
+
+  it("records an error instead of relaunching when a stored configuration no longer exists", async () => {
+    const harness = makeHarness({ tasks: [] });
+    const prompt = addPrompt(harness, { configByStep: { ...CONFIG_BY_STEP, review: "retired" } });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(instancesOf(harness, prompt), []);
+    const stored = harness.quickPrompts.get(prompt.id);
+    assert.match(stored?.error ?? "", /Configuration 'retired' for step 'review' not found/);
+    assert.equal(stored?.lastLaunchedAt, null);
+    assert.equal(harness.promptBroadcasts.length, 1);
+    assert.deepEqual(harness.promptBroadcasts[0], stored);
+
+    harness.quickPrompts.update(prompt.id, { configByStep: CONFIG_BY_STEP });
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(relaunched(harness, prompt).length, 1);
+    assert.equal(harness.quickPrompts.get(prompt.id)?.error, null);
+  });
+
+  it("keeps relaunching other prompts when one prompt's forge listing fails", async () => {
+    const harness = makeHarness({ tasks: [], listErrorFor: "acme/broken" });
+    const brokenBase = harness.quickPrompts.add("github", "acme/broken", PROMPT_TEXT);
+    const broken = harness.quickPrompts.update(brokenBase.id, {
+      perpetual: true,
+      configByStep: CONFIG_BY_STEP,
+      reviewRequestIds: ["5"],
+    })!;
+    const healthy = addPrompt(harness, { reviewRequestIds: ["6"] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(instancesOf(harness, broken), []);
+    assert.equal(harness.quickPrompts.get(broken.id)?.error, "listing acme/broken failed");
+    assert.equal(relaunched(harness, healthy).length, 1);
+  });
+
+  it("clears a recorded error once a later pass succeeds while the PR/MR is still open", async () => {
+    const options: HarnessOptions = {
+      tasks: [],
+      listErrorFor: "acme/widgets",
+      snapshot: [makeReviewRequest({ id: "12" })],
+    };
+    const harness = makeHarness(options);
+    const prompt = addPrompt(harness, { reviewRequestIds: ["12"] });
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(harness.quickPrompts.get(prompt.id)?.error, "listing acme/widgets failed");
+
+    options.listErrorFor = undefined;
+    await runTaskSchedulerTick(harness.deps);
+
+    const stored = harness.quickPrompts.get(prompt.id);
+    assert.equal(stored?.error, null);
+    assert.deepEqual(stored?.reviewRequestIds, ["12"]);
+    assert.deepEqual(harness.promptBroadcasts.at(-1), stored);
+    assert.deepEqual(instancesOf(harness, prompt), []);
+  });
+
+  it("relaunches with the configuration stored while the PR/MR listing was in flight", async () => {
+    const options: HarnessOptions = { tasks: [] };
+    const harness = makeHarness(options);
+    const prompt = addPrompt(harness, {
+      configByStep: { ...CONFIG_BY_STEP, review: "retired" },
+      reviewRequestIds: ["12"],
+    });
+    options.onListReviewRequests = () => {
+      harness.quickPrompts.update(prompt.id, { configByStep: CONFIG_BY_STEP });
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    const [task] = relaunched(harness, prompt);
+    assert.ok(task, "no new instance was created");
+    assert.deepEqual(task.configByStep, CONFIG_BY_STEP);
+    assert.equal(harness.quickPrompts.get(prompt.id)?.error, null);
+  });
+
+  it("does not relaunch when the prompt stops being perpetual while the PR/MR listing is in flight", async () => {
+    const options: HarnessOptions = { tasks: [] };
+    const harness = makeHarness(options);
+    const prompt = addPrompt(harness, { reviewRequestIds: ["12"] });
+    options.onListReviewRequests = () => {
+      harness.quickPrompts.update(prompt.id, { perpetual: false });
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(instancesOf(harness, prompt), []);
+  });
+
+  it("reuses the tick's open PR/MR listing for a repository instead of fetching it again", async () => {
+    const harness = makeHarness({
+      tasks: [makeLinkedTask({ id: "other-task", phase: "waiting_ci", lastReviewedSha: "abc123" })],
+      snapshot: [makeReviewRequest({ id: "12", ciState: "pending" })],
+    });
+    const prompt = addPrompt(harness, { reviewRequestIds: ["12"] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.reviewRequestListings, ["acme/widgets"]);
+    assert.deepEqual(instancesOf(harness, prompt), []);
+  });
+
+  it("records the PR/MR an instance opens on its quick-prompt so the guard survives task deletion", async () => {
+    const harness = makeHarness({
+      tasks: [],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: {
+        [CONTAINER_NAME]: makeCodeStatus({
+          id: "12",
+          url: "https://github.com/acme/widgets/pull/12",
+          sourceBranch: "feature",
+        }),
+      },
+      snapshot: [makeReviewRequest({ ciState: "pending" })],
+    });
+    const prompt = addPrompt(harness, { reviewRequestIds: ["4"] });
+    const task = makeActiveTask({ reviewRequest: null, activeStep: "implement", quickPromptId: prompt.id });
+    task.attempts[1].step = "implement";
+    harness.store.save(task);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.reviewRequest?.id, "12");
+    assert.deepEqual(harness.quickPrompts.get(prompt.id)?.reviewRequestIds, ["4", "12"]);
+    assert.ok(harness.promptBroadcasts.some((broadcast) => broadcast.reviewRequestIds.includes("12")));
+
+    harness.store.remove(task.id);
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(instancesOf(harness, prompt), []);
+    assert.deepEqual(harness.quickPrompts.get(prompt.id)?.reviewRequestIds, ["12"]);
+  });
+
+  it("links the PR/MR without failing when the task's quick-prompt was deleted", async () => {
+    const harness = makeHarness({
+      tasks: [makeActiveTask({ reviewRequest: null, quickPromptId: "deleted-prompt" })],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: { state: "finished", updatedAt: NOW.toISOString() } },
+      codeStatus: {
+        [CONTAINER_NAME]: makeCodeStatus({
+          id: "12",
+          url: "https://github.com/acme/widgets/pull/12",
+          sourceBranch: "feature",
+        }),
+      },
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    const task = harness.store.get("task-1");
+    assert.equal(task?.reviewRequest?.id, "12");
+    assert.equal(task?.error, null);
+    assert.deepEqual(harness.promptBroadcasts, []);
   });
 });

@@ -11,7 +11,7 @@ import {
   CONTAINER_METADATA_INTERNAL_PORT,
 } from "../docker.js";
 import { getForge } from "../forge/index.js";
-import type { Task } from "../types.js";
+import type { QuickPrompt, Task } from "../types.js";
 import { QuickPromptStore } from "./quick-prompt-store.js";
 import { TaskStore } from "./store.js";
 import type { SchedulerDeps } from "./scheduler.js";
@@ -27,6 +27,14 @@ export function broadcastTaskRemoved(id: string): void {
   broadcastSSE("task-removed", { id });
 }
 
+export function broadcastQuickPromptUpdated(prompt: QuickPrompt): void {
+  broadcastSSE("quick-prompt-updated", prompt);
+}
+
+export function broadcastQuickPromptRemoved(id: string): void {
+  broadcastSSE("quick-prompt-removed", { id });
+}
+
 async function fetchContainerMetadata<T>(containerName: string, path: string): Promise<T> {
   const response = await fetch(`http://${containerName}:${CONTAINER_METADATA_INTERNAL_PORT}${path}`, {
     signal: AbortSignal.timeout(3000),
@@ -39,6 +47,7 @@ async function fetchContainerMetadata<T>(containerName: string, path: string): P
 
 export const schedulerDeps: SchedulerDeps = {
   store: taskStore,
+  quickPrompts: quickPromptStore,
   getForge,
   loadConfigurations,
   getContainer: findManagedContainer,
@@ -54,5 +63,6 @@ export const schedulerDeps: SchedulerDeps = {
   fetchCodeStatus: (containerName) =>
     fetchContainerMetadata<ContainerCodeStatus>(containerName, "/api/code-status"),
   broadcastTaskUpdated,
+  broadcastQuickPromptUpdated,
   now: () => new Date(),
 };

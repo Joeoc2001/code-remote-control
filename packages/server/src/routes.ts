@@ -21,7 +21,13 @@ import { fetchRepos as fetchGitHubRepos } from "./forge/github.js";
 import { fetchRepos as fetchGitLabRepos, isGitLabConfigured } from "./forge/gitlab.js";
 import { createQuickPromptsRouter } from "./tasks/quick-prompt-routes.js";
 import { tasksRouter } from "./tasks/routes.js";
-import { quickPromptStore, taskStore } from "./tasks/runtime.js";
+import {
+  broadcastQuickPromptRemoved,
+  broadcastQuickPromptUpdated,
+  broadcastTaskUpdated,
+  quickPromptStore,
+  taskStore,
+} from "./tasks/runtime.js";
 import type { ConfigSummaryFile, CreateContainerRequestV2, CreateContainersRequest, ManagedContainer } from "./types.js";
 import { getRepoNameError, isValidContainerId, isValidRepoSource } from "./validation.js";
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
@@ -29,7 +35,17 @@ import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadat
 export const router = Router();
 
 router.use(tasksRouter);
-router.use(createQuickPromptsRouter(quickPromptStore));
+router.use(
+  createQuickPromptsRouter({
+    quickPrompts: quickPromptStore,
+    tasks: taskStore,
+    loadConfigurations,
+    broadcastQuickPromptUpdated,
+    broadcastQuickPromptRemoved,
+    broadcastTaskUpdated,
+    now: () => new Date(),
+  }),
+);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

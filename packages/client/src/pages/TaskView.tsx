@@ -5,6 +5,7 @@ import { deleteTask, fetchTask, fetchTaskAttemptLog, subscribeToEvents, updateTa
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import TaskPhaseBadge from "../components/TaskPhaseBadge";
+import QuickPromptBadge from "../components/QuickPromptBadge";
 import ReviewRequestStatusIcon from "../components/ReviewRequestStatusIcon";
 import { TASK_STEP_LABELS } from "../components/taskStepLabels";
 import { taskTitle } from "../components/taskTitle";
@@ -337,6 +338,7 @@ export default function TaskView() {
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <TaskPhaseBadge phase={task.phase} />
+                {task.quickPromptId && <QuickPromptBadge quickPromptId={task.quickPromptId} />}
                 {task.activeStep && (
                   <span className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-800/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-300">
                     {TASK_STEP_LABELS[task.activeStep]}

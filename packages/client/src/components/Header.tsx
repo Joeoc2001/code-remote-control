@@ -6,8 +6,13 @@ interface HeaderProps {
 }
 
 const NAV_SEGMENTS = [
-  { label: "Containers", to: "/", isActive: (pathname: string) => !pathname.startsWith("/tasks") },
+  {
+    label: "Containers",
+    to: "/",
+    isActive: (pathname: string) => !pathname.startsWith("/tasks") && !pathname.startsWith("/quick-prompts"),
+  },
   { label: "Tasks", to: "/tasks", isActive: (pathname: string) => pathname.startsWith("/tasks") },
+  { label: "Quick-prompts", to: "/quick-prompts", isActive: (pathname: string) => pathname.startsWith("/quick-prompts") },
 ];
 
 export default function Header({ actions }: HeaderProps) {

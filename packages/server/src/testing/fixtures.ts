@@ -14,6 +14,7 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
       kind: "issue",
     },
     sourceText: null,
+    quickPromptId: null,
     createdIssueUrl: null,
     configByStep: {
       create_issue: "default",

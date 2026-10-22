@@ -9,6 +9,7 @@ import {
 } from "@crc/shared/prompts";
 import type {
   ManagedContainer,
+  QuickPrompt,
   RepoReviewRequest,
   RepoSource,
   RepoWorkItem,
@@ -23,6 +24,8 @@ import type {
 import { currentStageFirstAttemptIndex, TASK_STEPS } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import type { TaskStore } from "./store.js";
+import { findMissingConfig, findUnfinishedInstance, makeNewTask } from "./new-task.js";
+import type { QuickPromptPatch, QuickPromptStore } from "./quick-prompt-store.js";
 import { completedReviews, decide, NIT_THREAD_REVIEW_LIMIT, type TaskDecision } from "./decide.js";
 
 export const TASK_TICK_INTERVAL_MS = 30_000;
@@ -34,6 +37,7 @@ export const HELD_CONTAINER_SUFFIX = "; its container was kept so the agent can 
 
 export interface SchedulerDeps {
   store: TaskStore;
+  quickPrompts: QuickPromptStore;
   getForge(source: RepoSource): Forge;
   loadConfigurations(): Promise<ResolvedConfigFile>;
   getContainer(id: string): Promise<ManagedContainer | null>;
@@ -50,6 +54,7 @@ export interface SchedulerDeps {
   fetchInstanceStatus(containerName: string): Promise<InstanceStatus>;
   fetchCodeStatus(containerName: string): Promise<ContainerCodeStatus>;
   broadcastTaskUpdated(task: Task): void;
+  broadcastQuickPromptUpdated(prompt: QuickPrompt): void;
   now(): Date;
 }
 
@@ -132,13 +137,26 @@ function finishAttempt(deps: SchedulerDeps, task: Task, attempt: TaskAttempt, er
   task.activeStep = null;
 }
 
-function captureReviewRequestLink(task: Task, codeStatus: ContainerCodeStatus): void {
+function updateQuickPrompt(deps: SchedulerDeps, id: string, patch: QuickPromptPatch): void {
+  const updated = deps.quickPrompts.update(id, patch);
+  if (updated) deps.broadcastQuickPromptUpdated(updated);
+}
+
+function recordQuickPromptReviewRequest(deps: SchedulerDeps, task: Task, reviewRequestId: string): void {
+  if (task.quickPromptId === null) return;
+  const prompt = deps.quickPrompts.get(task.quickPromptId);
+  if (!prompt || prompt.reviewRequestIds.includes(reviewRequestId)) return;
+  updateQuickPrompt(deps, prompt.id, { reviewRequestIds: [...prompt.reviewRequestIds, reviewRequestId] });
+}
+
+function captureReviewRequestLink(deps: SchedulerDeps, task: Task, codeStatus: ContainerCodeStatus): void {
   if (task.reviewRequest || !codeStatus.reviewRequest) return;
   task.reviewRequest = {
     id: codeStatus.reviewRequest.id,
     url: codeStatus.reviewRequest.url,
     sourceBranch: codeStatus.reviewRequest.sourceBranch,
   };
+  recordQuickPromptReviewRequest(deps, task, task.reviewRequest.id);
 }
 
 function captureCreatedIssueUrl(task: Task, codeStatus: ContainerCodeStatus): void {
@@ -146,12 +164,17 @@ function captureCreatedIssueUrl(task: Task, codeStatus: ContainerCodeStatus): vo
   task.createdIssueUrl = codeStatus.createdIssueUrl;
 }
 
-function captureContainerLinks(task: Task, attempt: TaskAttempt, codeStatus: ContainerCodeStatus): void {
+function captureContainerLinks(
+  deps: SchedulerDeps,
+  task: Task,
+  attempt: TaskAttempt,
+  codeStatus: ContainerCodeStatus,
+): void {
   if (attempt.step === "create_issue") {
     captureCreatedIssueUrl(task, codeStatus);
     return;
   }
-  captureReviewRequestLink(task, codeStatus);
+  captureReviewRequestLink(deps, task, codeStatus);
 }
 
 function missingDeliverableReason(task: Task, step: TaskStep): string | null {
@@ -309,7 +332,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   const elapsedMs = deps.now().getTime() - attemptActiveSince(attempt, status);
   if (status?.state !== "waiting" && status?.state !== "finished" && elapsedMs > ATTEMPT_TIMEOUT_MS) {
     try {
-      captureContainerLinks(task, attempt, await deps.fetchCodeStatus(container.name));
+      captureContainerLinks(deps, task, attempt, await deps.fetchCodeStatus(container.name));
     } catch (err) {
       console.error(`Task ${task.id}: could not capture code status before timing out attempt:`, err);
     }
@@ -342,7 +365,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     return "settle";
   }
 
-  captureContainerLinks(task, attempt, codeStatus);
+  captureContainerLinks(deps, task, attempt, codeStatus);
   const missingDeliverable = missingDeliverableReason(task, attempt.step);
   if (missingDeliverable !== null) {
     await holdAttempt(deps, task, attemptIndex, `${missingDeliverable}${HELD_CONTAINER_SUFFIX}`);
@@ -558,6 +581,82 @@ async function executeDecision(
   }
 }
 
+function repoKey(repo: { repoSource: RepoSource; repoFullName: string }): string {
+  return `${repo.repoSource}:${repo.repoFullName}`;
+}
+
+async function relaunchPerpetualPrompt(
+  deps: SchedulerDeps,
+  prompt: QuickPrompt,
+  openReviewRequests: (prompt: QuickPrompt) => Promise<RepoReviewRequest[]>,
+  configNames: () => Promise<Set<string>>,
+): Promise<void> {
+  if (findUnfinishedInstance(deps.store, prompt.id)) return;
+
+  if (prompt.reviewRequestIds.length > 0) {
+    const openIds = new Set((await openReviewRequests(prompt)).map((item) => item.id));
+    const stillOpen = prompt.reviewRequestIds.filter((id) => openIds.has(id));
+    if (stillOpen.length > 0) {
+      if (stillOpen.length !== prompt.reviewRequestIds.length) {
+        updateQuickPrompt(deps, prompt.id, { reviewRequestIds: stillOpen });
+      }
+      return;
+    }
+  }
+
+  const names = await configNames();
+  const current = deps.quickPrompts.get(prompt.id);
+  if (!current?.perpetual || findUnfinishedInstance(deps.store, prompt.id)) return;
+  if (current.configByStep === null) {
+    throw new Error("Perpetual quick-prompt has no stored configuration");
+  }
+  const missingConfig = findMissingConfig(current.configByStep, names);
+  if (missingConfig !== null) {
+    throw new Error(`${missingConfig}; choose another configuration for this quick-prompt`);
+  }
+
+  const now = deps.now();
+  const task = makeNewTask(
+    current.repoFullName,
+    current.repoSource,
+    current.configByStep,
+    { sourceText: current.text, quickPromptId: current.id },
+    now,
+  );
+  saveTask(deps, task);
+  updateQuickPrompt(deps, prompt.id, { reviewRequestIds: [], lastLaunchedAt: now.toISOString(), error: null });
+}
+
+async function relaunchPerpetualPrompts(
+  deps: SchedulerDeps,
+  snapshots: Map<string, RepoReviewRequest[]>,
+): Promise<void> {
+  const openReviewRequests = async (prompt: QuickPrompt) => {
+    const key = repoKey(prompt);
+    const cached = snapshots.get(key);
+    if (cached) return cached;
+    const snapshot = await deps.getForge(prompt.repoSource).listReviewRequests(prompt.repoFullName);
+    snapshots.set(key, snapshot);
+    return snapshot;
+  };
+  let names: Set<string> | null = null;
+  const configNames = async () => {
+    names ??= new Set((await deps.loadConfigurations()).configurations.map((c) => c.name));
+    return names;
+  };
+
+  for (const prompt of deps.quickPrompts.listAll().filter((candidate) => candidate.perpetual)) {
+    try {
+      await relaunchPerpetualPrompt(deps, prompt, openReviewRequests, configNames);
+      if (deps.quickPrompts.get(prompt.id)?.error) updateQuickPrompt(deps, prompt.id, { error: null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Quick-prompt ${prompt.id}: could not relaunch:`, err);
+      if (prompt.error !== message) updateQuickPrompt(deps, prompt.id, { error: message });
+    }
+  }
+}
+
 export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
   await reconcileTaskContainers(deps);
 
@@ -609,7 +708,7 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
 
   const groups = new Map<string, Task[]>();
   for (const task of toDecide.filter((t) => t.reviewRequest)) {
-    const key = `${task.repoSource}:${task.repoFullName}`;
+    const key = repoKey(task);
     const group = groups.get(key);
     if (group) {
       group.push(task);
@@ -618,7 +717,8 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
     }
   }
 
-  for (const group of groups.values()) {
+  const snapshots = new Map<string, RepoReviewRequest[]>();
+  for (const [key, group] of groups) {
     const { repoSource, repoFullName } = group[0];
     const forge = deps.getForge(repoSource);
 
@@ -631,6 +731,7 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
       }
       continue;
     }
+    snapshots.set(key, snapshot);
 
     for (const task of group) {
       try {
@@ -649,4 +750,6 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
       }
     }
   }
+
+  await relaunchPerpetualPrompts(deps, snapshots);
 }

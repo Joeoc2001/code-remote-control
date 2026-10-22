@@ -23,6 +23,7 @@ export type {
   GitHubRepo,
   GitLabRepo,
   MergeMethod,
+  LaunchQuickPromptRequest,
   QuickPrompt,
   RepoWorkItem,
   RepoReviewRequest,
@@ -36,6 +37,7 @@ export type {
   TaskReviewRequestRef,
   TaskStage,
   TaskStep,
+  UpdateQuickPromptRequest,
   UpdateTaskRequest,
 } from "@crc/shared";
 

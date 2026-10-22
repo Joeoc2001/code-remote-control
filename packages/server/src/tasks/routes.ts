@@ -1,11 +1,10 @@
 import { Router } from "express";
-import crypto from "node:crypto";
 import { loadConfigurations } from "../config.js";
 import { broadcastRemoval, removeContainerIfPresent } from "../docker.js";
 import { getForge } from "../forge/index.js";
-import { TASK_STEPS } from "../types.js";
-import type { CreateTaskFromTextRequest, CreateTasksRequest, RepoWorkItem, Task, TaskStep, UpdateTaskRequest } from "../types.js";
+import type { CreateTaskFromTextRequest, CreateTasksRequest, Task, TaskStep, UpdateTaskRequest } from "../types.js";
 import { parseRepo } from "../validation.js";
+import { makeNewTask, parseConfigByStep, resolveConfigByStep } from "./new-task.js";
 import { resumeTask, type ResumeDeps } from "./resume.js";
 import { broadcastTaskRemoved, broadcastTaskUpdated, taskStore } from "./runtime.js";
 
@@ -28,61 +27,6 @@ function isLive(task: Task): boolean {
 function saveAndBroadcast(task: Task): void {
   taskStore.save(task);
   broadcastTaskUpdated(task);
-}
-
-function getConfigByStepError(
-  configByStep: unknown,
-  configNames: Set<string>,
-): { error: string } | { value: Partial<Record<TaskStep, string>> } {
-  if (configByStep === undefined) return { value: {} };
-  if (typeof configByStep !== "object" || configByStep === null || Array.isArray(configByStep)) {
-    return { error: "configByStep must be an object mapping steps to configuration names" };
-  }
-
-  const value: Partial<Record<TaskStep, string>> = {};
-  for (const [step, configName] of Object.entries(configByStep)) {
-    if (!TASK_STEPS.includes(step as TaskStep)) {
-      return { error: `Unknown task step '${step}' in configByStep` };
-    }
-    if (typeof configName !== "string" || !configNames.has(configName)) {
-      return { error: `Configuration '${String(configName)}' for step '${step}' not found` };
-    }
-    value[step as TaskStep] = configName;
-  }
-  return { value };
-}
-
-function makeNewTask(
-  repoFullName: string,
-  repoSource: Task["repoSource"],
-  configByStep: Record<TaskStep, string>,
-  origin: { workItem: RepoWorkItem } | { sourceText: string },
-): Task {
-  const now = new Date().toISOString();
-  return {
-    id: crypto.randomUUID(),
-    repoFullName,
-    repoSource,
-    workItem: "workItem" in origin ? origin.workItem : null,
-    sourceText: "sourceText" in origin ? origin.sourceText : null,
-    createdIssueUrl: null,
-    configByStep,
-    phase: "spawning",
-    reviewRequest: null,
-    lastReviewedSha: null,
-    lastReviewedDiffHash: null,
-    activeContainerId: null,
-    activeStep: null,
-    attemptsByStep: Object.fromEntries(TASK_STEPS.map((step) => [step, 0])) as Record<TaskStep, number>,
-    attempts: [],
-    completedStages: [],
-    stageStartedAt: now,
-    mergedAt: null,
-    consecutiveErrors: 0,
-    error: null,
-    createdAt: now,
-    updatedAt: now,
-  };
 }
 
 tasksRouter.get("/api/tasks", (_req, res) => {
@@ -147,20 +91,12 @@ tasksRouter.post("/api/tasks", async (req, res) => {
 
     const configs = await loadConfigurations();
     const configNames = new Set(configs.configurations.map((c) => c.name));
-    if (!configNames.has(configName)) {
-      res.status(400).json({ error: `Configuration '${configName}' not found` });
-      return;
-    }
-
-    const configByStepResult = getConfigByStepError(configByStep, configNames);
+    const configByStepResult = resolveConfigByStep(configName, configByStep, configNames);
     if ("error" in configByStepResult) {
       res.status(400).json({ error: configByStepResult.error });
       return;
     }
-
-    const resolvedConfigByStep = Object.fromEntries(
-      TASK_STEPS.map((step) => [step, configByStepResult.value[step] ?? configName]),
-    ) as Record<TaskStep, string>;
+    const resolvedConfigByStep = configByStepResult.value;
 
     const workItems = await getForge(repoSource).listWorkItems(repoFullName);
     const workItemsById = new Map(workItems.map((item) => [item.id, item]));
@@ -189,7 +125,7 @@ tasksRouter.post("/api/tasks", async (req, res) => {
         continue;
       }
 
-      const task = makeNewTask(repoFullName, repoSource, resolvedConfigByStep, { workItem });
+      const task = makeNewTask(repoFullName, repoSource, resolvedConfigByStep, { workItem }, new Date());
       saveAndBroadcast(task);
       tasks.push(task);
     }
@@ -225,22 +161,20 @@ tasksRouter.post("/api/tasks/from-text", async (req, res) => {
 
     const configs = await loadConfigurations();
     const configNames = new Set(configs.configurations.map((c) => c.name));
-    if (!configNames.has(configName)) {
-      res.status(400).json({ error: `Configuration '${configName}' not found` });
-      return;
-    }
-
-    const configByStepResult = getConfigByStepError(configByStep, configNames);
+    const configByStepResult = resolveConfigByStep(configName, configByStep, configNames);
     if ("error" in configByStepResult) {
       res.status(400).json({ error: configByStepResult.error });
       return;
     }
+    const resolvedConfigByStep = configByStepResult.value;
 
-    const resolvedConfigByStep = Object.fromEntries(
-      TASK_STEPS.map((step) => [step, configByStepResult.value[step] ?? configName]),
-    ) as Record<TaskStep, string>;
-
-    const task = makeNewTask(repoFullName, repoSource, resolvedConfigByStep, { sourceText });
+    const task = makeNewTask(
+      repoFullName,
+      repoSource,
+      resolvedConfigByStep,
+      { sourceText, quickPromptId: null },
+      new Date(),
+    );
     saveAndBroadcast(task);
     res.status(201).json(task);
   } catch (err) {
@@ -298,7 +232,7 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
     if (configByStep !== undefined) {
       const configs = await loadConfigurations();
       const configNames = new Set(configs.configurations.map((c) => c.name));
-      const result = getConfigByStepError(configByStep, configNames);
+      const result = parseConfigByStep(configByStep, configNames);
       if ("error" in result) {
         res.status(400).json({ error: result.error });
         return;

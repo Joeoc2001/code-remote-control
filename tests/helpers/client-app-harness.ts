@@ -21,6 +21,8 @@ const stubTask: Task = {
     body: null,
     kind: "issue",
   },
+  sourceText: null,
+  quickPromptId: null,
   configByStep: {
     implement: "default",
     fix_ci: "default",
@@ -47,6 +49,7 @@ const stubTask: Task = {
 const apiStubs: Record<string, unknown> = {
   "/api/containers": [],
   "/api/tasks": [],
+  "/api/quick-prompts": [],
   "/api/tasks/task-1": stubTask,
   "/api/configs": { configurations: [{ name: "default" }] },
   "/api/build-info": { buildId: "0000000" },

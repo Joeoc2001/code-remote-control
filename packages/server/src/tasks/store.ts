@@ -6,8 +6,8 @@ function isMissingFileError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt"> &
-  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt">>;
+type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId"> &
+  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId">>;
 
 function migrateTask(stored: StoredTask, tasksPath: string): Task {
   const task: Task = {
@@ -15,6 +15,7 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
     completedStages: stored.completedStages ?? [],
     stageStartedAt: stored.stageStartedAt ?? stored.createdAt,
     mergedAt: stored.mergedAt ?? null,
+    quickPromptId: stored.quickPromptId ?? null,
   };
   if (
     !Array.isArray(task.completedStages) ||
@@ -22,6 +23,9 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
     (task.mergedAt !== null && typeof task.mergedAt !== "string")
   ) {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has invalid stage fields`);
+  }
+  if (task.quickPromptId !== null && typeof task.quickPromptId !== "string") {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid quickPromptId`);
   }
   return task;
 }
