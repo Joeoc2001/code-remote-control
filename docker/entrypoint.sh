@@ -45,7 +45,7 @@ cd "/workspace"
 echo "Starting container metadata server..."
 tsx /opt/crc/packages/container-metadata-server/src/index.ts &
 
-CLAUDE_SESSION="crc"
+CLAUDE_SESSION="${CRC_TMUX_SESSION:?CRC_TMUX_SESSION must name the tmux session the server pokes}"
 /opt/crc/start-claude-session.sh "$CLAUDE_SESSION"
 
 echo "Starting web terminal..."

@@ -7,6 +7,7 @@ import {
   findManagedContainer,
   getContainerLogTail,
   listTaskContainers,
+  pokeAgent,
   removeContainer,
   CONTAINER_METADATA_INTERNAL_PORT,
 } from "../docker.js";
@@ -62,6 +63,7 @@ export const schedulerDeps: SchedulerDeps = {
     fetchContainerMetadata<InstanceStatus>(containerName, "/api/instance-status"),
   fetchCodeStatus: (containerName) =>
     fetchContainerMetadata<ContainerCodeStatus>(containerName, "/api/code-status"),
+  pokeAgent,
   broadcastTaskUpdated,
   broadcastQuickPromptUpdated,
   now: () => new Date(),

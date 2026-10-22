@@ -14,6 +14,9 @@ function attempt(step: TaskAttempt["step"], startedAt: string, finishedAt: strin
     finishedAt,
     finishedObservation: null,
     error: null,
+    pokeCount: 0,
+    lastPokedAt: null,
+    resumedAt: null,
   };
 }
 

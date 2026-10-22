@@ -265,6 +265,9 @@ export interface TaskAttempt {
   finishedAt: string | null;
   finishedObservation: FinishedObservation | null;
   error: string | null;
+  pokeCount: number;
+  lastPokedAt: string | null;
+  resumedAt: string | null;
 }
 
 export interface TaskReviewRequestRef {

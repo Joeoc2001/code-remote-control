@@ -40,6 +40,21 @@ describe("env container wiring", () => {
     assert.equal(copyDestination("docker/claude-memory.md"), "/root/.claude/CLAUDE.md");
   });
 
+  test("the entrypoint takes the tmux session name from the server instead of hardcoding it", () => {
+    assert.match(entrypoint, /CLAUDE_SESSION="\$\{CRC_TMUX_SESSION:\?[^}]*\}"/);
+    assert.ok(!entrypoint.includes('CLAUDE_SESSION="crc"'));
+  });
+
+  test("the entrypoint refuses to start without a tmux session name", () => {
+    const line = entrypoint.split("\n").find((candidate) => candidate.startsWith("CLAUDE_SESSION="));
+    const script = `set -e; ${line}; echo "$CLAUDE_SESSION"`;
+    assert.throws(
+      () => execFileSync("bash", ["-c", script], { env: { PATH: process.env.PATH }, stdio: "pipe" }),
+      (err) => /CRC_TMUX_SESSION must name/.test(String(err.stderr)),
+    );
+    assert.equal(execFileSync("bash", ["-c", script], { env: { PATH: process.env.PATH, CRC_TMUX_SESSION: "crc" } }).toString().trim(), "crc");
+  });
+
   test("the entrypoint no longer launches claude itself", () => {
     assert.ok(!entrypoint.includes("CRC_INITIAL_PROMPT"));
     assert.ok(!/tmux new-session/.test(entrypoint));

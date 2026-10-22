@@ -23,6 +23,7 @@ import {
 
 
 import type { RepoSource } from "./types.js";
+import { buildPokeCommands, CLAUDE_TMUX_SESSION } from "./agent-poke.js";
 
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 
@@ -404,6 +405,7 @@ export function buildContainerEnv(options: ContainerEnvOptions): string[] {
     `GIT_USER_NAME=${options.gitUsername}`,
     `GIT_USER_EMAIL=${options.gitEmail}`,
     "IS_SANDBOX=1",
+    `CRC_TMUX_SESSION=${CLAUDE_TMUX_SESSION}`,
     ...(options.initialPrompt ? [`CRC_INITIAL_PROMPT=${options.initialPrompt}`] : []),
     ...Object.entries(options.configEnv || {}).map(([k, v]) => `${k}=${v}`),
   ];
@@ -556,6 +558,33 @@ export async function getContainerLogTail(id: string): Promise<string> {
     tail: LOG_TAIL_LINES,
   });
   return demuxLogBuffer(buffer as unknown as Buffer);
+}
+
+const POKE_SUBMIT_DELAY_MS = 500;
+
+async function execInContainer(container: Dockerode.Container, cmd: string[]): Promise<void> {
+  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+  const stream = await exec.start({});
+  const chunks: Buffer[] = [];
+  await new Promise<void>((resolve, reject) => {
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    stream.on("end", resolve);
+    stream.on("error", reject);
+  });
+  const { ExitCode } = await exec.inspect();
+  if (ExitCode !== 0) {
+    const output = demuxLogBuffer(Buffer.concat(chunks)).trim();
+    throw new Error(`'${cmd.slice(0, 3).join(" ")}' exited with status ${ExitCode} in container ${container.id}: ${output}`);
+  }
+}
+
+export async function pokeAgent(id: string, message: string): Promise<void> {
+  await assertManagedContainer(id);
+  const commands = buildPokeCommands(CLAUDE_TMUX_SESSION, message);
+  const container = docker.getContainer(id);
+  await execInContainer(container, commands.type);
+  await new Promise((resolve) => setTimeout(resolve, POKE_SUBMIT_DELAY_MS));
+  await execInContainer(container, commands.submit);
 }
 
 export async function getContainerLogStream(id: string): Promise<NodeJS.ReadableStream> {

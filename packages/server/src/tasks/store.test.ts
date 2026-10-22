@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, existsSync, writeFileSync, mkdirSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore } from "./store.js";
-import { makeTask } from "../testing/fixtures.js";
+import { makeAttempt, makeTask } from "../testing/fixtures.js";
 
 function makeStateDir(): string {
   return mkdtempSync(join(tmpdir(), "crc-task-store-"));
@@ -88,6 +88,33 @@ describe("TaskStore", () => {
     writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([legacy]), "utf-8");
 
     assert.equal(new TaskStore(stateDir).get(legacy.id)?.quickPromptId, null);
+  });
+
+  it("migrates attempts saved before stall pokes existed", () => {
+    const stateDir = makeStateDir();
+    const { pokeCount: _pokeCount, lastPokedAt: _lastPokedAt, resumedAt: _resumedAt, ...legacyAttempt } = makeAttempt();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), attempts: [legacyAttempt] }]), "utf-8");
+
+    const attempt = new TaskStore(stateDir).get("task-1")?.attempts[0];
+
+    assert.equal(attempt?.pokeCount, 0);
+    assert.equal(attempt?.lastPokedAt, null);
+    assert.equal(attempt?.resumedAt, null);
+    assert.equal(attempt?.startedAt, legacyAttempt.startedAt);
+  });
+
+  it("persists an attempt's poke bookkeeping across instances", () => {
+    const stateDir = makeStateDir();
+    const attempt = makeAttempt({ pokeCount: 3, lastPokedAt: "2026-08-20T11:00:00.000Z", resumedAt: "2026-08-20T10:30:00.000Z" });
+    new TaskStore(stateDir).save(makeTask({ attempts: [attempt] }));
+
+    assert.deepEqual(new TaskStore(stateDir).get("task-1")?.attempts[0], attempt);
+  });
+
+  it("fails loudly on an attempt with a malformed poke count", () => {
+    const stateDir = makeStateDir();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), attempts: [{ ...makeAttempt(), pokeCount: "3" }] }]), "utf-8");
+    assert.throws(() => new TaskStore(stateDir), /task task-1 has an attempt with invalid poke fields/);
   });
 
   it("persists a task's quick-prompt link across instances", () => {

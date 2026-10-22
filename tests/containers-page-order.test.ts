@@ -25,7 +25,7 @@ const INITIAL_STATES: Record<string, InstanceState> = {
 };
 
 function instanceStatus(state: InstanceState) {
-  return { state, updatedAt: null };
+  return { state, updatedAt: null, lastActivityAt: null };
 }
 
 function stubs(): Record<string, unknown> {

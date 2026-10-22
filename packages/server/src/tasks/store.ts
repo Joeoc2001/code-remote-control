@@ -1,17 +1,41 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Task } from "../types.js";
+import type { Task, TaskAttempt } from "../types.js";
 
 function isMissingFileError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId"> &
-  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId">>;
+type StoredAttempt = Omit<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt"> &
+  Partial<Pick<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt">>;
+
+type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "attempts"> &
+  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId">> & {
+    attempts: StoredAttempt[];
+  };
+
+function migrateAttempt(stored: StoredAttempt): TaskAttempt {
+  return {
+    ...stored,
+    pokeCount: stored.pokeCount ?? 0,
+    lastPokedAt: stored.lastPokedAt ?? null,
+    resumedAt: stored.resumedAt ?? null,
+  };
+}
+
+function hasValidPokeFields(attempt: TaskAttempt): boolean {
+  return (
+    Number.isInteger(attempt.pokeCount) &&
+    attempt.pokeCount >= 0 &&
+    (attempt.lastPokedAt === null || typeof attempt.lastPokedAt === "string") &&
+    (attempt.resumedAt === null || typeof attempt.resumedAt === "string")
+  );
+}
 
 function migrateTask(stored: StoredTask, tasksPath: string): Task {
   const task: Task = {
     ...stored,
+    attempts: stored.attempts.map(migrateAttempt),
     completedStages: stored.completedStages ?? [],
     stageStartedAt: stored.stageStartedAt ?? stored.createdAt,
     mergedAt: stored.mergedAt ?? null,
@@ -23,6 +47,9 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
     (task.mergedAt !== null && typeof task.mergedAt !== "string")
   ) {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has invalid stage fields`);
+  }
+  if (!task.attempts.every(hasValidPokeFields)) {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an attempt with invalid poke fields`);
   }
   if (task.quickPromptId !== null && typeof task.quickPromptId !== "string") {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid quickPromptId`);

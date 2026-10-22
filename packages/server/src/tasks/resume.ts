@@ -25,6 +25,7 @@ export async function resumeTask(deps: ResumeDeps, task: Task, discardContainer:
       task.activeStep = null;
     } else {
       attempt.error = null;
+      attempt.resumedAt = deps.now().toISOString();
     }
   } else if (discardContainer) {
     throw new Error(`Task ${task.id} has no agent container to discard`);

@@ -33,6 +33,7 @@ export interface InstanceStatus {
   state: InstanceState;
   pendingTasks?: PendingTask[];
   updatedAt: string | null;
+  lastActivityAt: string | null;
 }
 
 export interface ContainerCodeStatus {

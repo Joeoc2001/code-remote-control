@@ -9,7 +9,7 @@ const ids = (containers: { id: string }[]) => containers.map((container) => cont
 function statusLookup(states: Record<string, InstanceState | null>) {
   return (container: ManagedContainer): InstanceStatus | null => {
     const state = states[container.id];
-    return state ? { state, updatedAt: null } : null;
+    return state ? { state, updatedAt: null, lastActivityAt: null } : null;
   };
 }
 

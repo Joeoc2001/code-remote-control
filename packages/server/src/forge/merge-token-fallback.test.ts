@@ -57,4 +57,17 @@ describe("merging without merge tokens set", () => {
     });
     assert.ok(env.includes("GITHUB_TOKEN=gh-agent"));
   });
+
+  it("tells containers which tmux session the server pokes", () => {
+    const env = buildContainerEnv({
+      repoUrl: "https://github.com/acme/widgets.git",
+      repoSource: "github",
+      gitlabUrl: "https://gitlab.test",
+      gitUsername: "bot",
+      gitEmail: "bot@example.com",
+      initialPrompt: undefined,
+      configEnv: undefined,
+    });
+    assert.ok(env.includes("CRC_TMUX_SESSION=crc"));
+  });
 });

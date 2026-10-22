@@ -94,13 +94,13 @@ describe("decide: text tasks (no work item yet)", () => {
         makeAttempt({
           step: "create_issue",
           finishedAt: "2026-08-20T12:00:00.000Z",
-          error: "Attempt timed out after 120 minutes",
+          error: "Attempt still not finished after 24 hours (poked 47 times)",
         }),
       ],
     });
     const decision = await decide(task, null, noDiffFetch);
     assert.equal(decision.kind, "fail");
-    assert.match((decision as { reason: string }).reason, /timed out after 120 minutes/);
+    assert.match((decision as { reason: string }).reason, /not finished after 24 hours \(poked 47 times\)/);
   });
 
   it("throws if given forge state before the issue exists", async () => {
@@ -153,13 +153,16 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
           startedAt: "2026-08-20T10:00:00.000Z",
           finishedAt: "2026-08-20T12:00:00.000Z",
           finishedObservation: null,
-          error: "Attempt timed out after 120 minutes",
+          error: "Attempt still not finished after 24 hours (poked 47 times)",
+          pokeCount: 47,
+          lastPokedAt: "2026-08-20T11:30:00.000Z",
+          resumedAt: null,
         },
       ],
     });
     const decision = await decide(task, null, noDiffFetch);
     assert.equal(decision.kind, "fail");
-    assert.match((decision as { reason: string }).reason, /timed out after 120 minutes/);
+    assert.match((decision as { reason: string }).reason, /not finished after 24 hours \(poked 47 times\)/);
   });
 });
 
@@ -668,7 +671,7 @@ describe("decide: review/address_comments cycle cap", () => {
   it("does not count address_comments attempts that failed", async () => {
     const task = cyclingTask(REVIEW_CYCLE_CAP, { lastReviewedSha: "abc123" });
     const lastFix = task.attempts[task.attempts.length - 1];
-    lastFix.error = "Attempt timed out after 120 minutes";
+    lastFix.error = "Attempt still not finished after 24 hours (poked 47 times)";
     assert.deepEqual(
       await decide(task, makeReviewRequest({ hasUnresolvedComments: true }), noDiffFetch),
       {
