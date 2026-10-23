@@ -4,9 +4,11 @@ import type { Task } from "../types";
 import { deleteTask, updateTask } from "../api";
 import TaskPhaseBadge from "./TaskPhaseBadge";
 import QuickPromptBadge from "./QuickPromptBadge";
-import ReviewRequestStatusIcon from "./ReviewRequestStatusIcon";
+import ReviewRequestBadge from "./ReviewRequestBadge";
+import WorkItemBadge from "./WorkItemBadge";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
 import { taskTitle } from "./taskTitle";
+import { taskWorkItemBadge } from "./taskWorkItemBadge";
 
 interface TaskCardProps {
   task: Task;
@@ -19,6 +21,7 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
   const navigate = useNavigate();
 
   const reviewRequestState = task.phase === "merged" || task.phase === "checking_closure" ? "merged" : "open";
+  const workItemBadge = taskWorkItemBadge(task);
 
   const runAction = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -96,17 +99,9 @@ export default function TaskCard({ task, onChanged, onRemoved }: TaskCardProps) 
             {TASK_STEP_LABELS[task.activeStep]}
           </span>
         )}
+        {workItemBadge && <WorkItemBadge {...workItemBadge} />}
         {task.reviewRequest && (
-          <a
-            href={task.reviewRequest.url}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(event) => event.stopPropagation()}
-            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
-          >
-            <ReviewRequestStatusIcon state={reviewRequestState} />
-            <span className="truncate">PR/MR #{task.reviewRequest.id}</span>
-          </a>
+          <ReviewRequestBadge url={task.reviewRequest.url} id={task.reviewRequest.id} state={reviewRequestState} />
         )}
       </div>
 

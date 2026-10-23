@@ -6,9 +6,11 @@ import Header from "../components/Header";
 import Footer from "../components/Footer";
 import TaskPhaseBadge from "../components/TaskPhaseBadge";
 import QuickPromptBadge from "../components/QuickPromptBadge";
-import ReviewRequestStatusIcon from "../components/ReviewRequestStatusIcon";
+import ReviewRequestBadge from "../components/ReviewRequestBadge";
+import WorkItemBadge from "../components/WorkItemBadge";
 import { TASK_STEP_LABELS } from "../components/taskStepLabels";
 import { taskTitle } from "../components/taskTitle";
+import { taskWorkItemBadge } from "../components/taskWorkItemBadge";
 
 function SourceText({ text }: { text: string }) {
   return (
@@ -181,15 +183,7 @@ function CompletedStage({ task, stage, number }: { task: Task; stage: TaskStage;
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <h3 className="text-sm font-semibold text-slate-200">Stage {number}</h3>
-        <a
-          href={stage.reviewRequest.url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
-        >
-          <ReviewRequestStatusIcon state="merged" />
-          PR/MR #{stage.reviewRequest.id}
-        </a>
+        <ReviewRequestBadge url={stage.reviewRequest.url} id={stage.reviewRequest.id} state="merged" />
         <span className="text-xs text-slate-500">
           {formatTimestamp(stage.startedAt)} → merged {formatTimestamp(stage.mergedAt)}
         </span>
@@ -265,6 +259,7 @@ export default function TaskView() {
 
   const currentStageFirstIndex = task ? currentStageFirstAttemptIndex(task) : 0;
   const currentStageAttemptCount = task ? task.attempts.length - currentStageFirstIndex : 0;
+  const workItemBadge = task ? taskWorkItemBadge(task) : null;
 
   const actionButtonClass =
     "px-3 py-1.5 text-sm text-slate-300 hover:text-slate-100 border border-slate-700 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50";
@@ -365,18 +360,13 @@ export default function TaskView() {
                     {TASK_STEP_LABELS[task.activeStep]}
                   </span>
                 )}
+                {workItemBadge && <WorkItemBadge {...workItemBadge} />}
                 {task.reviewRequest && (
-                  <a
-                    href={task.reviewRequest.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
-                  >
-                    <ReviewRequestStatusIcon
-                      state={task.phase === "merged" || task.phase === "checking_closure" ? "merged" : "open"}
-                    />
-                    PR/MR #{task.reviewRequest.id}
-                  </a>
+                  <ReviewRequestBadge
+                    url={task.reviewRequest.url}
+                    id={task.reviewRequest.id}
+                    state={task.phase === "merged" || task.phase === "checking_closure" ? "merged" : "open"}
+                  />
                 )}
               </div>
               {task.sourceText && !task.workItem && <SourceText text={task.sourceText} />}
