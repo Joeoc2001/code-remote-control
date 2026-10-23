@@ -4,7 +4,7 @@ import type { InstanceStatus, ManagedContainer, ReviewRequestStatus } from "../t
 import { deleteContainer } from "../api";
 import HealthDot from "./HealthDot";
 import InstanceStatusBadge from "./InstanceStatusBadge";
-import ReviewRequestStatusIcon from "./ReviewRequestStatusIcon";
+import ReviewRequestBadge from "./ReviewRequestBadge";
 
 interface ContainerCardProps {
   container: ManagedContainer;
@@ -81,18 +81,7 @@ export default function ContainerCard({
           <div className="mt-2 flex flex-wrap items-center gap-2 empty:mt-0">
             <InstanceStatusBadge instanceStatus={instanceStatus} />
             {reviewRequest?.url && (
-              <a
-                href={reviewRequest.url}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => event.stopPropagation()}
-                title={`PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
-                aria-label={`Open PR/MR #${reviewRequest.id} (${reviewRequest.state})`}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-slate-700/80 bg-slate-800/60 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 hover:text-white transition-colors"
-              >
-                <ReviewRequestStatusIcon state={reviewRequest.state} />
-                <span className="truncate">PR/MR #{reviewRequest.id}</span>
-              </a>
+              <ReviewRequestBadge url={reviewRequest.url} id={reviewRequest.id} state={reviewRequest.state} />
             )}
           </div>
         </div>
