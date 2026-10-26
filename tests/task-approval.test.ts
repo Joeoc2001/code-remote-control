@@ -39,15 +39,23 @@ const unpinnedTask: Task = {
 
 const unapprovedTask: Task = makeTask("n", "waiting_approval", "2026-01-01T00:00:00.000Z");
 
+const mergedTask: Task = {
+  ...makeTask("m", "checking_closure", "2026-01-01T00:00:00.000Z"),
+  reviewRequest: { id: "12", url: "https://example.test/pull/12", sourceBranch: "feature" },
+  mergedAt: "2026-01-01T03:00:00.000Z",
+  attempts: [attempt({ step: "implement", isMaterial: true })],
+};
+
 describe("CRC-stored approvals in the task view", () => {
   let harness: ClientAppHarness;
 
   before(async () => {
     harness = await startClientApp({
-      "/api/tasks": [approvedTask, unpinnedTask, unapprovedTask],
+      "/api/tasks": [approvedTask, unpinnedTask, unapprovedTask, mergedTask],
       "/api/tasks/a": approvedTask,
       "/api/tasks/u": unpinnedTask,
       "/api/tasks/n": unapprovedTask,
+      "/api/tasks/m": mergedTask,
     });
   });
 
@@ -116,6 +124,19 @@ describe("CRC-stored approvals in the task view", () => {
       await page.getByText("No agents have been spawned yet.").waitFor({ timeout: 10_000 });
       assert.equal(await page.getByText(/Approved in CRC/).count(), 0);
       assert.equal(await page.getByRole("button", { name: "Revoke approval" }).count(), 0);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("shows no approval or Revoke button once the PR/MR has merged", async () => {
+    const page = await harness.browser.newPage();
+    try {
+      await page.goto(`${harness.origin}/tasks/m`, { waitUntil: "networkidle" });
+      await page.locator("li", { hasText: "#1" }).first().waitFor({ timeout: 10_000 });
+      assert.equal(await page.getByText(/Approved in CRC/).count(), 0);
+      assert.equal(await page.getByRole("button", { name: "Revoke approval" }).count(), 0);
+      assert.deepEqual(harness.unstubbedRequests, []);
     } finally {
       await page.close();
     }

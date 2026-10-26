@@ -26,6 +26,7 @@ import type {
 import { currentStageFirstAttemptIndex, TASK_STEPS } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import type { TaskStore } from "./store.js";
+import { withdrawApproval } from "./approval.js";
 import { findMissingConfig, findUnfinishedInstance, makeNewTask } from "./new-task.js";
 import type { QuickPromptPatch, QuickPromptStore } from "./quick-prompt-store.js";
 import { completedReviews, decide, NIT_THREAD_REVIEW_LIMIT, type TaskDecision } from "./decide.js";
@@ -138,9 +139,7 @@ function finishAttempt(deps: SchedulerDeps, task: Task, attempt: TaskAttempt, er
     task.lastReviewedSha = attempt.headShaBefore;
     task.lastReviewedDiffHash = attempt.diffHashBefore;
   }
-  if (attempt.isMaterial === true) {
-    task.approval = null;
-  } else if (error === null && attempt.isMaterial === false && task.approval) {
+  if (error === null && attempt.isMaterial === false && task.approval) {
     task.approval.headSha = null;
   }
   task.activeContainerId = null;
@@ -243,6 +242,7 @@ async function adoptCreatedIssue(deps: SchedulerDeps, forge: Forge, task: Task, 
 function markReviewRequestMerged(deps: SchedulerDeps, task: Task): void {
   task.phase = "checking_closure";
   task.mergedAt = deps.now().toISOString();
+  task.approval = null;
   clearTaskError(task);
   saveTask(deps, task);
 }
@@ -411,6 +411,10 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   if (missingDeliverable !== null) {
     await holdAttempt(deps, task, attemptIndex, `${missingDeliverable}${HELD_CONTAINER_SUFFIX}`);
     return "settle";
+  }
+  if (attempt.isMaterial === true && task.approval) {
+    await withdrawApproval(deps.getForge(task.repoSource), task);
+    saveTask(deps, task);
   }
   deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
   await deps.removeContainer(containerId);
@@ -630,7 +634,7 @@ async function executeDecision(
       return;
     }
     case "revoke_approval": {
-      task.approval = null;
+      await withdrawApproval(forge, task);
       task.phase = "waiting_approval";
       clearTaskError(task);
       saveTask(deps, task);

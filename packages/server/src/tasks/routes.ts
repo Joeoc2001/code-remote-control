@@ -4,6 +4,7 @@ import { broadcastRemoval, removeContainerIfPresent } from "../docker.js";
 import { getForge } from "../forge/index.js";
 import type { CreateTaskFromTextRequest, CreateTasksRequest, Task, TaskStep, UpdateTaskRequest } from "../types.js";
 import { parseRepo } from "../validation.js";
+import { withdrawApproval } from "./approval.js";
 import { makeNewTask, parseConfigByStep, resolveConfigByStep } from "./new-task.js";
 import { resumeTask, type ResumeDeps } from "./resume.js";
 import { broadcastTaskRemoved, broadcastTaskUpdated, taskStore } from "./runtime.js";
@@ -245,11 +246,11 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
       configByStepPatch = result.value;
     }
 
-    task.configByStep = { ...task.configByStep, ...configByStepPatch };
-
-    if (approval === "revoke") {
-      task.approval = null;
+    if (approval === "revoke" && task.approval) {
+      await withdrawApproval(getForge(task.repoSource), task);
     }
+
+    task.configByStep = { ...task.configByStep, ...configByStepPatch };
 
     if (phase === "paused") {
       task.phase = "paused";

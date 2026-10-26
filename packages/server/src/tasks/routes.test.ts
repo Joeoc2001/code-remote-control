@@ -5,14 +5,35 @@ import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import express from "express";
-import { writeTestConfig } from "../testing/forge-fetch.js";
+import { stubFetch, writeTestConfig, type Route } from "../testing/forge-fetch.js";
 import { makeLinkedTask } from "../testing/fixtures.js";
 
+process.env.GITHUB_TOKEN = "gh-agent";
+process.env.GITHUB_MERGE_TOKEN = "gh-merge";
 process.env.CRC_STATE_DIR = mkdtempSync(join(tmpdir(), "crc-task-routes-"));
 process.env.CRC_CONFIG_PATH = writeTestConfig({});
 
 const { tasksRouter } = await import("./routes.js");
 const { taskStore } = await import("./runtime.js");
+
+const realFetch = globalThis.fetch;
+
+function crcReviewRoutes(dismissStatus = 200): Route[] {
+  return [
+    (request) =>
+      request.url === "https://api.github.com/user"
+        ? { json: { login: request.token === "gh-merge" ? "owner" : "crc-bot" } }
+        : null,
+    (request) =>
+      request.url === "https://api.github.com/repos/acme/widgets/pulls/12/reviews?per_page=100&page=1"
+        ? { json: [{ id: 9, state: "APPROVED", user: { login: "owner" } }] }
+        : null,
+    (request) =>
+      request.url.endsWith("/dismissals")
+        ? dismissStatus === 200 ? { json: {} } : { status: dismissStatus, text: "Forbidden" }
+        : null,
+  ];
+}
 
 describe("PATCH /api/tasks/:id approval", () => {
   let server: Server;
@@ -31,19 +52,21 @@ describe("PATCH /api/tasks/:id approval", () => {
   });
 
   after(async () => {
+    globalThis.fetch = realFetch;
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   });
 
   function patch(id: string, body: unknown): Promise<Response> {
-    return fetch(`${origin}/api/tasks/${id}`, {
+    return realFetch(`${origin}/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   }
 
-  it("revokes the approval stored in CRC without touching the task's phase", async () => {
+  it("revokes the approval stored in CRC and withdraws CRC's approval on the forge, without touching the task's phase", async () => {
+    const requests = stubFetch(crcReviewRoutes());
     taskStore.save(
       makeLinkedTask({
         id: "approved",
@@ -59,6 +82,38 @@ describe("PATCH /api/tasks/:id approval", () => {
     assert.equal(body.approval, null);
     assert.equal(body.phase, "waiting_ci");
     assert.equal(taskStore.get("approved")?.approval, null);
+    assert.deepEqual(
+      requests.filter((request) => request.method === "PUT"),
+      [
+        {
+          method: "PUT",
+          url: "https://api.github.com/repos/acme/widgets/pulls/12/reviews/9/dismissals",
+          token: "gh-merge",
+          body: { message: "Approval revoked in Code Remote Control", event: "DISMISS" },
+        },
+      ],
+    );
+  });
+
+  it("keeps the approval when the forge refuses to withdraw CRC's approval", async () => {
+    stubFetch(crcReviewRoutes(403));
+    const approval = { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: "diff-hash-1" };
+    taskStore.save(makeLinkedTask({ id: "refused", phase: "merging", approval }));
+
+    const res = await patch("refused", { approval: "revoke" });
+
+    assert.equal(res.status, 500);
+    assert.deepEqual(taskStore.get("refused")?.approval, approval);
+  });
+
+  it("does not call the forge when there is no approval to revoke", async () => {
+    const requests = stubFetch([]);
+    taskStore.save(makeLinkedTask({ id: "unapproved" }));
+
+    const res = await patch("unapproved", { approval: "revoke" });
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(requests, []);
   });
 
   it("rejects any other approval value", async () => {

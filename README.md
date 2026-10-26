@@ -269,6 +269,15 @@ must be allowed to approve it (and must not be the author if the project
 forbids self-approval). The task view shows the stored approval with a
 **Revoke approval** button, and each attempt's material / not-material report.
 
+Because the merge token's account counts as human, CRC's own re-approval would
+otherwise look like a fresh human approval on the next tick. So whenever CRC
+cancels a stored approval (a material change, an unexplained push, or **Revoke
+approval**) it also withdraws every approval the merge token's account holds on
+the PR/MR: GitLab's `unapprove`, or dismissing those reviews on GitHub (which
+needs the merge token's account to be allowed to dismiss reviews). If your own
+PAT is the merge token, this withdraws your own approval too. The stored
+approval is cleared once the PR/MR merges.
+
 ### Merge token
 
 Agents get `GITHUB_TOKEN` / `GITLAB_TOKEN`, which should not be able to merge
@@ -281,7 +290,7 @@ privileged token instead:
 - `GITLAB_MERGE_TOKEN` — a token with the `api` scope whose account has
   Maintainer access or is "allowed to merge" on the protected branch.
 
-The merge token is used only for the approve and merge calls and is never
+The merge token is used only for the approve, unapprove and merge calls and is never
 passed to agent containers; the server refuses to create a container whose `env` would carry
 it. Every other forge call, including the fast-forward rebase, uses the agent
 token. Approvals are attributed against the agent token's account, so approvals

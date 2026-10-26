@@ -134,6 +134,36 @@ describe("GitHub with GITHUB_MERGE_TOKEN set", () => {
     );
   });
 
+  it("dismisses every approval the merge token's account left, and no one else's", async () => {
+    const requests = stubFetch([
+      (request) => (request.url === "https://api.github.com/user" ? { json: { login: LOGIN_BY_TOKEN[request.token] } } : null),
+      (request) =>
+        request.url === "https://api.github.com/repos/acme/widgets/pulls/12/reviews?per_page=100&page=1"
+          ? {
+              json: [
+                { id: 1, state: "APPROVED", user: { login: "owner" } },
+                { id: 2, state: "APPROVED", user: { login: "teammate" } },
+                { id: 3, state: "DISMISSED", user: { login: "owner" } },
+                { id: 4, state: "COMMENTED", user: { login: "owner" } },
+                { id: 5, state: "APPROVED", user: null },
+                { id: 6, state: "APPROVED", user: { login: "owner" } },
+              ],
+            }
+          : null,
+      (request) => (request.url.endsWith("/dismissals") ? { json: {} } : null),
+    ]);
+    await github.unapprovePullRequest("acme/widgets", "12");
+    assert.deepEqual(
+      requests.filter((request) => request.method === "PUT"),
+      [1, 6].map((id) => ({
+        method: "PUT",
+        url: `https://api.github.com/repos/acme/widgets/pulls/12/reviews/${id}/dismissals`,
+        token: "gh-merge",
+        body: { message: "Approval revoked in Code Remote Control", event: "DISMISS" },
+      })),
+    );
+  });
+
   it("rebases with the agent token", async () => {
     const requests = stubFetch(githubRoutes([]));
     await github.rebasePullRequest("acme/widgets", "12");
@@ -208,6 +238,35 @@ describe("GitLab with GITLAB_MERGE_TOKEN set", () => {
     await assert.rejects(
       gitlab.approveMergeRequest("acme/widgets", "5", "def456"),
       /^Error: GitLab API error \(using GITLAB_MERGE_TOKEN\): 401 Error: You are not allowed to approve$/,
+    );
+  });
+
+  it("withdraws the merge token's approval when the merge request carries it", async () => {
+    const requests = stubFetch([
+      ...gitlabRoutes(["owner", "teammate"]),
+      (request) =>
+        request.url === "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/unapprove" ? { json: {} } : null,
+    ]);
+    await gitlab.unapproveMergeRequest("acme/widgets", "5");
+    assert.deepEqual(
+      requests.filter((request) => request.method === "POST"),
+      [
+        {
+          method: "POST",
+          url: "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/unapprove",
+          token: "gl-merge",
+          body: undefined,
+        },
+      ],
+    );
+  });
+
+  it("leaves a merge request alone when the merge token has not approved it", async () => {
+    const requests = stubFetch(gitlabRoutes(["teammate"]));
+    await gitlab.unapproveMergeRequest("acme/widgets", "5");
+    assert.deepEqual(
+      requests.filter((request) => request.method !== "GET"),
+      [],
     );
   });
 
