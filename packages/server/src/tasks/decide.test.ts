@@ -157,6 +157,7 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
           pokeCount: 47,
           lastPokedAt: "2026-08-20T11:30:00.000Z",
           resumedAt: null,
+          isMaterial: null,
         },
       ],
     });
@@ -509,11 +510,127 @@ describe("decide: rules 8-11 (review, comments, approval, merge)", () => {
     });
   });
 
-  it("rule 11: merges once a human has approved", async () => {
-    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
+  it("rule 11: records a human approval the first time it is seen", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, makeReviewRequest({ approvedByHuman: true }), noDiffFetch), {
+      kind: "record_approval",
+      headSha: "abc123",
+      diffHash: REVIEWED_DIFF,
+    });
+  });
+
+  it("rule 11: merges once a human approval of the current head is recorded", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: REVIEWED_DIFF },
+    });
     assert.deepEqual(await decide(task, makeReviewRequest({ approvedByHuman: true }), noDiffFetch), {
       kind: "merge",
     });
+  });
+});
+
+describe("decide: approvals stored in CRC", () => {
+  const APPROVED_AT = "2026-08-20T11:00:00.000Z";
+
+  function approvedTask(headSha: string | null, overrides: Partial<Task> = {}): Task {
+    return makeLinkedTask({
+      lastReviewedSha: "def456",
+      lastReviewedDiffHash: CHANGED_DIFF,
+      approval: { approvedAt: APPROVED_AT, headSha, diffHash: REVIEWED_DIFF },
+      ...overrides,
+    });
+  }
+
+  const resetHead = makeReviewRequest({ headSha: "def456", approvedByHuman: false });
+
+  it("re-records an approval the forge reports for a new head", async () => {
+    const task = approvedTask("abc123");
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456", approvedByHuman: true }), noDiffFetch), {
+      kind: "record_approval",
+      headSha: "def456",
+      diffHash: CHANGED_DIFF,
+    });
+  });
+
+  it("carries an unpinned approval onto the next head after the forge reset it", async () => {
+    const task = approvedTask(null);
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), {
+      kind: "pin_approval",
+      headSha: "def456",
+      diffHash: CHANGED_DIFF,
+    });
+  });
+
+  it("carries an approval onto a new head whose diff is identical to the approved one", async () => {
+    const task = approvedTask("abc123", { lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), {
+      kind: "pin_approval",
+      headSha: "def456",
+      diffHash: REVIEWED_DIFF,
+    });
+  });
+
+  it("revokes an approval when an unexplained push changed the diff", async () => {
+    const task = approvedTask("abc123");
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), { kind: "revoke_approval" });
+  });
+
+  it("revokes an approval when neither diff could be hashed", async () => {
+    const task = approvedTask("abc123", {
+      lastReviewedDiffHash: null,
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: null },
+    });
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), { kind: "revoke_approval" });
+  });
+
+  it("revokes an approval the human withdrew on the forge without the head moving", async () => {
+    const task = approvedTask("def456");
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), { kind: "revoke_approval" });
+  });
+
+  it("still waits for CI before merging with a stored approval", async () => {
+    const task = approvedTask(null);
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ headSha: "def456", ciState: "running" }), noDiffFetch),
+      { kind: "noop", phase: "waiting_ci" },
+    );
+  });
+
+  it("still fixes failing CI before merging with a stored approval", async () => {
+    const task = approvedTask(null);
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456", ciState: "failed" }), noDiffFetch);
+    assert.equal(decision.kind, "spawn");
+    assert.equal((decision as { step: string }).step, "fix_ci");
+  });
+
+  it("still reviews a changed head before carrying a stored approval onto it", async () => {
+    const task = approvedTask(null, { lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff()), {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
+    });
+  });
+
+  it("still addresses unresolved threads before merging with a stored approval", async () => {
+    const task = approvedTask(null);
+    const decision = await decide(
+      task,
+      makeReviewRequest({ headSha: "def456", hasUnresolvedComments: true }),
+      noDiffFetch,
+    );
+    assert.equal(decision.kind, "spawn");
+    assert.equal((decision as { step: string }).step, "address_comments");
+  });
+
+  it("still rebases before merging with a stored approval", async () => {
+    const task = approvedTask(null, { repoSource: "gitlab" });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ headSha: "def456", needsRebase: true }), noDiffFetch),
+      { kind: "forge_rebase" },
+    );
   });
 });
 

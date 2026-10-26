@@ -392,6 +392,13 @@ export async function rebasePullRequest(repoFullName: string, id: string): Promi
   await githubRest(GITHUB_AGENT_TOKEN, "PUT", `/repos/${repoFullName}/pulls/${id}/update-branch`);
 }
 
+export async function approvePullRequest(repoFullName: string, id: string, headSha: string): Promise<void> {
+  await githubRest(GITHUB_MERGE_TOKEN, "POST", `/repos/${repoFullName}/pulls/${id}/reviews`, {
+    commit_id: headSha,
+    event: "APPROVE",
+  });
+}
+
 export async function mergePullRequest(repoFullName: string, id: string): Promise<void> {
   const config = await loadConfigurations();
   await githubRest(GITHUB_MERGE_TOKEN, "PUT", `/repos/${repoFullName}/pulls/${id}/merge`, {

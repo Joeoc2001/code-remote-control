@@ -477,6 +477,17 @@ export async function rebaseMergeRequest(repoFullName: string, id: string): Prom
   await gitlabRequest("PUT", `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/rebase`);
 }
 
+export async function approveMergeRequest(repoFullName: string, id: string, headSha: string): Promise<void> {
+  const apiBase = await gitlabApiBase();
+  const encodedProject = encodeURIComponent(repoFullName);
+  await gitlabRequest(
+    "POST",
+    `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/approve`,
+    { sha: headSha },
+    GITLAB_MERGE_TOKEN,
+  );
+}
+
 export async function mergeMergeRequest(repoFullName: string, id: string): Promise<void> {
   const config = await loadConfigurations();
   const apiBase = await gitlabApiBase();

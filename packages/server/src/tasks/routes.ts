@@ -191,10 +191,15 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
       return;
     }
 
-    const { phase, configByStep, discardContainer } = req.body as UpdateTaskRequest;
+    const { phase, configByStep, discardContainer, approval } = req.body as UpdateTaskRequest;
 
-    if (phase === undefined && configByStep === undefined) {
-      res.status(400).json({ error: "Provide phase or configByStep" });
+    if (phase === undefined && configByStep === undefined && approval === undefined) {
+      res.status(400).json({ error: "Provide phase, configByStep or approval" });
+      return;
+    }
+
+    if (approval !== undefined && approval !== "revoke") {
+      res.status(400).json({ error: "approval must be 'revoke'" });
       return;
     }
 
@@ -241,6 +246,10 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
     }
 
     task.configByStep = { ...task.configByStep, ...configByStepPatch };
+
+    if (approval === "revoke") {
+      task.approval = null;
+    }
 
     if (phase === "paused") {
       task.phase = "paused";

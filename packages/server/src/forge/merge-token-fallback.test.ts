@@ -39,6 +39,19 @@ describe("merging without merge tokens set", () => {
     ]);
   });
 
+  it("approves with the agent token when no merge token is set", async () => {
+    const requests = stubFetch([() => ({ json: {} })]);
+    await github.approvePullRequest("acme/widgets", "12", "def456");
+    await gitlab.approveMergeRequest("acme/widgets", "5", "def456");
+    assert.deepEqual(
+      requests.map(({ url, token }) => ({ url, token })),
+      [
+        { url: "https://api.github.com/repos/acme/widgets/pulls/12/reviews", token: "gh-agent" },
+        { url: "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/approve", token: "gl-agent" },
+      ],
+    );
+  });
+
   it("names the agent token in a refused merge's error", async () => {
     stubFetch([() => ({ status: 405, text: "protected branch" })]);
     await assert.rejects(github.mergePullRequest("acme/widgets", "12"), /\(using GITHUB_TOKEN\): 405/);

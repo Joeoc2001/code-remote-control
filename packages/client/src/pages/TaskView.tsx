@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { currentStageFirstAttemptIndex, type Task, type TaskAttempt, type TaskStage } from "../types";
+import { currentStageFirstAttemptIndex, type Task, type TaskApproval, type TaskAttempt, type TaskStage } from "../types";
 import { deleteTask, fetchTask, fetchTaskAttemptLog, subscribeToEvents, updateTask } from "../api";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
@@ -48,6 +48,49 @@ function PokeSummary({ attempt }: { attempt: TaskAttempt }) {
     >
       Poked {attempt.pokeCount}× · last {formatTimeAgo(attempt.lastPokedAt, Date.now())}
     </span>
+  );
+}
+
+function MaterialityChip({ isMaterial }: { isMaterial: boolean | null }) {
+  if (isMaterial === null) return null;
+  return isMaterial ? (
+    <span
+      className="inline-flex items-center rounded-full border border-amber-800/80 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+      title="The agent reported a material change, which cancels any approval stored in CRC"
+    >
+      Material
+    </span>
+  ) : (
+    <span
+      className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-800/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-300"
+      title="The agent reported a non-material change, so any approval stored in CRC carries over"
+    >
+      Not material
+    </span>
+  );
+}
+
+function ApprovalSummary({ approval, onRevoke, busy }: { approval: TaskApproval; onRevoke: () => void; busy: boolean }) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-emerald-800/80 bg-emerald-500/10 px-3 py-2">
+      <p className="text-sm text-emerald-300">
+        Approved in CRC since {formatTimestamp(approval.approvedAt)}{" "}
+        {approval.headSha === null ? (
+          <span className="text-emerald-300/80">(carries over to the next head)</span>
+        ) : (
+          <span className="text-emerald-300/80">
+            (head <code className="font-mono">{approval.headSha.slice(0, 8)}</code>)
+          </span>
+        )}
+      </p>
+      <button
+        onClick={onRevoke}
+        disabled={busy}
+        className="ml-auto px-2.5 py-1 text-xs text-slate-300 hover:text-slate-100 border border-slate-700 hover:bg-slate-800 rounded-md transition-colors disabled:opacity-50"
+      >
+        Revoke approval
+      </button>
+    </div>
   );
 }
 
@@ -114,6 +157,7 @@ function AttemptRow({ taskId, attempt, index, isActive, activeContainerId }: Att
           {formatTimestamp(attempt.startedAt)}
           {attempt.finishedAt && ` · ${formatDuration(attempt.startedAt, attempt.finishedAt)}`}
         </span>
+        <MaterialityChip isMaterial={attempt.isMaterial} />
         <PokeSummary attempt={attempt} />
         <div className="ml-auto flex items-center gap-2">
           {isActive && activeContainerId && (
@@ -369,6 +413,15 @@ export default function TaskView() {
                   />
                 )}
               </div>
+              {task.approval && (
+                <ApprovalSummary
+                  approval={task.approval}
+                  busy={busy}
+                  onRevoke={() =>
+                    runAction(async () => setTask(await updateTask(task.id, { approval: "revoke" })))
+                  }
+                />
+              )}
               {task.sourceText && !task.workItem && <SourceText text={task.sourceText} />}
               {task.sourceText && task.workItem && (
                 <details className="mt-3">

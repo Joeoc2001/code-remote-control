@@ -7,6 +7,7 @@ import {
   buildReviewRequestPrompt,
   buildStallPokePrompt,
   buildTaskImplementPrompt,
+  IS_MATERIAL_PATH,
 } from "@crc/shared/prompts";
 import type {
   ManagedContainer,
@@ -36,6 +37,7 @@ export const MAX_CONSECUTIVE_ERRORS = 5;
 export const CLOSURE_GRACE_MS = 2 * 60 * 1000;
 export const MAX_STAGES = 5;
 export const HELD_CONTAINER_SUFFIX = "; its container was kept so the agent can be inspected or prompted from the terminal";
+const MATERIALITY_REPORTING_STEPS: readonly TaskStep[] = ["implement", "rebase", "fix_ci", "address_comments"];
 
 export interface SchedulerDeps {
   store: TaskStore;
@@ -136,6 +138,11 @@ function finishAttempt(deps: SchedulerDeps, task: Task, attempt: TaskAttempt, er
     task.lastReviewedSha = attempt.headShaBefore;
     task.lastReviewedDiffHash = attempt.diffHashBefore;
   }
+  if (attempt.isMaterial === true) {
+    task.approval = null;
+  } else if (error === null && attempt.isMaterial === false && task.approval) {
+    task.approval.headSha = null;
+  }
   task.activeContainerId = null;
   task.activeStep = null;
 }
@@ -178,14 +185,20 @@ function captureContainerLinks(
     return;
   }
   captureReviewRequestLink(deps, task, codeStatus);
+  if (MATERIALITY_REPORTING_STEPS.includes(attempt.step)) {
+    attempt.isMaterial = codeStatus.isMaterialChange;
+  }
 }
 
-function missingDeliverableReason(task: Task, step: TaskStep): string | null {
-  if (step === "create_issue" && task.createdIssueUrl === null) {
+function missingDeliverableReason(task: Task, attempt: TaskAttempt): string | null {
+  if (attempt.step === "create_issue" && task.createdIssueUrl === null) {
     return "Issue-creation agent finished without reporting a created issue URL";
   }
-  if (step === "implement" && task.reviewRequest === null) {
+  if (attempt.step === "implement" && task.reviewRequest === null) {
     return "Implement agent finished without opening a PR/MR";
+  }
+  if (MATERIALITY_REPORTING_STEPS.includes(attempt.step) && attempt.isMaterial === null) {
+    return `Agent finished without writing true/false to ${IS_MATERIAL_PATH}`;
   }
   return null;
 }
@@ -250,6 +263,7 @@ function startNextStage(deps: SchedulerDeps, task: Task, workItem: RepoWorkItem)
   task.reviewRequest = null;
   task.lastReviewedSha = null;
   task.lastReviewedDiffHash = null;
+  task.approval = null;
   task.mergedAt = null;
   task.attemptsByStep = Object.fromEntries(TASK_STEPS.map((step) => [step, 0])) as Record<TaskStep, number>;
   task.consecutiveErrors = 0;
@@ -393,7 +407,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   }
 
   captureContainerLinks(deps, task, attempt, codeStatus);
-  const missingDeliverable = missingDeliverableReason(task, attempt.step);
+  const missingDeliverable = missingDeliverableReason(task, attempt);
   if (missingDeliverable !== null) {
     await holdAttempt(deps, task, attemptIndex, `${missingDeliverable}${HELD_CONTAINER_SUFFIX}`);
     return "settle";
@@ -499,6 +513,7 @@ function recordSpawnedAgent(
     pokeCount: 0,
     lastPokedAt: null,
     resumedAt: null,
+    isMaterial: null,
   });
   task.attemptsByStep[spawn.step] += 1;
   task.activeContainerId = container.id;
@@ -556,6 +571,13 @@ async function reconcileTaskContainers(deps: SchedulerDeps): Promise<void> {
   }
 }
 
+async function mergeReviewRequest(deps: SchedulerDeps, forge: Forge, task: Task): Promise<void> {
+  task.phase = "merging";
+  saveTask(deps, task);
+  await forge.merge(task.repoFullName, task.reviewRequest!.id);
+  markReviewRequestMerged(deps, task);
+}
+
 async function executeDecision(
   deps: SchedulerDeps,
   forge: Forge,
@@ -590,18 +612,32 @@ async function executeDecision(
     }
     case "forge_rebase": {
       await forge.rebase(task.repoFullName, task.reviewRequest!.id);
+      if (task.approval) task.approval.headSha = null;
       task.phase = "waiting_ci";
       clearTaskError(task);
       saveTask(deps, task);
       return;
     }
+    case "record_approval": {
+      task.approval = { approvedAt: deps.now().toISOString(), headSha: decision.headSha, diffHash: decision.diffHash };
+      await mergeReviewRequest(deps, forge, task);
+      return;
+    }
+    case "pin_approval": {
+      await forge.approve(task.repoFullName, task.reviewRequest!.id, decision.headSha);
+      task.approval = { ...task.approval!, headSha: decision.headSha, diffHash: decision.diffHash };
+      await mergeReviewRequest(deps, forge, task);
+      return;
+    }
+    case "revoke_approval": {
+      task.approval = null;
+      task.phase = "waiting_approval";
+      clearTaskError(task);
+      saveTask(deps, task);
+      return;
+    }
     case "merge": {
-      if (task.phase !== "merging") {
-        task.phase = "merging";
-        saveTask(deps, task);
-      }
-      await forge.merge(task.repoFullName, task.reviewRequest!.id);
-      markReviewRequestMerged(deps, task);
+      await mergeReviewRequest(deps, forge, task);
       return;
     }
     case "spawn": {

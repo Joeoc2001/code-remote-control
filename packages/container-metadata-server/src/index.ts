@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ContainerCodeStatus, ForgeProvider, PipelineStatus, ReviewRequestStatus } from "../../container-metadata-types/src/index.js";
 import { readInstanceStatus } from "./instance-status.js";
+import { readIsMaterialChange } from "./is-material.js";
 
 const execFileAsync = promisify(execFile);
 const METADATA_PORT = parseInt(process.env.CRC_METADATA_PORT || "8081", 10);
@@ -272,6 +273,7 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
   const commitSha = await runCommand("git", ["rev-parse", "--short", "HEAD"]);
   const currentTaskDescription = await readOptionalTrimmedFile(TASK_DESCRIPTION_PATH);
   const createdIssueUrl = await readOptionalTrimmedFile(CREATED_ISSUE_URL_PATH);
+  const isMaterialChange = await readIsMaterialChange();
 
   let orgName: string | null = null;
   let repoName: string | null = null;
@@ -306,6 +308,7 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
     provider,
     currentTaskDescription,
     createdIssueUrl,
+    isMaterialChange,
     reviewRequest,
     pipeline,
     warnings,

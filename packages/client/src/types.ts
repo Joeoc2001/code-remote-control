@@ -15,6 +15,7 @@ export type {
   RepoReviewRequest,
   RepoSource,
   Task,
+  TaskApproval,
   TaskAttempt,
   TaskPhase,
   TaskStage,

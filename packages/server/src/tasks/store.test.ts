@@ -135,6 +135,45 @@ describe("TaskStore", () => {
     assert.throws(() => new TaskStore(stateDir), /task task-1 has invalid stage fields/);
   });
 
+  it("migrates tasks and attempts saved before CRC stored approvals", () => {
+    const stateDir = makeStateDir();
+    const { isMaterial: _isMaterial, ...legacyAttempt } = makeAttempt();
+    const { approval: _approval, ...legacy } = makeTask({ attempts: [] });
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...legacy, attempts: [legacyAttempt] }]), "utf-8");
+
+    const task = new TaskStore(stateDir).get("task-1");
+
+    assert.equal(task?.approval, null);
+    assert.equal(task?.attempts[0].isMaterial, null);
+  });
+
+  it("persists a stored approval and each attempt's is_material report across instances", () => {
+    const stateDir = makeStateDir();
+    const task = makeTask({
+      approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: null, diffHash: "diff-hash-1" },
+      attempts: [makeAttempt({ isMaterial: false }), makeAttempt({ isMaterial: true })],
+    });
+    new TaskStore(stateDir).save(task);
+
+    const reloaded = new TaskStore(stateDir).get("task-1");
+    assert.deepEqual(reloaded?.approval, task.approval);
+    assert.deepEqual(reloaded?.attempts.map((attempt) => attempt.isMaterial), [false, true]);
+  });
+
+  it("fails loudly on an attempt with a malformed is_material report", () => {
+    const stateDir = makeStateDir();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), attempts: [{ ...makeAttempt(), isMaterial: "true" }] }]), "utf-8");
+    assert.throws(() => new TaskStore(stateDir), /task task-1 has an attempt with an invalid isMaterial/);
+  });
+
+  for (const approval of ["yes", { headSha: "abc123", diffHash: null }, { approvedAt: "2026-08-20T11:00:00.000Z", headSha: 5, diffHash: null }]) {
+    it(`fails loudly on a task with a malformed approval ${JSON.stringify(approval)}`, () => {
+      const stateDir = makeStateDir();
+      writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), approval }]), "utf-8");
+      assert.throws(() => new TaskStore(stateDir), /task task-1 has an invalid approval/);
+    });
+  }
+
   it("fails loudly on a malformed tasks file", () => {
     const stateDir = makeStateDir();
     mkdirSync(stateDir, { recursive: true });

@@ -32,6 +32,7 @@ export type {
   ReviewRequestState,
   SSEEvent,
   Task,
+  TaskApproval,
   TaskAttempt,
   TaskPhase,
   TaskReviewRequestRef,

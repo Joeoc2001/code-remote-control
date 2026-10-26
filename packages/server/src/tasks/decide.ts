@@ -20,6 +20,9 @@ export type TaskDecision =
   | { kind: "spawn"; step: TaskStep; headShaBefore: string | null; diffHashBefore: string | null }
   | { kind: "mark_reviewed"; headSha: string; diffHash: string }
   | { kind: "forge_rebase" }
+  | { kind: "record_approval"; headSha: string; diffHash: string | null }
+  | { kind: "pin_approval"; headSha: string; diffHash: string | null }
+  | { kind: "revoke_approval" }
   | { kind: "merge" }
   | { kind: "mark_merged" }
   | { kind: "fail"; reason: string };
@@ -101,6 +104,22 @@ function unusableBodyReason(reviewRequest: RepoReviewRequest): string | null {
     return `${reviewRequest.reference} has a comment whose whole body is a stdin placeholder ('@-'): an agent passed it to a command that does not read the body from stdin, so the real comment was never posted`;
   }
   return null;
+}
+
+function approvalDecision(task: Task, reviewRequest: RepoReviewRequest): TaskDecision {
+  const { headSha } = reviewRequest;
+  const diffHash = task.lastReviewedDiffHash;
+  const approval = task.approval;
+  if (reviewRequest.approvedByHuman) {
+    return approval?.headSha === headSha ? { kind: "merge" } : { kind: "record_approval", headSha, diffHash };
+  }
+  if (approval === null) {
+    return { kind: "noop", phase: "waiting_approval" };
+  }
+  const carriesOver =
+    approval.headSha !== headSha &&
+    (approval.headSha === null || (diffHash !== null && diffHash === approval.diffHash));
+  return carriesOver ? { kind: "pin_approval", headSha, diffHash } : { kind: "revoke_approval" };
 }
 
 export async function decide(
@@ -198,9 +217,5 @@ export async function decide(
     return spawn(task, "address_comments");
   }
 
-  if (!reviewRequest.approvedByHuman) {
-    return { kind: "noop", phase: "waiting_approval" };
-  }
-
-  return { kind: "merge" };
+  return approvalDecision(task, reviewRequest);
 }

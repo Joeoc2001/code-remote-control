@@ -268,6 +268,13 @@ export interface TaskAttempt {
   pokeCount: number;
   lastPokedAt: string | null;
   resumedAt: string | null;
+  isMaterial: boolean | null;
+}
+
+export interface TaskApproval {
+  approvedAt: string;
+  headSha: string | null;
+  diffHash: string | null;
 }
 
 export interface TaskReviewRequestRef {
@@ -302,6 +309,7 @@ export interface Task {
   reviewRequest: TaskReviewRequestRef | null;
   lastReviewedSha: string | null;
   lastReviewedDiffHash: string | null;
+  approval: TaskApproval | null;
   activeContainerId: string | null;
   activeStep: TaskStep | null;
   attemptsByStep: Record<TaskStep, number>;
@@ -370,6 +378,7 @@ export interface UpdateTaskRequest {
   phase?: "paused" | "resume";
   discardContainer?: boolean;
   configByStep?: Partial<Record<TaskStep, string>>;
+  approval?: "revoke";
 }
 
 export type SSEEvent =

@@ -113,6 +113,27 @@ describe("GitHub with GITHUB_MERGE_TOKEN set", () => {
     ]);
   });
 
+  it("approves the pull request at the given head with the merge token", async () => {
+    const requests = stubFetch([(request) => (request.url.endsWith("/pulls/12/reviews") ? { json: {} } : null)]);
+    await github.approvePullRequest("acme/widgets", "12", "def456");
+    assert.deepEqual(requests, [
+      {
+        method: "POST",
+        url: "https://api.github.com/repos/acme/widgets/pulls/12/reviews",
+        token: "gh-merge",
+        body: { commit_id: "def456", event: "APPROVE" },
+      },
+    ]);
+  });
+
+  it("names the merge token in a refused approval's error", async () => {
+    stubFetch([() => ({ status: 422, text: "Can not approve your own pull request" })]);
+    await assert.rejects(
+      github.approvePullRequest("acme/widgets", "12", "def456"),
+      /^Error: GitHub API error \(using GITHUB_MERGE_TOKEN\): 422 Error: Can not approve your own pull request$/,
+    );
+  });
+
   it("rebases with the agent token", async () => {
     const requests = stubFetch(githubRoutes([]));
     await github.rebasePullRequest("acme/widgets", "12");
@@ -164,6 +185,30 @@ describe("GitLab with GITLAB_MERGE_TOKEN set", () => {
         body: { squash: true },
       },
     ]);
+  });
+
+  it("approves the merge request at the given head with the merge token", async () => {
+    const requests = stubFetch([
+      (request) =>
+        request.url === "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/approve" ? { json: {} } : null,
+    ]);
+    await gitlab.approveMergeRequest("acme/widgets", "5", "def456");
+    assert.deepEqual(requests, [
+      {
+        method: "POST",
+        url: "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/approve",
+        token: "gl-merge",
+        body: { sha: "def456" },
+      },
+    ]);
+  });
+
+  it("names the merge token in a refused approval's error", async () => {
+    stubFetch([() => ({ status: 401, text: "You are not allowed to approve" })]);
+    await assert.rejects(
+      gitlab.approveMergeRequest("acme/widgets", "5", "def456"),
+      /^Error: GitLab API error \(using GITLAB_MERGE_TOKEN\): 401 Error: You are not allowed to approve$/,
+    );
   });
 
   it("rebases with the agent token", async () => {

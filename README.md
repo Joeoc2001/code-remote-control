@@ -243,6 +243,32 @@ seconds and spawns exactly the agent the current state calls for:
    (approvals from the bot's own forge account are ignored), then merges via
    the forge API.
 
+### Approvals stored in CRC
+
+Once CRC sees a human approval it stores it on the task, so it survives forges
+that reset approvals on push (e.g. GitLab's "Reset approvals on push" after a
+rebase). Every agent that pushes code (implement, rebase, fix CI, address
+comments) must write `true` or `false` to `/run/crc-is-material` before it
+finishes; an agent that leaves it unwritten (or writes anything else) is held
+like any other missing deliverable. The stored approval then follows the
+PR/MR's head:
+
+- `true` (a material change) cancels it, and the task waits for a fresh human
+  approval.
+- `false`, or a fast-forward rebase via the forge API, lets it carry over to
+  the next head.
+- Any other head change keeps it only if the diff is identical to the approved
+  one; an unexplained push with a different diff cancels it. A human withdrawing
+  their approval on the forge, without the head moving, cancels it too.
+
+A stored approval only replaces the final human-approval gate: CI, rebasing,
+review, and unresolved threads still gate the merge. When it carries over to a
+head the forge no longer shows as approved, the server re-approves the PR/MR
+at that head with the merge token before merging, so the merge token's account
+must be allowed to approve it (and must not be the author if the project
+forbids self-approval). The task view shows the stored approval with a
+**Revoke approval** button, and each attempt's material / not-material report.
+
 ### Merge token
 
 Agents get `GITHUB_TOKEN` / `GITLAB_TOKEN`, which should not be able to merge
@@ -255,8 +281,8 @@ privileged token instead:
 - `GITLAB_MERGE_TOKEN` — a token with the `api` scope whose account has
   Maintainer access or is "allowed to merge" on the protected branch.
 
-The merge token is used only for the merge call and is never passed to agent
-containers; the server refuses to create a container whose `env` would carry
+The merge token is used only for the approve and merge calls and is never
+passed to agent containers; the server refuses to create a container whose `env` would carry
 it. Every other forge call, including the fast-forward rebase, uses the agent
 token. Approvals are attributed against the agent token's account, so approvals
 made by the merge token's account (e.g. your own PAT) still count as human.

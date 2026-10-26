@@ -28,6 +28,7 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     reviewRequest: null,
     lastReviewedSha: null,
     lastReviewedDiffHash: null,
+    approval: null,
     activeContainerId: null,
     activeStep: null,
     attemptsByStep: { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
@@ -97,6 +98,7 @@ export function makeAttempt(overrides: Partial<TaskAttempt> = {}): TaskAttempt {
     pokeCount: 0,
     lastPokedAt: null,
     resumedAt: null,
+    isMaterial: null,
     ...overrides,
   };
 }

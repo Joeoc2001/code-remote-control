@@ -44,6 +44,7 @@ export interface ContainerCodeStatus {
   provider: ForgeProvider;
   currentTaskDescription: string | null;
   createdIssueUrl: string | null;
+  isMaterialChange: boolean | null;
   reviewRequest: ReviewRequestStatus | null;
   pipeline: PipelineStatus | null;
   warnings: string[];
