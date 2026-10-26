@@ -75,13 +75,15 @@ function ApprovalSummary({ approval, onRevoke, busy }: { approval: TaskApproval;
     <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-emerald-800/80 bg-emerald-500/10 px-3 py-2">
       <p className="text-sm text-emerald-300">
         Approved in CRC since {formatTimestamp(approval.approvedAt)}{" "}
-        {approval.headSha === null ? (
-          <span className="text-emerald-300/80">(carries over to the next head)</span>
-        ) : (
-          <span className="text-emerald-300/80">
-            (head <code className="font-mono">{approval.headSha.slice(0, 8)}</code>)
-          </span>
-        )}
+        <span className="text-emerald-300/80">
+          (head <code className="font-mono">{approval.headSha.slice(0, 8)}</code>
+          {approval.carriesTo !== null && (
+            <>
+              , carries over to <code className="font-mono">{approval.carriesTo.slice(0, 8)}</code>
+            </>
+          )}
+          {approval.rebasingFrom !== null && <>, carries over to the head the forge rebase produces</>})
+        </span>
       </p>
       <button
         onClick={onRevoke}

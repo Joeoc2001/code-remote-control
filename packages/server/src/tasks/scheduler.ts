@@ -26,7 +26,7 @@ import type {
 import { currentStageFirstAttemptIndex, TASK_STEPS } from "../types.js";
 import type { Forge } from "../forge/index.js";
 import type { TaskStore } from "./store.js";
-import { withdrawApproval } from "./approval.js";
+import { approvalCoversHead, withdrawApproval } from "./approval.js";
 import { findMissingConfig, findUnfinishedInstance, makeNewTask } from "./new-task.js";
 import type { QuickPromptPatch, QuickPromptStore } from "./quick-prompt-store.js";
 import { completedReviews, decide, NIT_THREAD_REVIEW_LIMIT, type TaskDecision } from "./decide.js";
@@ -138,9 +138,6 @@ function finishAttempt(deps: SchedulerDeps, task: Task, attempt: TaskAttempt, er
   if (error === null && attempt.step === "review") {
     task.lastReviewedSha = attempt.headShaBefore;
     task.lastReviewedDiffHash = attempt.diffHashBefore;
-  }
-  if (error === null && attempt.isMaterial === false && task.approval?.headSha === attempt.headShaBefore) {
-    task.approval.headSha = null;
   }
   task.activeContainerId = null;
   task.activeStep = null;
@@ -420,6 +417,10 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
   await deps.removeContainer(containerId);
   finishAttempt(deps, task, attempt, null);
+  if (attempt.isMaterial === false && approvalCoversHead(task.approval, attempt.headShaBefore)) {
+    task.approval.carriesTo = codeStatus.commitSha;
+    task.approval.rebasingFrom = null;
+  }
   clearTaskError(task);
   saveTask(deps, task);
   return "settle";
@@ -576,6 +577,14 @@ async function reconcileTaskContainers(deps: SchedulerDeps): Promise<void> {
   }
 }
 
+function adoptRebasedHead(deps: SchedulerDeps, task: Task, reviewRequest: RepoReviewRequest): void {
+  const approval = task.approval;
+  if (approval === null || approval.rebasingFrom === null || approval.rebasingFrom === reviewRequest.headSha) return;
+  approval.carriesTo = reviewRequest.headSha;
+  approval.rebasingFrom = null;
+  saveTask(deps, task);
+}
+
 async function mergeReviewRequest(deps: SchedulerDeps, forge: Forge, task: Task): Promise<void> {
   task.phase = "merging";
   saveTask(deps, task);
@@ -617,20 +626,35 @@ async function executeDecision(
     }
     case "forge_rebase": {
       await forge.rebase(task.repoFullName, task.reviewRequest!.id);
-      if (task.approval?.headSha === decision.headSha) task.approval.headSha = null;
+      if (approvalCoversHead(task.approval, decision.headSha)) {
+        task.approval.carriesTo = null;
+        task.approval.rebasingFrom = decision.headSha;
+      }
       task.phase = "waiting_ci";
       clearTaskError(task);
       saveTask(deps, task);
       return;
     }
     case "record_approval": {
-      task.approval = { approvedAt: deps.now().toISOString(), headSha: decision.headSha, diffHash: decision.diffHash };
+      task.approval = {
+        approvedAt: deps.now().toISOString(),
+        headSha: decision.headSha,
+        diffHash: decision.diffHash,
+        carriesTo: null,
+        rebasingFrom: null,
+      };
       await mergeReviewRequest(deps, forge, task);
       return;
     }
     case "pin_approval": {
       await forge.approve(task.repoFullName, task.reviewRequest!.id, decision.headSha);
-      task.approval = { ...task.approval!, headSha: decision.headSha, diffHash: decision.diffHash };
+      task.approval = {
+        ...task.approval!,
+        headSha: decision.headSha,
+        diffHash: decision.diffHash,
+        carriesTo: null,
+        rebasingFrom: null,
+      };
       await mergeReviewRequest(deps, forge, task);
       return;
     }
@@ -814,6 +838,7 @@ export async function runTaskSchedulerTick(deps: SchedulerDeps): Promise<void> {
             (await forge.getReviewRequest(repoFullName, linkedId));
         }
         if (!isSchedulable(task)) continue;
+        if (reviewRequest) adoptRebasedHead(deps, task, reviewRequest);
         const decision = await decide(task, reviewRequest, diffHashFetcher(forge, task));
         await executeDecision(deps, forge, task, decision, reviewRequest);
       } catch (err) {

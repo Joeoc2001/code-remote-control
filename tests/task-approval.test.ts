@@ -24,7 +24,7 @@ function attempt(overrides: Partial<TaskAttempt>): TaskAttempt {
 
 const approvedTask: Task = {
   ...makeTask("a", "waiting_ci", "2026-01-01T00:00:00.000Z"),
-  approval: { approvedAt: "2026-01-01T02:00:00.000Z", headSha: "0123456789abcdef", diffHash: "diff-hash-1" },
+  approval: { approvedAt: "2026-01-01T02:00:00.000Z", headSha: "0123456789abcdef", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
   attempts: [
     attempt({ step: "implement", isMaterial: true }),
     attempt({ step: "review" }),
@@ -32,9 +32,26 @@ const approvedTask: Task = {
   ],
 };
 
-const unpinnedTask: Task = {
+const carriedTask: Task = {
   ...makeTask("u", "waiting_ci", "2026-01-01T00:00:00.000Z"),
-  approval: { approvedAt: "2026-01-01T02:00:00.000Z", headSha: null, diffHash: "diff-hash-1" },
+  approval: {
+    approvedAt: "2026-01-01T02:00:00.000Z",
+    headSha: "0123456789abcdef",
+    diffHash: "diff-hash-1",
+    carriesTo: "fedcba9876543210",
+    rebasingFrom: null,
+  },
+};
+
+const rebasingTask: Task = {
+  ...makeTask("r", "waiting_ci", "2026-01-01T00:00:00.000Z"),
+  approval: {
+    approvedAt: "2026-01-01T02:00:00.000Z",
+    headSha: "0123456789abcdef",
+    diffHash: "diff-hash-1",
+    carriesTo: null,
+    rebasingFrom: "0123456789abcdef",
+  },
 };
 
 const unapprovedTask: Task = makeTask("n", "waiting_approval", "2026-01-01T00:00:00.000Z");
@@ -51,9 +68,10 @@ describe("CRC-stored approvals in the task view", () => {
 
   before(async () => {
     harness = await startClientApp({
-      "/api/tasks": [approvedTask, unpinnedTask, unapprovedTask, mergedTask],
+      "/api/tasks": [approvedTask, carriedTask, rebasingTask, unapprovedTask, mergedTask],
       "/api/tasks/a": approvedTask,
-      "/api/tasks/u": unpinnedTask,
+      "/api/tasks/u": carriedTask,
+      "/api/tasks/r": rebasingTask,
       "/api/tasks/n": unapprovedTask,
       "/api/tasks/m": mergedTask,
     });
@@ -105,17 +123,22 @@ describe("CRC-stored approvals in the task view", () => {
     }
   });
 
-  test("explains that an unpinned approval carries over to the next head", async () => {
-    const page = await harness.browser.newPage();
-    try {
-      await page.goto(`${harness.origin}/tasks/u`, { waitUntil: "networkidle" });
-      const summary = page.getByText(/^Approved in CRC since/);
-      await summary.waitFor({ timeout: 10_000 });
-      assert.match(await summary.innerText(), /\(carries over to the next head\)$/);
-    } finally {
-      await page.close();
-    }
-  });
+  for (const { id, expected } of [
+    { id: "u", expected: /\(head 01234567, carries over to fedcba98\)$/ },
+    { id: "r", expected: /\(head 01234567, carries over to the head the forge rebase produces\)$/ },
+  ]) {
+    test(`names the head an approval carries over to (task ${id})`, async () => {
+      const page = await harness.browser.newPage();
+      try {
+        await page.goto(`${harness.origin}/tasks/${id}`, { waitUntil: "networkidle" });
+        const summary = page.getByText(/^Approved in CRC since/);
+        await summary.waitFor({ timeout: 10_000 });
+        assert.match(await summary.innerText(), expected);
+      } finally {
+        await page.close();
+      }
+    });
+  }
 
   test("shows no approval for a task without one", async () => {
     const page = await harness.browser.newPage();

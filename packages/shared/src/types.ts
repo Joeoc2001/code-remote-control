@@ -273,8 +273,10 @@ export interface TaskAttempt {
 
 export interface TaskApproval {
   approvedAt: string;
-  headSha: string | null;
+  headSha: string;
   diffHash: string | null;
+  carriesTo: string | null;
+  rebasingFrom: string | null;
 }
 
 export interface TaskReviewRequestRef {

@@ -256,13 +256,18 @@ request fail, so the task records an error on every tick and fails after
 
 - `true` (a material change) cancels it, and the task waits for a fresh human
   approval.
-- `false`, or a fast-forward rebase via the forge API, lets it carry over to
-  the next head, but only if the agent or rebase started from the approved
-  head. If the head had already moved, the approval stays pinned to the old
-  head and the diff check below decides.
-- Any other head change keeps it only if the diff is identical to the approved
-  one; an unexplained push with a different diff cancels it. A human withdrawing
-  their approval on the forge, without the head moving, cancels it too.
+- `false` lets it carry over to exactly the head the agent pushed, and a rebase
+  via the forge API lets it carry over to the head the forge reports once that
+  rebase lands, but only if the agent or rebase started from a head the
+  approval covers. If the head had already moved, or moves again afterwards,
+  the diff check below decides.
+- While the forge still shows a human approval, CRC follows it, as before (so
+  on GitHub without "Dismiss stale pull request approvals" an outside push is
+  merged on the existing approval). Once the forge has dropped it, any other
+  head change keeps the stored approval only if the diff is identical to the
+  approved one; an unexplained push with a different diff cancels it. A human
+  withdrawing their approval on the forge, without the head moving, cancels it
+  too.
 
 A stored approval only replaces the final human-approval gate: CI, rebasing,
 review, and unresolved threads still gate the merge. When it carries over to a
@@ -284,6 +289,10 @@ that moment, so approvals from other accounts that the forge keeps (GitHub
 without "Dismiss stale pull request approvals", GitLab without "Reset
 approvals on push") cannot re-record it. On GitLab this relies on the
 approvals API reporting `approved_at`; CRC fails the request if it doesn't.
+The cancellation time comes from the CRC server's clock and the approval time
+from the forge's, so clock skew matters only for an approval given within a few
+seconds of a cancellation; a fast CRC clock just ignores it, and a slow one may
+count an approval given just before the cancellation.
 The stored approval is cleared once the PR/MR merges.
 
 ### Merge token

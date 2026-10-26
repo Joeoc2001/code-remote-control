@@ -71,7 +71,7 @@ describe("PATCH /api/tasks/:id approval", () => {
       makeLinkedTask({
         id: "approved",
         phase: "waiting_ci",
-        approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: "diff-hash-1" },
+        approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
       }),
     );
 
@@ -99,7 +99,7 @@ describe("PATCH /api/tasks/:id approval", () => {
 
   it("keeps the approval when the forge refuses to withdraw CRC's approval", async () => {
     stubFetch(crcReviewRoutes(403));
-    const approval = { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: "diff-hash-1" };
+    const approval = { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null };
     taskStore.save(makeLinkedTask({ id: "refused", phase: "merging", approval }));
 
     const res = await patch("refused", { approval: "revoke" });
@@ -119,7 +119,7 @@ describe("PATCH /api/tasks/:id approval", () => {
   });
 
   it("rejects any other approval value", async () => {
-    const approval = { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: null };
+    const approval = { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: null, carriesTo: null, rebasingFrom: null };
     taskStore.save(makeLinkedTask({ id: "kept", approval }));
 
     const res = await patch("kept", { approval: "grant" });

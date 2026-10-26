@@ -151,7 +151,7 @@ describe("TaskStore", () => {
   it("persists a stored approval and each attempt's is_material report across instances", () => {
     const stateDir = makeStateDir();
     const task = makeTask({
-      approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: null, diffHash: "diff-hash-1" },
+      approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "def456", rebasingFrom: null },
       approvalCancelledAt: "2026-08-20T10:00:00.000Z",
       attempts: [makeAttempt({ isMaterial: false }), makeAttempt({ isMaterial: true })],
     });
@@ -169,7 +169,7 @@ describe("TaskStore", () => {
     assert.throws(() => new TaskStore(stateDir), /task task-1 has an attempt with an invalid isMaterial/);
   });
 
-  for (const approval of ["yes", { headSha: "abc123", diffHash: null }, { approvedAt: "2026-08-20T11:00:00.000Z", headSha: 5, diffHash: null }]) {
+  for (const approval of ["yes", { headSha: "abc123", diffHash: null }, { approvedAt: "2026-08-20T11:00:00.000Z", headSha: 5, diffHash: null, carriesTo: null, rebasingFrom: null }, { approvedAt: "2026-08-20T11:00:00.000Z", headSha: null, diffHash: null, carriesTo: "abc123", rebasingFrom: null }, { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: null }]) {
     it(`fails loudly on a task with a malformed approval ${JSON.stringify(approval)}`, () => {
       const stateDir = makeStateDir();
       writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), approval }]), "utf-8");

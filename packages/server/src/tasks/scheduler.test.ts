@@ -2917,7 +2917,7 @@ describe("scheduler: approvals stored in CRC", () => {
       activeStep: step,
       attempts: [makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "abc123" })],
       attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0, [step]: 1 },
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
       ...overrides,
     });
     const harness = makeHarness({
@@ -2964,7 +2964,7 @@ describe("scheduler: approvals stored in CRC", () => {
       assert.equal(task.activeContainerId, CONTAINER_ID);
       assert.equal(task.attempts[0].finishedAt, null);
       assert.equal(task.attempts[0].isMaterial, null);
-      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" });
+      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
     });
   }
 
@@ -2983,7 +2983,7 @@ describe("scheduler: approvals stored in CRC", () => {
       assert.deepEqual(harness.removed, [CONTAINER_ID]);
       assert.equal(task.attempts[0].error, null);
       assert.equal(task.attempts[0].isMaterial, null);
-      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" });
+      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
     });
   }
 
@@ -3010,7 +3010,7 @@ describe("scheduler: approvals stored in CRC", () => {
     assert.equal(task.error, "GitHub API error (using GITHUB_MERGE_TOKEN): 403 Forbidden");
     assert.deepEqual(harness.removed, []);
     assert.equal(task.activeContainerId, CONTAINER_ID);
-    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" });
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
   });
 
   it("does not merge a material change on the strength of CRC's own earlier re-approval", async () => {
@@ -3020,7 +3020,7 @@ describe("scheduler: approvals stored in CRC", () => {
       lastReviewedDiffHash: "diff-hash-1",
       attempts: [makeAttempt({ step: "address_comments", containerId: CONTAINER_ID, startedAt: RECENT_START })],
       attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 1 },
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
     });
     const options: HarnessOptions = {
       tasks: [task],
@@ -3055,7 +3055,7 @@ describe("scheduler: approvals stored in CRC", () => {
     const task = makeLinkedTask({
       lastReviewedSha: "rebased789",
       lastReviewedDiffHash: "diff-hash-1",
-      approval: { approvedAt: APPROVED_AT, headSha: null, diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null },
     });
     const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ headSha: "rebased789" })] });
     const forge = harness.deps.getForge("github");
@@ -3084,7 +3084,7 @@ describe("scheduler: approvals stored in CRC", () => {
     const task = makeLinkedTask({
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: "diff-hash-1",
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
     });
     const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })] });
 
@@ -3096,13 +3096,47 @@ describe("scheduler: approvals stored in CRC", () => {
     assert.equal(harness.store.get(task.id)?.approval, null);
   });
 
-  it("unpins the stored approval so it carries onto the head a non-material change pushes", async () => {
+  it("carries the stored approval onto exactly the head a non-material change pushed", async () => {
     const { task, harness } = finishActiveAttempt("rebase", false);
+    harness.options.codeStatus![CONTAINER_NAME].commitSha = "nitfix456";
 
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: null, diffHash: "diff-hash-1" });
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "nitfix456", rebasingFrom: null });
+  });
+
+  it("does not carry the approval onto an outside push that lands after a non-material change", async () => {
+    const { task, harness } = finishActiveAttempt("address_comments", false);
+    harness.options.codeStatus![CONTAINER_NAME].commitSha = "nitfix456";
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.activeContainerId, null);
+    assert.equal(task.approval?.carriesTo, "nitfix456");
+
+    task.lastReviewedSha = "outside999";
+    task.lastReviewedDiffHash = "diff-hash-3";
+    harness.options.snapshot = [makeReviewRequest({ headSha: "outside999" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("carries a carried-over approval through a further non-material change", async () => {
+    const { task, harness } = finishActiveAttempt("fix_ci", false, {
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "nitfix456" })],
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "nitfix456", rebasingFrom: null },
+    });
+    harness.options.codeStatus![CONTAINER_NAME].commitSha = "cifix789";
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.approval?.carriesTo, "cifix789");
   });
 
   for (const step of ["address_comments", "fix_ci"] as const) {
@@ -3118,7 +3152,7 @@ describe("scheduler: approvals stored in CRC", () => {
       await runTaskSchedulerTick(harness.deps);
       await runTaskSchedulerTick(harness.deps);
       assert.equal(task.activeContainerId, null);
-      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" });
+      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
 
       task.lastReviewedSha = "nitfix999";
       harness.options.snapshot = [makeReviewRequest({ headSha: "nitfix999" })];
@@ -3136,7 +3170,7 @@ describe("scheduler: approvals stored in CRC", () => {
       repoSource: "gitlab",
       lastReviewedSha: "pushed789",
       lastReviewedDiffHash: "diff-hash-2",
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
     });
     const options: HarnessOptions = {
       tasks: [task],
@@ -3147,7 +3181,7 @@ describe("scheduler: approvals stored in CRC", () => {
 
     await runTaskSchedulerTick(harness.deps);
     assert.deepEqual(harness.rebased, ["12"]);
-    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" });
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
 
     options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789" })];
     await runTaskSchedulerTick(harness.deps);
@@ -3187,6 +3221,7 @@ describe("scheduler: approvals stored in CRC", () => {
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.approvalCancelledAt, NOW.toISOString());
+    assert.deepEqual(harness.unapproved, []);
 
     harness.options.snapshot = [makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" })];
     await runTaskSchedulerTick(harness.deps);
@@ -3199,7 +3234,7 @@ describe("scheduler: approvals stored in CRC", () => {
     const task = makeLinkedTask({
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: "diff-hash-1",
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -3246,7 +3281,7 @@ describe("scheduler: approvals stored in CRC", () => {
 
     await runTaskSchedulerTick(harness.deps);
 
-    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1" });
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
     assert.equal(task.approval, null);
     assert.deepEqual(harness.approved, []);
     assert.deepEqual(harness.merged, ["12"]);
@@ -3267,7 +3302,7 @@ describe("scheduler: approvals stored in CRC", () => {
 
     assert.equal(task.error, "merge refused");
     assert.equal(task.phase, "merging");
-    assert.deepEqual(harness.store.get(task.id)?.approval, { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1" });
+    assert.deepEqual(harness.store.get(task.id)?.approval, { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
 
     refuse = false;
     await runTaskSchedulerTick(harness.deps);
@@ -3281,7 +3316,7 @@ describe("scheduler: approvals stored in CRC", () => {
       repoSource: "gitlab",
       lastReviewedSha: "rebased789",
       lastReviewedDiffHash: "diff-hash-1",
-      approval: { approvedAt: APPROVED_AT, headSha: null, diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -3292,7 +3327,7 @@ describe("scheduler: approvals stored in CRC", () => {
 
     assert.deepEqual(harness.approved, [{ id: "12", headSha: "rebased789" }]);
     assert.deepEqual(harness.merged, ["12"]);
-    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: APPROVED_AT, headSha: "rebased789", diffHash: "diff-hash-1" });
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: APPROVED_AT, headSha: "rebased789", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
     assert.equal(task.approval, null);
     assert.equal(task.phase, "checking_closure");
   });
@@ -3302,7 +3337,7 @@ describe("scheduler: approvals stored in CRC", () => {
       repoSource: "gitlab",
       lastReviewedSha: "rebased789",
       lastReviewedDiffHash: "diff-hash-1",
-      approval: { approvedAt: APPROVED_AT, headSha: null, diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null },
     });
     const harness = makeHarness({
       tasks: [task],
@@ -3315,14 +3350,14 @@ describe("scheduler: approvals stored in CRC", () => {
     assert.deepEqual(harness.merged, []);
     assert.equal(task.error, "GitLab API error (using GITLAB_MERGE_TOKEN): 401 Unauthorized");
     assert.equal(task.consecutiveErrors, 1);
-    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: null, diffHash: "diff-hash-1" });
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null });
   });
 
   it("revokes a stored approval and waits for a human after an unexplained push changed the diff", async () => {
     const task = makeLinkedTask({
       lastReviewedSha: "pushed789",
       lastReviewedDiffHash: "diff-hash-2",
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
     });
     const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ headSha: "pushed789" })] });
 
@@ -3357,7 +3392,7 @@ describe("scheduler: approvals stored in CRC", () => {
     options.snapshot = [makeReviewRequest({ kind: "merge_request", humanApprovedAt: "2026-08-20T10:00:00.000Z" })];
     await runTaskSchedulerTick(harness.deps);
     assert.deepEqual(harness.merged, ["12"]);
-    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1" });
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
     assert.equal(task.approval, null);
   });
 
@@ -3367,7 +3402,7 @@ describe("scheduler: approvals stored in CRC", () => {
       lastReviewedSha: "abc123",
       lastReviewedDiffHash: "diff-hash-1",
       attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
     });
     const options: HarnessOptions = {
       tasks: [task],
@@ -3378,12 +3413,18 @@ describe("scheduler: approvals stored in CRC", () => {
 
     await runTaskSchedulerTick(harness.deps);
     assert.deepEqual(harness.rebased, ["12"]);
-    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: null, diffHash: "diff-hash-1" });
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: "abc123" });
     assert.deepEqual(harness.store.get(task.id)?.approval, task.approval);
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", ciState: "running" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval?.rebasingFrom, "abc123");
 
     options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789", ciState: "running" })];
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.phase, "waiting_ci");
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null });
+    assert.deepEqual(harness.store.get(task.id)?.approval, task.approval);
 
     options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789" })];
     await runTaskSchedulerTick(harness.deps);
@@ -3402,15 +3443,47 @@ describe("scheduler: approvals stored in CRC", () => {
     assert.equal(task.phase, "checking_closure");
     assert.deepEqual(harness.approved, [{ id: "12", headSha: "rebased789" }]);
     assert.deepEqual(harness.merged, ["12"]);
-    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: APPROVED_AT, headSha: "rebased789", diffHash: "diff-hash-2" });
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: APPROVED_AT, headSha: "rebased789", diffHash: "diff-hash-2", carriesTo: null, rebasingFrom: null });
     assert.equal(task.approval, null);
+  });
+
+  it("does not carry the approval onto an outside push that lands after a forge rebase settled", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", needsRebase: true })],
+      diffHash: "diff-hash-2",
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.rebased, ["12"]);
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789", ciState: "running" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval?.carriesTo, "rebased789");
+
+    task.lastReviewedSha = "outside999";
+    task.lastReviewedDiffHash = "diff-hash-3";
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "outside999" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
   });
 
   it("clears the approval when a new stage starts", async () => {
     const task = makeLinkedTask({
       phase: "checking_closure",
       mergedAt: "2026-08-20T11:00:00.000Z",
-      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
     });
     const harness = makeHarness({
       tasks: [task],

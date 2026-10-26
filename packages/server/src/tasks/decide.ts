@@ -124,9 +124,10 @@ function approvalDecision(task: Task, reviewRequest: RepoReviewRequest): TaskDec
   if (approval === null) {
     return { kind: "noop", phase: "waiting_approval" };
   }
-  const carriesOver =
-    approval.headSha !== headSha &&
-    (approval.headSha === null || (diffHash !== null && diffHash === approval.diffHash));
+  if (approval.headSha === headSha) {
+    return { kind: "revoke_approval" };
+  }
+  const carriesOver = approval.carriesTo === headSha || (diffHash !== null && diffHash === approval.diffHash);
   return carriesOver ? { kind: "pin_approval", headSha, diffHash } : { kind: "revoke_approval" };
 }
 

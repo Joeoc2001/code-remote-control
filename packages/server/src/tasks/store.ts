@@ -42,8 +42,10 @@ function isValidApproval(approval: TaskApproval | null): boolean {
   return (
     typeof approval === "object" &&
     typeof approval.approvedAt === "string" &&
-    isNullableString(approval.headSha) &&
-    isNullableString(approval.diffHash)
+    typeof approval.headSha === "string" &&
+    isNullableString(approval.diffHash) &&
+    isNullableString(approval.carriesTo) &&
+    isNullableString(approval.rebasingFrom)
   );
 }
 
