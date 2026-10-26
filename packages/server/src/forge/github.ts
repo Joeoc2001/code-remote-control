@@ -8,6 +8,7 @@ import type {
 import { GITHUB_AGENT_TOKEN, GITHUB_MERGE_TOKEN, loadConfigurations, type ForgeToken } from "../config.js";
 import { hashDiffText } from "./diff-hash.js";
 import { isStdinPlaceholderBody } from "./body.js";
+import { latestTimestamp } from "./timestamp.js";
 
 const MAX_PAGES = 10;
 const PULL_REQUESTS_PER_PAGE = 25;
@@ -141,7 +142,7 @@ export interface GitHubPullRequestNode {
     nodes: Array<{ isResolved: boolean; comments: { nodes: Array<{ body: string }> } }>;
   };
   latestOpinionatedReviews: {
-    nodes: Array<{ state: string; author: { login: string } | null }>;
+    nodes: Array<{ state: string; submittedAt: string | null; author: { login: string } | null }>;
   };
 }
 
@@ -171,7 +172,7 @@ const PULL_REQUEST_FIELDS = `
     }
   }
   latestOpinionatedReviews(first: 100) {
-    nodes { state author { login } }
+    nodes { state submittedAt author { login } }
   }
 `;
 
@@ -263,6 +264,18 @@ export function mapGitHubState(state: GitHubPullRequestNode["state"]): ReviewReq
   }
 }
 
+function latestHumanApprovalAt(node: GitHubPullRequestNode, viewerLogin: string): string | null {
+  const approvedAt = node.latestOpinionatedReviews.nodes
+    .filter((review) => review.state === "APPROVED" && review.author !== null && review.author.login !== viewerLogin)
+    .map((review) => {
+      if (review.submittedAt === null) {
+        throw new Error(`${node.url} has an APPROVED review by ${review.author!.login} without a submittedAt`);
+      }
+      return review.submittedAt;
+    });
+  return latestTimestamp(approvedAt);
+}
+
 export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: string): RepoReviewRequest {
   const rollupState = node.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null;
   return {
@@ -278,9 +291,7 @@ export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: str
     hasConflicts: node.mergeable === "CONFLICTING",
     needsRebase: node.mergeStateStatus === "BEHIND" || node.viewerCanUpdateBranch,
     mergeStateKnown: node.mergeable !== "UNKNOWN" && node.mergeStateStatus !== "UNKNOWN",
-    approvedByHuman: node.latestOpinionatedReviews.nodes.some(
-      (review) => review.state === "APPROVED" && review.author !== null && review.author.login !== viewerLogin,
-    ),
+    humanApprovedAt: latestHumanApprovalAt(node, viewerLogin),
     hasUnresolvedComments: node.reviewThreads.nodes.some((thread) => !thread.isResolved),
     hasPlaceholderComment: [
       ...node.comments.nodes,

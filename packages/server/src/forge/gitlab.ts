@@ -8,6 +8,7 @@ import type {
 import { GITLAB_AGENT_TOKEN, GITLAB_MERGE_TOKEN, loadConfigurations, type ForgeToken } from "../config.js";
 import { hashDiffText } from "./diff-hash.js";
 import { isStdinPlaceholderBody } from "./body.js";
+import { latestTimestamp } from "./timestamp.js";
 
 const MAX_PAGES = 10;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -256,31 +257,43 @@ async function fetchDiscussionSummary(
   return summary;
 }
 
-async function fetchApproverUsernames(
+interface GitLabApproval {
+  username: string;
+  approvedAt: string;
+}
+
+async function fetchApprovals(
   apiBase: string,
   encodedProject: string,
   mergeRequestIid: number | string,
-): Promise<string[]> {
+): Promise<GitLabApproval[]> {
   const response = await gitlabRequest(
     "GET",
     `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequestIid}/approvals`,
   );
   const approvals = (await response.json()) as {
-    approved_by: Array<{ user: { username: string } }>;
+    approved_by: Array<{ user: { username: string }; approved_at?: string }>;
   };
-  return approvals.approved_by.map((entry) => entry.user.username);
+  return approvals.approved_by.map((entry) => {
+    if (typeof entry.approved_at !== "string") {
+      throw new Error(`GitLab did not report when ${entry.user.username} approved !${mergeRequestIid}`);
+    }
+    return { username: entry.user.username, approvedAt: entry.approved_at };
+  });
 }
 
-async function fetchApprovedByHuman(
+async function fetchHumanApprovedAt(
   apiBase: string,
   encodedProject: string,
   mergeRequestIid: number,
-): Promise<boolean> {
-  const [approvers, currentUsername] = await Promise.all([
-    fetchApproverUsernames(apiBase, encodedProject, mergeRequestIid),
+): Promise<string | null> {
+  const [approvals, currentUsername] = await Promise.all([
+    fetchApprovals(apiBase, encodedProject, mergeRequestIid),
     fetchCurrentUsername(),
   ]);
-  return approvers.some((username) => username !== currentUsername);
+  return latestTimestamp(
+    approvals.filter((approval) => approval.username !== currentUsername).map((approval) => approval.approvedAt),
+  );
 }
 
 export interface GitLabMergeRequestDetail {
@@ -342,7 +355,7 @@ const UNSETTLED_MERGE_STATUSES = new Set(["checking", "unchecked", "preparing", 
 export function mapMergeRequestDetail(
   detail: GitLabMergeRequestDetail,
   discussions: DiscussionSummary,
-  approvedByHuman: boolean,
+  humanApprovedAt: string | null,
 ): RepoReviewRequest {
   const mergeStatus = detail.detailed_merge_status ?? detail.merge_status ?? "unchecked";
   return {
@@ -358,7 +371,7 @@ export function mapMergeRequestDetail(
     hasConflicts: detail.has_conflicts,
     needsRebase: (detail.diverged_commits_count ?? 0) > 0,
     mergeStateKnown: !UNSETTLED_MERGE_STATUSES.has(mergeStatus),
-    approvedByHuman,
+    humanApprovedAt,
     hasUnresolvedComments: discussions.hasUnresolvedComments,
     hasPlaceholderComment: discussions.hasPlaceholderComment,
   };
@@ -369,17 +382,17 @@ async function buildMergeRequest(
   encodedProject: string,
   mergeRequestIid: number,
 ): Promise<RepoReviewRequest> {
-  const [detailResponse, discussions, approvedByHuman] = await Promise.all([
+  const [detailResponse, discussions, humanApprovedAt] = await Promise.all([
     gitlabRequest(
       "GET",
       `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${mergeRequestIid}?include_diverged_commits_count=true`,
     ),
     fetchDiscussionSummary(apiBase, encodedProject, mergeRequestIid),
-    fetchApprovedByHuman(apiBase, encodedProject, mergeRequestIid),
+    fetchHumanApprovedAt(apiBase, encodedProject, mergeRequestIid),
   ]);
 
   const detail = (await detailResponse.json()) as GitLabMergeRequestDetail;
-  return mapMergeRequestDetail(detail, discussions, approvedByHuman);
+  return mapMergeRequestDetail(detail, discussions, humanApprovedAt);
 }
 
 export async function fetchOpenMergeRequests(repoFullName: string): Promise<RepoReviewRequest[]> {
@@ -511,11 +524,11 @@ export async function approveMergeRequest(repoFullName: string, id: string, head
 export async function unapproveMergeRequest(repoFullName: string, id: string): Promise<void> {
   const apiBase = await gitlabApiBase();
   const encodedProject = encodeURIComponent(repoFullName);
-  const [approvers, mergeUsername] = await Promise.all([
-    fetchApproverUsernames(apiBase, encodedProject, id),
+  const [approvals, mergeUsername] = await Promise.all([
+    fetchApprovals(apiBase, encodedProject, id),
     fetchMergeUsername(),
   ]);
-  if (!approvers.includes(mergeUsername)) return;
+  if (!approvals.some((approval) => approval.username === mergeUsername)) return;
   await gitlabRequest(
     "POST",
     `${apiBase}/api/v4/projects/${encodedProject}/merge_requests/${id}/unapprove`,

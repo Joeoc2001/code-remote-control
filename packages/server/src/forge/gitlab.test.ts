@@ -65,14 +65,14 @@ describe("mapGitLabState", () => {
 
 describe("mapMergeRequestDetail", () => {
   it("keys the id off the iid so it matches in-container code-status ids", () => {
-    const item = mapMergeRequestDetail(makeDetail(), noDiscussionFlags, false);
+    const item = mapMergeRequestDetail(makeDetail(), noDiscussionFlags, null);
     assert.equal(item.id, "34");
     assert.equal(item.reference, "!34");
     assert.equal(item.kind, "merge_request");
   });
 
   it("maps a clean, green merge request", () => {
-    const item = mapMergeRequestDetail(makeDetail(), noDiscussionFlags, true);
+    const item = mapMergeRequestDetail(makeDetail(), noDiscussionFlags, "2026-03-01T12:00:00Z");
     assert.deepEqual(item, {
       id: "34",
       reference: "!34",
@@ -86,20 +86,20 @@ describe("mapMergeRequestDetail", () => {
       hasConflicts: false,
       needsRebase: false,
       mergeStateKnown: true,
-      approvedByHuman: true,
+      humanApprovedAt: "2026-03-01T12:00:00Z",
       hasUnresolvedComments: false,
       hasPlaceholderComment: false,
     });
   });
 
   it("flags divergence from the target branch as needing rebase", () => {
-    const item = mapMergeRequestDetail(makeDetail({ diverged_commits_count: 3 }), noDiscussionFlags, false);
+    const item = mapMergeRequestDetail(makeDetail({ diverged_commits_count: 3 }), noDiscussionFlags, null);
     assert.equal(item.needsRebase, true);
   });
 
   it("treats an unsettled merge status as unknown, never as clean", () => {
     for (const status of ["checking", "unchecked", "preparing"]) {
-      const item = mapMergeRequestDetail(makeDetail({ detailed_merge_status: status }), noDiscussionFlags, false);
+      const item = mapMergeRequestDetail(makeDetail({ detailed_merge_status: status }), noDiscussionFlags, null);
       assert.equal(item.mergeStateKnown, false, `detailed_merge_status=${status}`);
     }
   });
@@ -108,13 +108,13 @@ describe("mapMergeRequestDetail", () => {
     const item = mapMergeRequestDetail(
       makeDetail({ detailed_merge_status: undefined, merge_status: "checking" }),
       noDiscussionFlags,
-      false,
+      null,
     );
     assert.equal(item.mergeStateKnown, false);
   });
 
   it("treats a missing pipeline as no CI", () => {
-    const item = mapMergeRequestDetail(makeDetail({ head_pipeline: null }), noDiscussionFlags, false);
+    const item = mapMergeRequestDetail(makeDetail({ head_pipeline: null }), noDiscussionFlags, null);
     assert.equal(item.ciState, "none");
   });
 
@@ -122,7 +122,7 @@ describe("mapMergeRequestDetail", () => {
     const item = mapMergeRequestDetail(
       makeDetail(),
       { hasUnresolvedComments: false, hasPlaceholderComment: true },
-      false,
+      null,
     );
     assert.equal(item.hasPlaceholderComment, true);
   });
@@ -131,11 +131,11 @@ describe("mapMergeRequestDetail", () => {
     const item = mapMergeRequestDetail(
       makeDetail({ has_conflicts: true }),
       { hasUnresolvedComments: true, hasPlaceholderComment: false },
-      false,
+      null,
     );
     assert.equal(item.hasConflicts, true);
     assert.equal(item.hasUnresolvedComments, true);
-    assert.equal(item.approvedByHuman, false);
+    assert.equal(item.humanApprovedAt, null);
   });
 });
 

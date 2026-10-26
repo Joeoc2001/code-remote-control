@@ -75,11 +75,13 @@ describe("PATCH /api/tasks/:id approval", () => {
       }),
     );
 
+    const before = Date.now();
     const res = await patch("approved", { approval: "revoke" });
 
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { approval: unknown; phase: string };
+    const body = (await res.json()) as { approval: unknown; approvalCancelledAt: string; phase: string };
     assert.equal(body.approval, null);
+    assert.ok(Date.parse(body.approvalCancelledAt) >= before);
     assert.equal(body.phase, "waiting_ci");
     assert.equal(taskStore.get("approved")?.approval, null);
     assert.deepEqual(

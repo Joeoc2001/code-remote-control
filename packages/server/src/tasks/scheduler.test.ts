@@ -133,7 +133,7 @@ function makeHarness(options: HarnessOptions) {
   const merged: string[] = [];
   const approved: Array<{ id: string; headSha: string }> = [];
   const unapproved: string[] = [];
-  const forgeApprovedIds = new Set(options.forgeApprovedIds ?? []);
+  const forgeApprovedAt = new Map((options.forgeApprovedIds ?? []).map((id) => [id, "2026-08-20T10:00:00.000Z"]));
   const pokes: Array<{ containerId: string; message: string }> = [];
   const broadcasts: Task[] = [];
   const containers = new Map(
@@ -152,7 +152,7 @@ function makeHarness(options: HarnessOptions) {
       if (options.listError) throw options.listError;
       if (options.listErrorFor === repoFullName) throw new Error(`listing ${repoFullName} failed`);
       return (options.snapshot ?? []).map((item) =>
-        forgeApprovedIds.has(item.id) ? { ...item, approvedByHuman: true } : item,
+        forgeApprovedAt.has(item.id) ? { ...item, humanApprovedAt: forgeApprovedAt.get(item.id)! } : item,
       );
     },
     getReviewRequest:
@@ -170,11 +170,11 @@ function makeHarness(options: HarnessOptions) {
     approve: async (_repo, id, headSha) => {
       if (options.approveError) throw options.approveError;
       approved.push({ id, headSha });
-      forgeApprovedIds.add(id);
+      forgeApprovedAt.set(id, NOW.toISOString());
     },
     unapprove: async (_repo, id) => {
       unapproved.push(id);
-      forgeApprovedIds.delete(id);
+      forgeApprovedAt.delete(id);
     },
     merge: async (_repo, id) => {
       merged.push(id);
@@ -226,6 +226,7 @@ function makeHarness(options: HarnessOptions) {
 
   return {
     deps,
+    options,
     store,
     quickPrompts,
     created,
@@ -1662,7 +1663,7 @@ describe("scheduler: forge-state evaluation", () => {
     const task = makeLinkedTask({ lastReviewedSha: "abc123" });
     const harness = makeHarness({
       tasks: [task],
-      snapshot: [makeReviewRequest({ approvedByHuman: true })],
+      snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })],
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -2245,7 +2246,7 @@ describe("scheduler: multi-stage tasks", () => {
     const task = makeLinkedTask({ lastReviewedSha: "abc123" });
     const options: HarnessOptions = {
       tasks: [task],
-      snapshot: [makeReviewRequest({ approvedByHuman: true })],
+      snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })],
       workItems: [openIssue()],
     };
     const harness = makeHarness(options);
@@ -2914,7 +2915,7 @@ describe("scheduler: approvals stored in CRC", () => {
   function finishActiveAttempt(step: TaskAttempt["step"], isMaterialChange: boolean | null, overrides: Partial<Task> = {}) {
     const task = makeActiveTask({
       activeStep: step,
-      attempts: [makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START })],
+      attempts: [makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "abc123" })],
       attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0, [step]: 1 },
       approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
       ...overrides,
@@ -3070,7 +3071,7 @@ describe("scheduler: approvals stored in CRC", () => {
     assert.equal(task.error, "merge refused");
 
     refuse = false;
-    await withdrawApproval(forge, task);
+    await withdrawApproval(forge, task, NOW);
     await runTaskSchedulerTick(harness.deps);
 
     assert.deepEqual(harness.unapproved, ["12"]);
@@ -3085,7 +3086,7 @@ describe("scheduler: approvals stored in CRC", () => {
       lastReviewedDiffHash: "diff-hash-1",
       approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
     });
-    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ approvedByHuman: true })] });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })] });
 
     await runTaskSchedulerTick(harness.deps);
 
@@ -3102,6 +3103,115 @@ describe("scheduler: approvals stored in CRC", () => {
     await runTaskSchedulerTick(harness.deps);
 
     assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: null, diffHash: "diff-hash-1" });
+  });
+
+  for (const step of ["address_comments", "fix_ci"] as const) {
+    it(`keeps the approval pinned when a non-material ${step} agent started from a head nobody approved`, async () => {
+      const { task, harness } = finishActiveAttempt(step, false, {
+        lastReviewedSha: "pushed789",
+        lastReviewedDiffHash: "diff-hash-2",
+        attempts: [
+          makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "pushed789" }),
+        ],
+      });
+
+      await runTaskSchedulerTick(harness.deps);
+      await runTaskSchedulerTick(harness.deps);
+      assert.equal(task.activeContainerId, null);
+      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" });
+
+      task.lastReviewedSha = "nitfix999";
+      harness.options.snapshot = [makeReviewRequest({ headSha: "nitfix999" })];
+      await runTaskSchedulerTick(harness.deps);
+
+      assert.deepEqual(harness.approved, []);
+      assert.deepEqual(harness.merged, []);
+      assert.equal(task.approval, null);
+      assert.equal(task.phase, "waiting_approval");
+    });
+  }
+
+  it("keeps the approval pinned across a forge rebase of a head nobody approved", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "pushed789",
+      lastReviewedDiffHash: "diff-hash-2",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", headSha: "pushed789", needsRebase: true })],
+      diffHash: "diff-hash-2",
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.rebased, ["12"]);
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" });
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.lastReviewedSha, "rebased789");
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("does not re-record an approval another human left on the forge once a material change cancelled it", async () => {
+    const { task, harness } = finishActiveAttempt("address_comments", true, { lastReviewedSha: "abc123" });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval, null);
+    assert.equal(task.approvalCancelledAt, NOW.toISOString());
+
+    harness.options.snapshot = [makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+
+    harness.options.snapshot = [makeReviewRequest({ humanApprovedAt: "2026-08-20T12:05:00.000Z" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, ["12"]);
+  });
+
+  it("does not record a forge approval CRC had not stored yet once a material change lands", async () => {
+    const { task, harness } = finishActiveAttempt("fix_ci", true, { lastReviewedSha: "abc123", approval: null });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approvalCancelledAt, NOW.toISOString());
+
+    harness.options.snapshot = [makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("does not re-record an approval another human left on the forge after a manual revoke", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1" },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" })],
+    });
+
+    await withdrawApproval(harness.deps.getForge("github"), task, NOW);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
   });
 
   it("puts the is_material instruction in every prompt for a step that pushes code, and in no other", async () => {
@@ -3132,7 +3242,7 @@ describe("scheduler: approvals stored in CRC", () => {
 
   it("records a human approval the first time it sees one and merges straight away", async () => {
     const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: "diff-hash-1" });
-    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ approvedByHuman: true })] });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })] });
 
     await runTaskSchedulerTick(harness.deps);
 
@@ -3145,7 +3255,7 @@ describe("scheduler: approvals stored in CRC", () => {
 
   it("keeps the recorded approval when the merge is refused, and merges on the next tick", async () => {
     const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: "diff-hash-1" });
-    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ approvedByHuman: true })] });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })] });
     const merge = harness.deps.getForge("github").merge;
     let refuse = true;
     harness.deps.getForge("github").merge = async (repo, id) => {
@@ -3175,7 +3285,7 @@ describe("scheduler: approvals stored in CRC", () => {
     });
     const harness = makeHarness({
       tasks: [task],
-      snapshot: [makeReviewRequest({ kind: "merge_request", headSha: "rebased789", approvedByHuman: false })],
+      snapshot: [makeReviewRequest({ kind: "merge_request", headSha: "rebased789", humanApprovedAt: null })],
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -3235,7 +3345,7 @@ describe("scheduler: approvals stored in CRC", () => {
     });
     const options: HarnessOptions = {
       tasks: [task],
-      snapshot: [makeReviewRequest({ kind: "merge_request", approvedByHuman: true, needsRebase: true })],
+      snapshot: [makeReviewRequest({ kind: "merge_request", humanApprovedAt: "2026-08-20T10:00:00.000Z", needsRebase: true })],
       diffHash: "diff-hash-1",
     };
     const harness = makeHarness(options);
@@ -3244,7 +3354,7 @@ describe("scheduler: approvals stored in CRC", () => {
     assert.deepEqual(harness.rebased, ["12"]);
     assert.equal(task.approval, null);
 
-    options.snapshot = [makeReviewRequest({ kind: "merge_request", approvedByHuman: true })];
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", humanApprovedAt: "2026-08-20T10:00:00.000Z" })];
     await runTaskSchedulerTick(harness.deps);
     assert.deepEqual(harness.merged, ["12"]);
     assert.deepEqual(approvalWhenMerging(harness), { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1" });
@@ -3261,7 +3371,7 @@ describe("scheduler: approvals stored in CRC", () => {
     });
     const options: HarnessOptions = {
       tasks: [task],
-      snapshot: [makeReviewRequest({ kind: "merge_request", approvedByHuman: true, needsRebase: true })],
+      snapshot: [makeReviewRequest({ kind: "merge_request", humanApprovedAt: "2026-08-20T10:00:00.000Z", needsRebase: true })],
       diffHash: "diff-hash-2",
     };
     const harness = makeHarness(options);

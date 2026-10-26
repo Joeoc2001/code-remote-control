@@ -138,12 +138,13 @@ describe("TaskStore", () => {
   it("migrates tasks and attempts saved before CRC stored approvals", () => {
     const stateDir = makeStateDir();
     const { isMaterial: _isMaterial, ...legacyAttempt } = makeAttempt();
-    const { approval: _approval, ...legacy } = makeTask({ attempts: [] });
+    const { approval: _approval, approvalCancelledAt: _approvalCancelledAt, ...legacy } = makeTask({ attempts: [] });
     writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...legacy, attempts: [legacyAttempt] }]), "utf-8");
 
     const task = new TaskStore(stateDir).get("task-1");
 
     assert.equal(task?.approval, null);
+    assert.equal(task?.approvalCancelledAt, null);
     assert.equal(task?.attempts[0].isMaterial, null);
   });
 
@@ -151,12 +152,14 @@ describe("TaskStore", () => {
     const stateDir = makeStateDir();
     const task = makeTask({
       approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: null, diffHash: "diff-hash-1" },
+      approvalCancelledAt: "2026-08-20T10:00:00.000Z",
       attempts: [makeAttempt({ isMaterial: false }), makeAttempt({ isMaterial: true })],
     });
     new TaskStore(stateDir).save(task);
 
     const reloaded = new TaskStore(stateDir).get("task-1");
     assert.deepEqual(reloaded?.approval, task.approval);
+    assert.equal(reloaded?.approvalCancelledAt, "2026-08-20T10:00:00.000Z");
     assert.deepEqual(reloaded?.attempts.map((attempt) => attempt.isMaterial), [false, true]);
   });
 
@@ -173,6 +176,12 @@ describe("TaskStore", () => {
       assert.throws(() => new TaskStore(stateDir), /task task-1 has an invalid approval/);
     });
   }
+
+  it("fails loudly on a task with a malformed approvalCancelledAt", () => {
+    const stateDir = makeStateDir();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), approvalCancelledAt: 5 }]), "utf-8");
+    assert.throws(() => new TaskStore(stateDir), /task task-1 has an invalid approvalCancelledAt/);
+  });
 
   it("fails loudly on a malformed tasks file", () => {
     const stateDir = makeStateDir();

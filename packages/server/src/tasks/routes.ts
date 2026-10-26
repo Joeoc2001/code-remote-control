@@ -247,7 +247,7 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
     }
 
     if (approval === "revoke" && task.approval) {
-      await withdrawApproval(getForge(task.repoSource), task);
+      await withdrawApproval(getForge(task.repoSource), task, new Date());
     }
 
     task.configByStep = { ...task.configByStep, ...configByStepPatch };

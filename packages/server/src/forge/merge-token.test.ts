@@ -19,6 +19,8 @@ const LOGIN_BY_TOKEN: Record<string, string> = {
   "gl-merge": "owner",
 };
 
+const APPROVED_AT = "2026-03-01T12:00:00Z";
+
 function pullRequestNode(approvers: string[]): Record<string, unknown> {
   return {
     number: 12,
@@ -35,7 +37,7 @@ function pullRequestNode(approvers: string[]): Record<string, unknown> {
     reviews: { nodes: [] },
     reviewThreads: { nodes: [] },
     latestOpinionatedReviews: {
-      nodes: approvers.map((login) => ({ state: "APPROVED", author: { login } })),
+      nodes: approvers.map((login) => ({ state: "APPROVED", submittedAt: APPROVED_AT, author: { login } })),
     },
   };
 }
@@ -66,7 +68,7 @@ function gitlabRoutes(approvers: string[], mergeStatus = 200): Route[] {
       request.url === "https://gitlab.test/api/v4/user" ? { json: { username: LOGIN_BY_TOKEN[request.token] } } : null,
     (request) =>
       request.url === `${mr}/approvals`
-        ? { json: { approved_by: approvers.map((username) => ({ user: { username } })) } }
+        ? { json: { approved_by: approvers.map((username) => ({ user: { username }, approved_at: APPROVED_AT })) } }
         : null,
     (request) => (request.url.startsWith(`${mr}/discussions`) ? { json: [] } : null),
     (request) => (request.url.startsWith(`${mr}/diffs`) ? { json: [] } : null),
@@ -184,9 +186,9 @@ describe("GitHub with GITHUB_MERGE_TOKEN set", () => {
 
   it("ignores approvals from the agent account and counts the merge token owner's", async () => {
     stubFetch(githubRoutes(["crc-bot"]));
-    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).approvedByHuman, false);
+    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).humanApprovedAt, null);
     stubFetch(githubRoutes(["owner"]));
-    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).approvedByHuman, true);
+    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).humanApprovedAt, APPROVED_AT);
   });
 
   it("names the merge token in a refused merge's error", async () => {
@@ -289,9 +291,19 @@ describe("GitLab with GITLAB_MERGE_TOKEN set", () => {
 
   it("ignores approvals from the agent account and counts the merge token owner's", async () => {
     stubFetch(gitlabRoutes(["crc-bot"]));
-    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).approvedByHuman, false);
+    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).humanApprovedAt, null);
     stubFetch(gitlabRoutes(["owner"]));
-    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).approvedByHuman, true);
+    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).humanApprovedAt, APPROVED_AT);
+  });
+
+  it("fails loudly when GitLab does not report when an approval was given", async () => {
+    const mr = "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5";
+    stubFetch([
+      (request) =>
+        request.url === `${mr}/approvals` ? { json: { approved_by: [{ user: { username: "owner" } }] } } : null,
+      ...gitlabRoutes([]),
+    ]);
+    await assert.rejects(gitlab.fetchMergeRequest("acme/widgets", "5"), /did not report when owner approved !5/);
   });
 
   it("names the merge token in a refused merge's error", async () => {

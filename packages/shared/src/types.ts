@@ -231,7 +231,7 @@ export interface RepoReviewRequest {
   hasConflicts: boolean;
   needsRebase: boolean;
   mergeStateKnown: boolean;
-  approvedByHuman: boolean;
+  humanApprovedAt: string | null;
   hasUnresolvedComments: boolean;
   hasPlaceholderComment: boolean;
 }
@@ -310,6 +310,7 @@ export interface Task {
   lastReviewedSha: string | null;
   lastReviewedDiffHash: string | null;
   approval: TaskApproval | null;
+  approvalCancelledAt: string | null;
   activeContainerId: string | null;
   activeStep: TaskStep | null;
   attemptsByStep: Record<TaskStep, number>;

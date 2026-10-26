@@ -139,7 +139,7 @@ function finishAttempt(deps: SchedulerDeps, task: Task, attempt: TaskAttempt, er
     task.lastReviewedSha = attempt.headShaBefore;
     task.lastReviewedDiffHash = attempt.diffHashBefore;
   }
-  if (error === null && attempt.isMaterial === false && task.approval) {
+  if (error === null && attempt.isMaterial === false && task.approval?.headSha === attempt.headShaBefore) {
     task.approval.headSha = null;
   }
   task.activeContainerId = null;
@@ -264,6 +264,7 @@ function startNextStage(deps: SchedulerDeps, task: Task, workItem: RepoWorkItem)
   task.lastReviewedSha = null;
   task.lastReviewedDiffHash = null;
   task.approval = null;
+  task.approvalCancelledAt = null;
   task.mergedAt = null;
   task.attemptsByStep = Object.fromEntries(TASK_STEPS.map((step) => [step, 0])) as Record<TaskStep, number>;
   task.consecutiveErrors = 0;
@@ -412,8 +413,8 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
     await holdAttempt(deps, task, attemptIndex, `${missingDeliverable}${HELD_CONTAINER_SUFFIX}`);
     return "settle";
   }
-  if (attempt.isMaterial === true && task.approval) {
-    await withdrawApproval(deps.getForge(task.repoSource), task);
+  if (attempt.isMaterial === true) {
+    await withdrawApproval(deps.getForge(task.repoSource), task, deps.now());
     saveTask(deps, task);
   }
   deps.store.writeAttemptLog(task.id, attemptIndex, await deps.getContainerLogTail(containerId));
@@ -616,7 +617,7 @@ async function executeDecision(
     }
     case "forge_rebase": {
       await forge.rebase(task.repoFullName, task.reviewRequest!.id);
-      if (task.approval) task.approval.headSha = null;
+      if (task.approval?.headSha === decision.headSha) task.approval.headSha = null;
       task.phase = "waiting_ci";
       clearTaskError(task);
       saveTask(deps, task);
@@ -634,7 +635,7 @@ async function executeDecision(
       return;
     }
     case "revoke_approval": {
-      await withdrawApproval(forge, task);
+      await withdrawApproval(forge, task, deps.now());
       task.phase = "waiting_approval";
       clearTaskError(task);
       saveTask(deps, task);

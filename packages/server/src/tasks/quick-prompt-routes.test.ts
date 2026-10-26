@@ -130,6 +130,7 @@ describe("quick-prompt routes", () => {
       lastReviewedSha: null,
       lastReviewedDiffHash: null,
       approval: null,
+      approvalCancelledAt: null,
       activeContainerId: null,
       activeStep: null,
       attemptsByStep: { create_issue: 0, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },

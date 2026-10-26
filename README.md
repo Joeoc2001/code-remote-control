@@ -249,14 +249,17 @@ Once CRC sees a human approval it stores it on the task, so it survives forges
 that reset approvals on push (e.g. GitLab's "Reset approvals on push" after a
 rebase). Every agent that pushes code (implement, rebase, fix CI, address
 comments) must write `true` or `false` to `/run/crc-is-material` before it
-finishes; an agent that leaves it unwritten (or writes anything else) is held
-like any other missing deliverable. The stored approval then follows the
-PR/MR's head:
+finishes; an agent that leaves it unwritten is held like any other missing
+deliverable. Anything else in the file makes the container's code-status
+request fail, so the task records an error on every tick and fails after
+`MAX_CONSECUTIVE_ERRORS`. The stored approval then follows the PR/MR's head:
 
 - `true` (a material change) cancels it, and the task waits for a fresh human
   approval.
 - `false`, or a fast-forward rebase via the forge API, lets it carry over to
-  the next head.
+  the next head, but only if the agent or rebase started from the approved
+  head. If the head had already moved, the approval stays pinned to the old
+  head and the diff check below decides.
 - Any other head change keeps it only if the diff is identical to the approved
   one; an unexplained push with a different diff cancels it. A human withdrawing
   their approval on the forge, without the head moving, cancels it too.
@@ -275,8 +278,13 @@ cancels a stored approval (a material change, an unexplained push, or **Revoke
 approval**) it also withdraws every approval the merge token's account holds on
 the PR/MR: GitLab's `unapprove`, or dismissing those reviews on GitHub (which
 needs the merge token's account to be allowed to dismiss reviews). If your own
-PAT is the merge token, this withdraws your own approval too. The stored
-approval is cleared once the PR/MR merges.
+PAT is the merge token, this withdraws your own approval too. CRC also records
+when it cancelled, and from then on only counts forge approvals given after
+that moment, so approvals from other accounts that the forge keeps (GitHub
+without "Dismiss stale pull request approvals", GitLab without "Reset
+approvals on push") cannot re-record it. On GitLab this relies on the
+approvals API reporting `approved_at`; CRC fails the request if it doesn't.
+The stored approval is cleared once the PR/MR merges.
 
 ### Merge token
 

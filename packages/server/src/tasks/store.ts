@@ -9,8 +9,8 @@ function isMissingFileError(err: unknown): boolean {
 type StoredAttempt = Omit<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial"> &
   Partial<Pick<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial">>;
 
-type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval" | "attempts"> &
-  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval">> & {
+type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval" | "approvalCancelledAt" | "attempts"> &
+  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval" | "approvalCancelledAt">> & {
     attempts: StoredAttempt[];
   };
 
@@ -56,6 +56,7 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
     mergedAt: stored.mergedAt ?? null,
     quickPromptId: stored.quickPromptId ?? null,
     approval: stored.approval ?? null,
+    approvalCancelledAt: stored.approvalCancelledAt ?? null,
   };
   if (
     !Array.isArray(task.completedStages) ||
@@ -69,6 +70,9 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
   }
   if (!task.attempts.every((attempt) => attempt.isMaterial === null || typeof attempt.isMaterial === "boolean")) {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an attempt with an invalid isMaterial`);
+  }
+  if (!isNullableString(task.approvalCancelledAt)) {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid approvalCancelledAt`);
   }
   if (!isValidApproval(task.approval)) {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid approval`);
