@@ -74,6 +74,7 @@ function makeCodeStatus(
   return {
     branch: "feature",
     commitSha: "abc123",
+    headSha: "abc123",
     orgName: "acme",
     repoName: "widgets",
     provider: "github",
@@ -609,7 +610,7 @@ describe("scheduler: watching a running agent", () => {
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.attempts[1].finishedObservation?.headSha, "abc123");
 
-    options.codeStatus = { [CONTAINER_NAME]: { ...makeCodeStatus(null), commitSha: "pushed456" } };
+    options.codeStatus = { [CONTAINER_NAME]: { ...makeCodeStatus(null), headSha: "pushed456" } };
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(harness.removed.length, 0);
@@ -1203,7 +1204,7 @@ describe("scheduler: resuming a held attempt", () => {
       codeStatus: {
         [CONTAINER_NAME]: {
           ...makeCodeStatus({ id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" }),
-          commitSha: "def456",
+          headSha: "def456",
         },
       },
       snapshot: [makeReviewRequest({ ciState: "failed" })],
@@ -1267,7 +1268,7 @@ describe("scheduler: resuming a held attempt", () => {
       codeStatus: {
         [CONTAINER_NAME]: {
           ...makeCodeStatus({ id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" }),
-          commitSha: "def456",
+          headSha: "def456",
         },
       },
       snapshot: [makeReviewRequest({ ciState: "failed" })],
@@ -3098,7 +3099,7 @@ describe("scheduler: approvals stored in CRC", () => {
 
   it("carries the stored approval onto exactly the head a non-material change pushed", async () => {
     const { task, harness } = finishActiveAttempt("rebase", false);
-    harness.options.codeStatus![CONTAINER_NAME].commitSha = "nitfix456";
+    harness.options.codeStatus![CONTAINER_NAME].headSha = "nitfix456";
 
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
@@ -3106,9 +3107,31 @@ describe("scheduler: approvals stored in CRC", () => {
     assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "nitfix456", rebasingFrom: null });
   });
 
+  it("carries the approval onto the full SHA the forge reports, not the short SHA the container displays", async () => {
+    const approvedSha = "0123456789abcdef0123456789abcdef01234567";
+    const pushedSha = "89abcdef0123456789abcdef0123456789abcdef";
+    const { task, harness } = finishActiveAttempt("rebase", false, {
+      attempts: [makeAttempt({ step: "rebase", containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: approvedSha })],
+      approval: { approvedAt: APPROVED_AT, headSha: approvedSha, diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    Object.assign(harness.options.codeStatus![CONTAINER_NAME], { commitSha: pushedSha.slice(0, 7), headSha: pushedSha });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval?.carriesTo, pushedSha);
+
+    task.lastReviewedSha = pushedSha;
+    task.lastReviewedDiffHash = "diff-hash-2";
+    harness.options.snapshot = [makeReviewRequest({ headSha: pushedSha })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, [{ id: "12", headSha: pushedSha }]);
+    assert.deepEqual(harness.merged, ["12"]);
+  });
+
   it("does not carry the approval onto an outside push that lands after a non-material change", async () => {
     const { task, harness } = finishActiveAttempt("address_comments", false);
-    harness.options.codeStatus![CONTAINER_NAME].commitSha = "nitfix456";
+    harness.options.codeStatus![CONTAINER_NAME].headSha = "nitfix456";
 
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
@@ -3131,7 +3154,7 @@ describe("scheduler: approvals stored in CRC", () => {
       attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "nitfix456" })],
       approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "nitfix456", rebasingFrom: null },
     });
-    harness.options.codeStatus![CONTAINER_NAME].commitSha = "cifix789";
+    harness.options.codeStatus![CONTAINER_NAME].headSha = "cifix789";
 
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);

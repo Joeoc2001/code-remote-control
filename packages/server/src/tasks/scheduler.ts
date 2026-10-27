@@ -398,8 +398,8 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
 
   const codeStatus = await deps.fetchCodeStatus(container.name);
   const previousObservation = attempt.finishedObservation ?? null;
-  if (previousObservation === null || previousObservation.headSha !== codeStatus.commitSha) {
-    attempt.finishedObservation = { headSha: codeStatus.commitSha, observedAt: deps.now().toISOString() };
+  if (previousObservation === null || previousObservation.headSha !== codeStatus.headSha) {
+    attempt.finishedObservation = { headSha: codeStatus.headSha, observedAt: deps.now().toISOString() };
     saveTask(deps, task);
     return "settle";
   }
@@ -418,7 +418,7 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   await deps.removeContainer(containerId);
   finishAttempt(deps, task, attempt, null);
   if (attempt.isMaterial === false && approvalCoversHead(task.approval, attempt.headShaBefore)) {
-    task.approval.carriesTo = codeStatus.commitSha;
+    task.approval.carriesTo = codeStatus.headSha;
     task.approval.rebasingFrom = null;
   }
   clearTaskError(task);

@@ -293,6 +293,15 @@ The cancellation time comes from the CRC server's clock and the approval time
 from the forge's, so clock skew matters only for an approval given within a few
 seconds of a cancellation; a fast CRC clock just ignores it, and a slow one may
 count an approval given just before the cancellation.
+On GitLab, a human who is still listed as an approver after a cancellation
+(because "Reset approvals on push" is off) has to revoke their approval and
+approve again, so that their `approved_at` falls after the cancellation.
+
+Two narrow races remain. CRC treats the head it saw when it decided to spawn an
+agent as the head the agent started from, so an outside push that lands
+between that decision and the agent's clone is carried over with the agent's
+`false`. And the first new head the forge reports after a forge rebase is
+treated as the rebase's result, whoever pushed it.
 The stored approval is cleared once the PR/MR merges.
 
 ### Merge token

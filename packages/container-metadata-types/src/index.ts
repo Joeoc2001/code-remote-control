@@ -39,6 +39,7 @@ export interface InstanceStatus {
 export interface ContainerCodeStatus {
   branch: string;
   commitSha: string;
+  headSha: string;
   orgName: string | null;
   repoName: string | null;
   provider: ForgeProvider;

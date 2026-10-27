@@ -271,6 +271,7 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
   const warnings: string[] = [];
   const branch = await runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
   const commitSha = await runCommand("git", ["rev-parse", "--short", "HEAD"]);
+  const headSha = await runCommand("git", ["rev-parse", "HEAD"]);
   const currentTaskDescription = await readOptionalTrimmedFile(TASK_DESCRIPTION_PATH);
   const createdIssueUrl = await readOptionalTrimmedFile(CREATED_ISSUE_URL_PATH);
   const isMaterialChange = await readIsMaterialChange();
@@ -303,6 +304,7 @@ async function buildCodeStatus(): Promise<ContainerCodeStatus> {
   return {
     branch,
     commitSha,
+    headSha,
     orgName,
     repoName,
     provider,
