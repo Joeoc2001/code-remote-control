@@ -21,6 +21,7 @@ import { QuickPromptStore } from "./quick-prompt-store.js";
 import { NIT_THREAD_REVIEW_LIMIT, REVIEW_CYCLE_CAP } from "./decide.js";
 import {
   ATTEMPT_MAX_LIFETIME_MS,
+  HELD_CONTAINER_SUFFIX,
   CLOSURE_GRACE_MS,
   MAX_CONSECUTIVE_ERRORS,
   MAX_STAGES,
@@ -29,6 +30,7 @@ import {
   type SchedulerDeps,
 } from "./scheduler.js";
 import { DISCARDED_CONTAINER_ERROR, resumeTask } from "./resume.js";
+import { withdrawApproval } from "./approval.js";
 import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask } from "../testing/fixtures.js";
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
@@ -67,15 +69,18 @@ function instanceStatus(
 function makeCodeStatus(
   reviewRequest: { id: string; url: string; sourceBranch: string } | null,
   createdIssueUrl: string | null = null,
+  isMaterialChange: boolean | null = false,
 ): ContainerCodeStatus {
   return {
     branch: "feature",
     commitSha: "abc123",
+    headSha: "abc123",
     orgName: "acme",
     repoName: "widgets",
     provider: "github",
     currentTaskDescription: null,
     createdIssueUrl,
+    isMaterialChange,
     reviewRequest: reviewRequest
       ? {
           id: reviewRequest.id,
@@ -110,6 +115,8 @@ interface HarnessOptions {
   instanceStatus?: Record<string, InstanceStatus>;
   codeStatus?: Record<string, ContainerCodeStatus>;
   pokeError?: Error;
+  approveError?: Error;
+  forgeApprovedIds?: string[];
   now?: Date;
 }
 
@@ -125,6 +132,9 @@ function makeHarness(options: HarnessOptions) {
   const rebased: string[] = [];
   const diffHashFetches: string[] = [];
   const merged: string[] = [];
+  const approved: Array<{ id: string; headSha: string }> = [];
+  const unapproved: string[] = [];
+  const forgeApprovedAt = new Map((options.forgeApprovedIds ?? []).map((id) => [id, "2026-08-20T10:00:00.000Z"]));
   const pokes: Array<{ containerId: string; message: string }> = [];
   const broadcasts: Task[] = [];
   const containers = new Map(
@@ -142,7 +152,9 @@ function makeHarness(options: HarnessOptions) {
       options.onListReviewRequests?.(repoFullName);
       if (options.listError) throw options.listError;
       if (options.listErrorFor === repoFullName) throw new Error(`listing ${repoFullName} failed`);
-      return options.snapshot ?? [];
+      return (options.snapshot ?? []).map((item) =>
+        forgeApprovedAt.has(item.id) ? { ...item, humanApprovedAt: forgeApprovedAt.get(item.id)! } : item,
+      );
     },
     getReviewRequest:
       options.getReviewRequest ??
@@ -155,6 +167,15 @@ function makeHarness(options: HarnessOptions) {
     },
     rebase: async (_repo, id) => {
       rebased.push(id);
+    },
+    approve: async (_repo, id, headSha) => {
+      if (options.approveError) throw options.approveError;
+      approved.push({ id, headSha });
+      forgeApprovedAt.set(id, NOW.toISOString());
+    },
+    unapprove: async (_repo, id) => {
+      unapproved.push(id);
+      forgeApprovedAt.delete(id);
     },
     merge: async (_repo, id) => {
       merged.push(id);
@@ -206,12 +227,15 @@ function makeHarness(options: HarnessOptions) {
 
   return {
     deps,
+    options,
     store,
     quickPrompts,
     created,
     removed,
     rebased,
     merged,
+    approved,
+    unapproved,
     pokes,
     broadcasts,
     promptBroadcasts,
@@ -586,7 +610,7 @@ describe("scheduler: watching a running agent", () => {
     await runTaskSchedulerTick(harness.deps);
     assert.equal(task.attempts[1].finishedObservation?.headSha, "abc123");
 
-    options.codeStatus = { [CONTAINER_NAME]: { ...makeCodeStatus(null), commitSha: "pushed456" } };
+    options.codeStatus = { [CONTAINER_NAME]: { ...makeCodeStatus(null), headSha: "pushed456" } };
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(harness.removed.length, 0);
@@ -1180,7 +1204,7 @@ describe("scheduler: resuming a held attempt", () => {
       codeStatus: {
         [CONTAINER_NAME]: {
           ...makeCodeStatus({ id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" }),
-          commitSha: "def456",
+          headSha: "def456",
         },
       },
       snapshot: [makeReviewRequest({ ciState: "failed" })],
@@ -1244,7 +1268,7 @@ describe("scheduler: resuming a held attempt", () => {
       codeStatus: {
         [CONTAINER_NAME]: {
           ...makeCodeStatus({ id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" }),
-          commitSha: "def456",
+          headSha: "def456",
         },
       },
       snapshot: [makeReviewRequest({ ciState: "failed" })],
@@ -1640,7 +1664,7 @@ describe("scheduler: forge-state evaluation", () => {
     const task = makeLinkedTask({ lastReviewedSha: "abc123" });
     const harness = makeHarness({
       tasks: [task],
-      snapshot: [makeReviewRequest({ approvedByHuman: true })],
+      snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })],
     });
 
     await runTaskSchedulerTick(harness.deps);
@@ -1843,6 +1867,7 @@ describe("scheduler: recovering agent containers after a restart", () => {
       pokeCount: 0,
       lastPokedAt: null,
       resumedAt: null,
+      isMaterial: null,
     });
     assert.equal(harness.store.list()[0].activeContainerId, ORPHAN_ID);
   });
@@ -2222,7 +2247,7 @@ describe("scheduler: multi-stage tasks", () => {
     const task = makeLinkedTask({ lastReviewedSha: "abc123" });
     const options: HarnessOptions = {
       tasks: [task],
-      snapshot: [makeReviewRequest({ approvedByHuman: true })],
+      snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })],
       workItems: [openIssue()],
     };
     const harness = makeHarness(options);
@@ -2876,5 +2901,630 @@ describe("scheduler: perpetual quick-prompts", () => {
     assert.equal(task?.reviewRequest?.id, "12");
     assert.equal(task?.error, null);
     assert.deepEqual(harness.promptBroadcasts, []);
+  });
+});
+
+describe("scheduler: approvals stored in CRC", () => {
+  const APPROVED_AT = "2026-08-20T11:00:00.000Z";
+
+  function approvalWhenMerging(harness: ReturnType<typeof makeHarness>) {
+    const merging = harness.broadcasts.filter((task) => task.phase === "merging");
+    assert.ok(merging.length > 0, "the task never entered the merging phase");
+    return merging[merging.length - 1].approval;
+  }
+
+  function finishActiveAttempt(step: TaskAttempt["step"], isMaterialChange: boolean | null, overrides: Partial<Task> = {}) {
+    const task = makeActiveTask({
+      activeStep: step,
+      attempts: [makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "abc123" })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0, [step]: 1 },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+      ...overrides,
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
+      codeStatus: {
+        [CONTAINER_NAME]: makeCodeStatus(
+          { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+          null,
+          isMaterialChange,
+        ),
+      },
+      snapshot: [makeReviewRequest({ ciState: "pending" })],
+    });
+    return { task, harness };
+  }
+
+  for (const step of ["implement", "rebase", "fix_ci", "address_comments"] as const) {
+    it(`records what a finished ${step} agent reported in is_material on its attempt`, async () => {
+      const { task, harness } = finishActiveAttempt(step, true);
+
+      await runTaskSchedulerTick(harness.deps);
+      await runTaskSchedulerTick(harness.deps);
+
+      assert.deepEqual(harness.removed, [CONTAINER_ID]);
+      assert.equal(task.attempts[0].error, null);
+      assert.equal(task.attempts[0].isMaterial, true);
+      assert.equal(harness.store.get(task.id)?.attempts[0].isMaterial, true);
+    });
+
+    it(`holds the ${step} agent when it finished without writing is_material`, async () => {
+      const { task, harness } = finishActiveAttempt(step, null);
+
+      await runTaskSchedulerTick(harness.deps);
+      await runTaskSchedulerTick(harness.deps);
+
+      assert.equal(task.phase, "failed");
+      assert.equal(
+        task.error,
+        `Agent finished without writing true/false to /run/crc-is-material${HELD_CONTAINER_SUFFIX}`,
+      );
+      assert.deepEqual(harness.removed, []);
+      assert.equal(task.activeContainerId, CONTAINER_ID);
+      assert.equal(task.attempts[0].finishedAt, null);
+      assert.equal(task.attempts[0].isMaterial, null);
+      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+    });
+  }
+
+  for (const step of ["review", "create_issue"] as const) {
+    it(`neither asks a ${step} agent for is_material nor records one`, async () => {
+      const overrides: Partial<Task> =
+        step === "create_issue" ? { workItem: null, sourceText: "Add widgets", reviewRequest: null } : {};
+      const { task, harness } = finishActiveAttempt(step, null, overrides);
+      harness.deps.fetchCodeStatus = async () => ({
+        ...makeCodeStatus(null, "https://github.com/acme/widgets/issues/7", true),
+      });
+
+      await runTaskSchedulerTick(harness.deps);
+      await runTaskSchedulerTick(harness.deps);
+
+      assert.deepEqual(harness.removed, [CONTAINER_ID]);
+      assert.equal(task.attempts[0].error, null);
+      assert.equal(task.attempts[0].isMaterial, null);
+      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+    });
+  }
+
+  it("cancels the stored approval, and withdraws CRC's approval on the forge, when an agent reports a material change", async () => {
+    const { task, harness } = finishActiveAttempt("address_comments", true);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.approval, null);
+    assert.equal(harness.store.get(task.id)?.approval, null);
+    assert.deepEqual(harness.unapproved, ["12"]);
+  });
+
+  it("keeps the agent's container and the approval when withdrawing the forge approval fails", async () => {
+    const { task, harness } = finishActiveAttempt("address_comments", true);
+    harness.deps.getForge("github").unapprove = async () => {
+      throw new Error("GitHub API error (using GITHUB_MERGE_TOKEN): 403 Forbidden");
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.error, "GitHub API error (using GITHUB_MERGE_TOKEN): 403 Forbidden");
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+  });
+
+  it("does not merge a material change on the strength of CRC's own earlier re-approval", async () => {
+    const task = makeActiveTask({
+      activeStep: "address_comments",
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      attempts: [makeAttempt({ step: "address_comments", containerId: CONTAINER_ID, startedAt: RECENT_START })],
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 1 },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
+      codeStatus: {
+        [CONTAINER_NAME]: makeCodeStatus(
+          { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+          null,
+          true,
+        ),
+      },
+      snapshot: [makeReviewRequest({ ciState: "pending" })],
+      forgeApprovedIds: ["12"],
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.activeContainerId, null);
+
+    options.snapshot = [makeReviewRequest()];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.unapproved, ["12"]);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("does not merge after a manual revoke that follows CRC re-approving and the merge being refused", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "rebased789",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null },
+    });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ headSha: "rebased789" })] });
+    const forge = harness.deps.getForge("github");
+    const merge = forge.merge;
+    let refuse = true;
+    forge.merge = async (repo, id) => {
+      if (refuse) throw new Error("merge refused");
+      await merge(repo, id);
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.approved, [{ id: "12", headSha: "rebased789" }]);
+    assert.equal(task.error, "merge refused");
+
+    refuse = false;
+    await withdrawApproval(forge, task, NOW);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.unapproved, ["12"]);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("clears the approval once the PR/MR has merged", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.equal(task.phase, "checking_closure");
+    assert.equal(task.approval, null);
+    assert.equal(harness.store.get(task.id)?.approval, null);
+  });
+
+  it("carries the stored approval onto exactly the head a non-material change pushed", async () => {
+    const { task, harness } = finishActiveAttempt("rebase", false);
+    harness.options.codeStatus![CONTAINER_NAME].headSha = "nitfix456";
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "nitfix456", rebasingFrom: null });
+  });
+
+  it("carries the approval onto the full SHA the forge reports, not the short SHA the container displays", async () => {
+    const approvedSha = "0123456789abcdef0123456789abcdef01234567";
+    const pushedSha = "89abcdef0123456789abcdef0123456789abcdef";
+    const { task, harness } = finishActiveAttempt("rebase", false, {
+      attempts: [makeAttempt({ step: "rebase", containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: approvedSha })],
+      approval: { approvedAt: APPROVED_AT, headSha: approvedSha, diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    Object.assign(harness.options.codeStatus![CONTAINER_NAME], { commitSha: pushedSha.slice(0, 7), headSha: pushedSha });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval?.carriesTo, pushedSha);
+
+    task.lastReviewedSha = pushedSha;
+    task.lastReviewedDiffHash = "diff-hash-2";
+    harness.options.snapshot = [makeReviewRequest({ headSha: pushedSha })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, [{ id: "12", headSha: pushedSha }]);
+    assert.deepEqual(harness.merged, ["12"]);
+  });
+
+  it("does not carry the approval onto an outside push that lands after a non-material change", async () => {
+    const { task, harness } = finishActiveAttempt("address_comments", false);
+    harness.options.codeStatus![CONTAINER_NAME].headSha = "nitfix456";
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.activeContainerId, null);
+    assert.equal(task.approval?.carriesTo, "nitfix456");
+
+    task.lastReviewedSha = "outside999";
+    task.lastReviewedDiffHash = "diff-hash-3";
+    harness.options.snapshot = [makeReviewRequest({ headSha: "outside999" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("carries a carried-over approval through a further non-material change", async () => {
+    const { task, harness } = finishActiveAttempt("fix_ci", false, {
+      attempts: [makeAttempt({ step: "fix_ci", containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "nitfix456" })],
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "nitfix456", rebasingFrom: null },
+    });
+    harness.options.codeStatus![CONTAINER_NAME].headSha = "cifix789";
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.approval?.carriesTo, "cifix789");
+  });
+
+  for (const step of ["address_comments", "fix_ci"] as const) {
+    it(`keeps the approval pinned when a non-material ${step} agent started from a head nobody approved`, async () => {
+      const { task, harness } = finishActiveAttempt(step, false, {
+        lastReviewedSha: "pushed789",
+        lastReviewedDiffHash: "diff-hash-2",
+        attempts: [
+          makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "pushed789" }),
+        ],
+      });
+
+      await runTaskSchedulerTick(harness.deps);
+      await runTaskSchedulerTick(harness.deps);
+      assert.equal(task.activeContainerId, null);
+      assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+
+      task.lastReviewedSha = "nitfix999";
+      harness.options.snapshot = [makeReviewRequest({ headSha: "nitfix999" })];
+      await runTaskSchedulerTick(harness.deps);
+
+      assert.deepEqual(harness.approved, []);
+      assert.deepEqual(harness.merged, []);
+      assert.equal(task.approval, null);
+      assert.equal(task.phase, "waiting_approval");
+    });
+  }
+
+  it("keeps the approval pinned across a forge rebase of a head nobody approved", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "pushed789",
+      lastReviewedDiffHash: "diff-hash-2",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", headSha: "pushed789", needsRebase: true })],
+      diffHash: "diff-hash-2",
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.rebased, ["12"]);
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.lastReviewedSha, "rebased789");
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("does not re-record an approval another human left on the forge once a material change cancelled it", async () => {
+    const { task, harness } = finishActiveAttempt("address_comments", true, { lastReviewedSha: "abc123" });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval, null);
+    assert.equal(task.approvalCancelledAt, NOW.toISOString());
+
+    harness.options.snapshot = [makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+
+    harness.options.snapshot = [makeReviewRequest({ humanApprovedAt: "2026-08-20T12:05:00.000Z" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, ["12"]);
+  });
+
+  it("does not record a forge approval CRC had not stored yet once a material change lands", async () => {
+    const { task, harness } = finishActiveAttempt("fix_ci", true, { lastReviewedSha: "abc123", approval: null });
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approvalCancelledAt, NOW.toISOString());
+    assert.deepEqual(harness.unapproved, []);
+
+    harness.options.snapshot = [makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("does not re-record an approval another human left on the forge after a manual revoke", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" })],
+    });
+
+    await withdrawApproval(harness.deps.getForge("github"), task, NOW);
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("puts the is_material instruction in every prompt for a step that pushes code, and in no other", async () => {
+    const steps = [
+      { step: "implement", task: makeTask(), snapshot: [] },
+      { step: "fix_ci", task: makeLinkedTask(), snapshot: [makeReviewRequest({ ciState: "failed" })] },
+      { step: "rebase", task: makeLinkedTask(), snapshot: [makeReviewRequest({ hasConflicts: true })] },
+      { step: "review", task: makeLinkedTask(), snapshot: [makeReviewRequest()] },
+      {
+        step: "address_comments",
+        task: makeLinkedTask({ lastReviewedSha: "abc123" }),
+        snapshot: [makeReviewRequest({ hasUnresolvedComments: true })],
+      },
+      { step: "create_issue", task: makeTextTask(), snapshot: [] },
+    ];
+    for (const { step, task, snapshot } of steps) {
+      const harness = makeHarness({ tasks: [task], snapshot });
+      await runTaskSchedulerTick(harness.deps);
+      assert.equal(harness.created[0].spawn.step, step);
+      const pushesCode = step !== "review" && step !== "create_issue";
+      assert.equal(
+        harness.created[0].prompt.includes("write `true` or `false` (and nothing else) to /run/crc-is-material"),
+        pushesCode,
+        step,
+      );
+    }
+  });
+
+  it("records a human approval the first time it sees one and merges straight away", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: "diff-hash-1" });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+    assert.equal(task.approval, null);
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.equal(task.phase, "checking_closure");
+  });
+
+  it("keeps the recorded approval when the merge is refused, and merges on the next tick", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: "diff-hash-1" });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" })] });
+    const merge = harness.deps.getForge("github").merge;
+    let refuse = true;
+    harness.deps.getForge("github").merge = async (repo, id) => {
+      if (refuse) throw new Error("merge refused");
+      await merge(repo, id);
+    };
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.error, "merge refused");
+    assert.equal(task.phase, "merging");
+    assert.deepEqual(harness.store.get(task.id)?.approval, { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+
+    refuse = false;
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.equal(task.phase, "checking_closure");
+  });
+
+  it("re-approves on the forge at the new head and merges when the forge reset a stored approval", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "rebased789",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", headSha: "rebased789", humanApprovedAt: null })],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, [{ id: "12", headSha: "rebased789" }]);
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: APPROVED_AT, headSha: "rebased789", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "checking_closure");
+  });
+
+  it("does not merge or pin the approval when re-approving on the forge fails", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "rebased789",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", headSha: "rebased789" })],
+      approveError: new Error("GitLab API error (using GITLAB_MERGE_TOKEN): 401 Unauthorized"),
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.error, "GitLab API error (using GITLAB_MERGE_TOKEN): 401 Unauthorized");
+    assert.equal(task.consecutiveErrors, 1);
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null });
+  });
+
+  it("revokes a stored approval and waits for a human after an unexplained push changed the diff", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "pushed789",
+      lastReviewedDiffHash: "diff-hash-2",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ headSha: "pushed789" })] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.unapproved, ["12"]);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(harness.store.get(task.id)?.approval, null);
+  });
+
+  it("records the approval and merges once a GitLab rebase settles with the forge still approving", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", humanApprovedAt: "2026-08-20T10:00:00.000Z", needsRebase: true })],
+      diffHash: "diff-hash-1",
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.rebased, ["12"]);
+    assert.equal(task.approval, null);
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", humanApprovedAt: "2026-08-20T10:00:00.000Z" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: NOW.toISOString(), headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null });
+    assert.equal(task.approval, null);
+  });
+
+  it("carries a recorded approval across a forge rebase whose new head the forge no longer approves", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 1, address_comments: 0 },
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", humanApprovedAt: "2026-08-20T10:00:00.000Z", needsRebase: true })],
+      diffHash: "diff-hash-2",
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.rebased, ["12"]);
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: "abc123" });
+    assert.deepEqual(harness.store.get(task.id)?.approval, task.approval);
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", ciState: "running" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval?.rebasingFrom, "abc123");
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789", ciState: "running" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "waiting_ci");
+    assert.deepEqual(task.approval, { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: "rebased789", rebasingFrom: null });
+    assert.deepEqual(harness.store.get(task.id)?.approval, task.approval);
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(harness.created.length, 1);
+    assert.equal(harness.created[0].spawn.step, "review");
+    assert.deepEqual(harness.merged, []);
+
+    const reviewAttempt = task.attempts[task.attempts.length - 1];
+    reviewAttempt.finishedAt = NOW.toISOString();
+    task.activeContainerId = null;
+    task.activeStep = null;
+    task.lastReviewedSha = "rebased789";
+    task.lastReviewedDiffHash = "diff-hash-2";
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.phase, "checking_closure");
+    assert.deepEqual(harness.approved, [{ id: "12", headSha: "rebased789" }]);
+    assert.deepEqual(harness.merged, ["12"]);
+    assert.deepEqual(approvalWhenMerging(harness), { approvedAt: APPROVED_AT, headSha: "rebased789", diffHash: "diff-hash-2", carriesTo: null, rebasingFrom: null });
+    assert.equal(task.approval, null);
+  });
+
+  it("does not carry the approval onto an outside push that lands after a forge rebase settled", async () => {
+    const task = makeLinkedTask({
+      repoSource: "gitlab",
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: "diff-hash-1",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const options: HarnessOptions = {
+      tasks: [task],
+      snapshot: [makeReviewRequest({ kind: "merge_request", needsRebase: true })],
+      diffHash: "diff-hash-2",
+    };
+    const harness = makeHarness(options);
+
+    await runTaskSchedulerTick(harness.deps);
+    assert.deepEqual(harness.rebased, ["12"]);
+
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "rebased789", ciState: "running" })];
+    await runTaskSchedulerTick(harness.deps);
+    assert.equal(task.approval?.carriesTo, "rebased789");
+
+    task.lastReviewedSha = "outside999";
+    task.lastReviewedDiffHash = "diff-hash-3";
+    options.snapshot = [makeReviewRequest({ kind: "merge_request", headSha: "outside999" })];
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.deepEqual(harness.approved, []);
+    assert.deepEqual(harness.merged, []);
+    assert.equal(task.approval, null);
+    assert.equal(task.phase, "waiting_approval");
+  });
+
+  it("clears the approval when a new stage starts", async () => {
+    const task = makeLinkedTask({
+      phase: "checking_closure",
+      mergedAt: "2026-08-20T11:00:00.000Z",
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      workItems: [
+        {
+          id: "7",
+          reference: "#7",
+          title: "Add widgets",
+          url: "https://github.com/acme/widgets/issues/7",
+          body: null,
+          kind: "issue",
+        },
+      ],
+    });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(task.completedStages.length, 1);
+    assert.equal(task.approval, null);
   });
 });

@@ -1,5 +1,6 @@
 import type { RepoReviewRequest, Task, TaskAttempt, TaskPhase, TaskStep } from "../types.js";
 import { isStdinPlaceholderBody } from "../forge/body.js";
+import { timestampMs } from "../forge/timestamp.js";
 
 export const PER_STEP_SPAWN_CAP = 3;
 export const TOTAL_SPAWN_CAP = 12;
@@ -19,7 +20,10 @@ export type TaskDecision =
   | { kind: "noop"; phase: TaskPhase | null }
   | { kind: "spawn"; step: TaskStep; headShaBefore: string | null; diffHashBefore: string | null }
   | { kind: "mark_reviewed"; headSha: string; diffHash: string }
-  | { kind: "forge_rebase" }
+  | { kind: "forge_rebase"; headSha: string }
+  | { kind: "record_approval"; headSha: string; diffHash: string | null }
+  | { kind: "pin_approval"; headSha: string; diffHash: string | null }
+  | { kind: "revoke_approval" }
   | { kind: "merge" }
   | { kind: "mark_merged" }
   | { kind: "fail"; reason: string };
@@ -82,9 +86,10 @@ function spawn(
 
 function rebaseDecision(task: Task, reviewRequest: RepoReviewRequest): TaskDecision | null {
   if (!reviewRequest.mergeStateKnown) return null;
-  if (reviewRequest.hasConflicts) return spawn(task, "rebase");
+  const { headSha } = reviewRequest;
+  if (reviewRequest.hasConflicts) return spawn(task, "rebase", headSha);
   if (reviewRequest.needsRebase) {
-    return task.repoSource === "gitlab" ? { kind: "forge_rebase" } : spawn(task, "rebase");
+    return task.repoSource === "gitlab" ? { kind: "forge_rebase", headSha } : spawn(task, "rebase", headSha);
   }
   return null;
 }
@@ -101,6 +106,29 @@ function unusableBodyReason(reviewRequest: RepoReviewRequest): string | null {
     return `${reviewRequest.reference} has a comment whose whole body is a stdin placeholder ('@-'): an agent passed it to a command that does not read the body from stdin, so the real comment was never posted`;
   }
   return null;
+}
+
+function approvedSinceLastCancellation(task: Task, reviewRequest: RepoReviewRequest): boolean {
+  const { humanApprovedAt } = reviewRequest;
+  if (humanApprovedAt === null) return false;
+  return task.approvalCancelledAt === null || timestampMs(humanApprovedAt) > timestampMs(task.approvalCancelledAt);
+}
+
+function approvalDecision(task: Task, reviewRequest: RepoReviewRequest): TaskDecision {
+  const { headSha } = reviewRequest;
+  const diffHash = task.lastReviewedDiffHash;
+  const approval = task.approval;
+  if (approvedSinceLastCancellation(task, reviewRequest)) {
+    return approval?.headSha === headSha ? { kind: "merge" } : { kind: "record_approval", headSha, diffHash };
+  }
+  if (approval === null) {
+    return { kind: "noop", phase: "waiting_approval" };
+  }
+  if (approval.headSha === headSha) {
+    return { kind: "revoke_approval" };
+  }
+  const carriesOver = approval.carriesTo === headSha || (diffHash !== null && diffHash === approval.diffHash);
+  return carriesOver ? { kind: "pin_approval", headSha, diffHash } : { kind: "revoke_approval" };
 }
 
 export async function decide(
@@ -174,7 +202,7 @@ export async function decide(
   }
 
   if (reviewRequest.ciState === "failed") {
-    return spawn(task, "fix_ci");
+    return spawn(task, "fix_ci", reviewRequest.headSha);
   }
 
   if (!reviewRequest.mergeStateKnown) {
@@ -195,12 +223,8 @@ export async function decide(
   }
 
   if (reviewRequest.hasUnresolvedComments) {
-    return spawn(task, "address_comments");
+    return spawn(task, "address_comments", reviewRequest.headSha);
   }
 
-  if (!reviewRequest.approvedByHuman) {
-    return { kind: "noop", phase: "waiting_approval" };
-  }
-
-  return { kind: "merge" };
+  return approvalDecision(task, reviewRequest);
 }

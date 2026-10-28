@@ -39,11 +39,13 @@ export interface InstanceStatus {
 export interface ContainerCodeStatus {
   branch: string;
   commitSha: string;
+  headSha: string;
   orgName: string | null;
   repoName: string | null;
   provider: ForgeProvider;
   currentTaskDescription: string | null;
   createdIssueUrl: string | null;
+  isMaterialChange: boolean | null;
   reviewRequest: ReviewRequestStatus | null;
   pipeline: PipelineStatus | null;
   warnings: string[];

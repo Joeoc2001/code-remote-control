@@ -34,6 +34,7 @@ function stubs(): Record<string, unknown> {
     result[`/api/containers/${container.id}/code-status`] = {
       branch: "main",
       commitSha: "0000000",
+      headSha: "0000000",
       orgName: null,
       repoName: null,
       currentTaskDescription: null,

@@ -157,6 +157,7 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
           pokeCount: 47,
           lastPokedAt: "2026-08-20T11:30:00.000Z",
           resumedAt: null,
+          isMaterial: null,
         },
       ],
     });
@@ -268,7 +269,7 @@ describe("decide: rules 4-5 (CI)", () => {
       {
         kind: "spawn",
         step: "rebase",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -282,7 +283,7 @@ describe("decide: rules 4-5 (CI)", () => {
         makeReviewRequest({ ciState: "running", needsRebase: true, kind: "merge_request" }),
         noDiffFetch,
       ),
-      { kind: "forge_rebase" },
+      { kind: "forge_rebase", headSha: "abc123" },
     );
   });
 
@@ -292,7 +293,7 @@ describe("decide: rules 4-5 (CI)", () => {
       {
         kind: "spawn",
         step: "rebase",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -313,7 +314,7 @@ describe("decide: rules 4-5 (CI)", () => {
     assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ ciState: "failed" }), noDiffFetch), {
       kind: "spawn",
       step: "fix_ci",
-      headShaBefore: null,
+      headShaBefore: "abc123",
       diffHashBefore: null,
     });
   });
@@ -324,7 +325,7 @@ describe("decide: rules 4-5 (CI)", () => {
       {
         kind: "spawn",
         step: "fix_ci",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -339,7 +340,7 @@ describe("decide: rules 4-5 (CI)", () => {
     assert.deepEqual(decision, {
       kind: "spawn",
       step: "fix_ci",
-      headShaBefore: null,
+      headShaBefore: "abc123",
       diffHashBefore: null,
     });
   });
@@ -373,7 +374,7 @@ describe("decide: rules 6-7 (divergence and conflicts)", () => {
     const task = makeLinkedTask({ repoSource: "gitlab" });
     assert.deepEqual(
       await decide(task, makeReviewRequest({ needsRebase: true, kind: "merge_request" }), noDiffFetch),
-      { kind: "forge_rebase" },
+      { kind: "forge_rebase", headSha: "abc123" },
     );
   });
 
@@ -381,7 +382,7 @@ describe("decide: rules 6-7 (divergence and conflicts)", () => {
     assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ needsRebase: true }), noDiffFetch), {
       kind: "spawn",
       step: "rebase",
-      headShaBefore: null,
+      headShaBefore: "abc123",
       diffHashBefore: null,
     });
   });
@@ -390,7 +391,7 @@ describe("decide: rules 6-7 (divergence and conflicts)", () => {
     assert.deepEqual(await decide(makeLinkedTask(), makeReviewRequest({ hasConflicts: true }), noDiffFetch), {
       kind: "spawn",
       step: "rebase",
-      headShaBefore: null,
+      headShaBefore: "abc123",
       diffHashBefore: null,
     });
   });
@@ -405,7 +406,7 @@ describe("decide: rules 6-7 (divergence and conflicts)", () => {
     assert.deepEqual(decision, {
       kind: "spawn",
       step: "rebase",
-      headShaBefore: null,
+      headShaBefore: "abc123",
       diffHashBefore: null,
     });
   });
@@ -495,7 +496,7 @@ describe("decide: rules 8-11 (review, comments, approval, merge)", () => {
       {
         kind: "spawn",
         step: "address_comments",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -509,11 +510,156 @@ describe("decide: rules 8-11 (review, comments, approval, merge)", () => {
     });
   });
 
-  it("rule 11: merges once a human has approved", async () => {
-    const task = makeLinkedTask({ lastReviewedSha: "abc123" });
-    assert.deepEqual(await decide(task, makeReviewRequest({ approvedByHuman: true }), noDiffFetch), {
+  it("rule 11: records a human approval the first time it is seen", async () => {
+    const task = makeLinkedTask({ lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" }), noDiffFetch), {
+      kind: "record_approval",
+      headSha: "abc123",
+      diffHash: REVIEWED_DIFF,
+    });
+  });
+
+  it("rule 11: merges once a human approval of the current head is recorded", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      approval: { approvedAt: "2026-08-20T11:00:00.000Z", headSha: "abc123", diffHash: REVIEWED_DIFF, carriesTo: null, rebasingFrom: null },
+    });
+    assert.deepEqual(await decide(task, makeReviewRequest({ humanApprovedAt: "2026-08-20T10:00:00.000Z" }), noDiffFetch), {
       kind: "merge",
     });
+  });
+});
+
+describe("decide: approvals stored in CRC", () => {
+  const APPROVED_AT = "2026-08-20T11:00:00.000Z";
+
+  function approvedTask(headSha: string, overrides: Partial<Task> = {}, carriesTo: string | null = null): Task {
+    return makeLinkedTask({
+      lastReviewedSha: "def456",
+      lastReviewedDiffHash: CHANGED_DIFF,
+      approval: { approvedAt: APPROVED_AT, headSha, diffHash: REVIEWED_DIFF, carriesTo, rebasingFrom: null },
+      ...overrides,
+    });
+  }
+
+  const resetHead = makeReviewRequest({ headSha: "def456", humanApprovedAt: null });
+
+  it("re-records an approval the forge reports for a new head", async () => {
+    const task = approvedTask("abc123");
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456", humanApprovedAt: "2026-08-20T10:00:00.000Z" }), noDiffFetch), {
+      kind: "record_approval",
+      headSha: "def456",
+      diffHash: CHANGED_DIFF,
+    });
+  });
+
+  it("carries an approval onto the head a non-material change pushed after the forge reset it", async () => {
+    const task = approvedTask("abc123", {}, "def456");
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), {
+      kind: "pin_approval",
+      headSha: "def456",
+      diffHash: CHANGED_DIFF,
+    });
+  });
+
+  it("revokes an approval when the head moved past the one it carries to and the diff changed", async () => {
+    const task = approvedTask("abc123", {}, "nitfix999");
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), { kind: "revoke_approval" });
+  });
+
+  it("carries an approval onto a new head whose diff is identical to the approved one", async () => {
+    const task = approvedTask("abc123", { lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), {
+      kind: "pin_approval",
+      headSha: "def456",
+      diffHash: REVIEWED_DIFF,
+    });
+  });
+
+  it("revokes an approval when an unexplained push changed the diff", async () => {
+    const task = approvedTask("abc123");
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), { kind: "revoke_approval" });
+  });
+
+  it("revokes an approval when neither diff could be hashed", async () => {
+    const task = approvedTask("abc123", {
+      lastReviewedDiffHash: null,
+      approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: null, carriesTo: null, rebasingFrom: null },
+    });
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), { kind: "revoke_approval" });
+  });
+
+  it("revokes an approval the human withdrew on the forge without the head moving", async () => {
+    const task = approvedTask("def456");
+    assert.deepEqual(await decide(task, resetHead, noDiffFetch), { kind: "revoke_approval" });
+  });
+
+  it("still waits for CI before merging with a stored approval", async () => {
+    const task = approvedTask("abc123", {}, "def456");
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ headSha: "def456", ciState: "running" }), noDiffFetch),
+      { kind: "noop", phase: "waiting_ci" },
+    );
+  });
+
+  it("still fixes failing CI before merging with a stored approval", async () => {
+    const task = approvedTask("abc123", {}, "def456");
+    const decision = await decide(task, makeReviewRequest({ headSha: "def456", ciState: "failed" }), noDiffFetch);
+    assert.equal(decision.kind, "spawn");
+    assert.equal((decision as { step: string }).step, "fix_ci");
+  });
+
+  it("still reviews a changed head before carrying a stored approval onto it", async () => {
+    const task = approvedTask("abc123", { lastReviewedSha: "abc123", lastReviewedDiffHash: REVIEWED_DIFF });
+    assert.deepEqual(await decide(task, makeReviewRequest({ headSha: "def456" }), changedDiff()), {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "def456",
+      diffHashBefore: CHANGED_DIFF,
+    });
+  });
+
+  it("still addresses unresolved threads before merging with a stored approval", async () => {
+    const task = approvedTask("abc123", {}, "def456");
+    const decision = await decide(
+      task,
+      makeReviewRequest({ headSha: "def456", hasUnresolvedComments: true }),
+      noDiffFetch,
+    );
+    assert.equal(decision.kind, "spawn");
+    assert.equal((decision as { step: string }).step, "address_comments");
+  });
+
+  it("still rebases before merging with a stored approval", async () => {
+    const task = approvedTask("abc123", { repoSource: "gitlab" });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ headSha: "def456", needsRebase: true }), noDiffFetch),
+      { kind: "forge_rebase", headSha: "def456" },
+    );
+  });
+
+  it("ignores a forge approval given before CRC last cancelled the stored approval", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: REVIEWED_DIFF,
+      approvalCancelledAt: "2026-08-20T12:00:00.000Z",
+    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ humanApprovedAt: "2026-08-20T11:00:00.000Z" }), noDiffFetch),
+      { kind: "noop", phase: "waiting_approval" },
+    );
+  });
+
+  it("records a forge approval given after CRC last cancelled the stored approval", async () => {
+    const task = makeLinkedTask({
+      lastReviewedSha: "abc123",
+      lastReviewedDiffHash: REVIEWED_DIFF,
+      approvalCancelledAt: "2026-08-20T12:00:00.000Z",
+    });
+    assert.deepEqual(
+      await decide(task, makeReviewRequest({ humanApprovedAt: "2026-08-20T12:30:00.000Z" }), noDiffFetch),
+      { kind: "record_approval", headSha: "abc123", diffHash: REVIEWED_DIFF },
+    );
   });
 });
 
@@ -677,7 +823,7 @@ describe("decide: review/address_comments cycle cap", () => {
       {
         kind: "spawn",
         step: "address_comments",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -690,7 +836,7 @@ describe("decide: review/address_comments cycle cap", () => {
       {
         kind: "spawn",
         step: "address_comments",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -704,7 +850,7 @@ describe("decide: review/address_comments cycle cap", () => {
       {
         kind: "spawn",
         step: "address_comments",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -719,7 +865,7 @@ describe("decide: review/address_comments cycle cap", () => {
       {
         kind: "spawn",
         step: "address_comments",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -730,7 +876,7 @@ describe("decide: review/address_comments cycle cap", () => {
     assert.deepEqual(await decide(task, makeReviewRequest({ hasConflicts: true }), noDiffFetch), {
       kind: "spawn",
       step: "rebase",
-      headShaBefore: null,
+      headShaBefore: "abc123",
       diffHashBefore: null,
     });
   });
@@ -752,7 +898,7 @@ describe("decide: review/address_comments cycle cap", () => {
       {
         kind: "spawn",
         step: "address_comments",
-        headShaBefore: null,
+        headShaBefore: "abc123",
         diffHashBefore: null,
       },
     );
@@ -864,7 +1010,7 @@ describe("decide: multi-stage tasks", () => {
     assert.deepEqual(await decide(task, makeReviewRequest({ ciState: "failed" }), noDiffFetch), {
       kind: "spawn",
       step: "fix_ci",
-      headShaBefore: null,
+      headShaBefore: "abc123",
       diffHashBefore: null,
     });
   });

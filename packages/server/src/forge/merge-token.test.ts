@@ -19,6 +19,8 @@ const LOGIN_BY_TOKEN: Record<string, string> = {
   "gl-merge": "owner",
 };
 
+const APPROVED_AT = "2026-03-01T12:00:00Z";
+
 function pullRequestNode(approvers: string[]): Record<string, unknown> {
   return {
     number: 12,
@@ -35,7 +37,7 @@ function pullRequestNode(approvers: string[]): Record<string, unknown> {
     reviews: { nodes: [] },
     reviewThreads: { nodes: [] },
     latestOpinionatedReviews: {
-      nodes: approvers.map((login) => ({ state: "APPROVED", author: { login } })),
+      nodes: approvers.map((login) => ({ state: "APPROVED", submittedAt: APPROVED_AT, author: { login } })),
     },
   };
 }
@@ -66,7 +68,7 @@ function gitlabRoutes(approvers: string[], mergeStatus = 200): Route[] {
       request.url === "https://gitlab.test/api/v4/user" ? { json: { username: LOGIN_BY_TOKEN[request.token] } } : null,
     (request) =>
       request.url === `${mr}/approvals`
-        ? { json: { approved_by: approvers.map((username) => ({ user: { username } })) } }
+        ? { json: { approved_by: approvers.map((username) => ({ user: { username }, approved_at: APPROVED_AT })) } }
         : null,
     (request) => (request.url.startsWith(`${mr}/discussions`) ? { json: [] } : null),
     (request) => (request.url.startsWith(`${mr}/diffs`) ? { json: [] } : null),
@@ -113,6 +115,57 @@ describe("GitHub with GITHUB_MERGE_TOKEN set", () => {
     ]);
   });
 
+  it("approves the pull request at the given head with the merge token", async () => {
+    const requests = stubFetch([(request) => (request.url.endsWith("/pulls/12/reviews") ? { json: {} } : null)]);
+    await github.approvePullRequest("acme/widgets", "12", "def456");
+    assert.deepEqual(requests, [
+      {
+        method: "POST",
+        url: "https://api.github.com/repos/acme/widgets/pulls/12/reviews",
+        token: "gh-merge",
+        body: { commit_id: "def456", event: "APPROVE" },
+      },
+    ]);
+  });
+
+  it("names the merge token in a refused approval's error", async () => {
+    stubFetch([() => ({ status: 422, text: "Can not approve your own pull request" })]);
+    await assert.rejects(
+      github.approvePullRequest("acme/widgets", "12", "def456"),
+      /^Error: GitHub API error \(using GITHUB_MERGE_TOKEN\): 422 Error: Can not approve your own pull request$/,
+    );
+  });
+
+  it("dismisses every approval the merge token's account left, and no one else's", async () => {
+    const requests = stubFetch([
+      (request) => (request.url === "https://api.github.com/user" ? { json: { login: LOGIN_BY_TOKEN[request.token] } } : null),
+      (request) =>
+        request.url === "https://api.github.com/repos/acme/widgets/pulls/12/reviews?per_page=100&page=1"
+          ? {
+              json: [
+                { id: 1, state: "APPROVED", user: { login: "owner" } },
+                { id: 2, state: "APPROVED", user: { login: "teammate" } },
+                { id: 3, state: "DISMISSED", user: { login: "owner" } },
+                { id: 4, state: "COMMENTED", user: { login: "owner" } },
+                { id: 5, state: "APPROVED", user: null },
+                { id: 6, state: "APPROVED", user: { login: "owner" } },
+              ],
+            }
+          : null,
+      (request) => (request.url.endsWith("/dismissals") ? { json: {} } : null),
+    ]);
+    await github.unapprovePullRequest("acme/widgets", "12");
+    assert.deepEqual(
+      requests.filter((request) => request.method === "PUT"),
+      [1, 6].map((id) => ({
+        method: "PUT",
+        url: `https://api.github.com/repos/acme/widgets/pulls/12/reviews/${id}/dismissals`,
+        token: "gh-merge",
+        body: { message: "Approval revoked in Code Remote Control", event: "DISMISS" },
+      })),
+    );
+  });
+
   it("rebases with the agent token", async () => {
     const requests = stubFetch(githubRoutes([]));
     await github.rebasePullRequest("acme/widgets", "12");
@@ -133,9 +186,9 @@ describe("GitHub with GITHUB_MERGE_TOKEN set", () => {
 
   it("ignores approvals from the agent account and counts the merge token owner's", async () => {
     stubFetch(githubRoutes(["crc-bot"]));
-    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).approvedByHuman, false);
+    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).humanApprovedAt, null);
     stubFetch(githubRoutes(["owner"]));
-    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).approvedByHuman, true);
+    assert.equal((await github.fetchPullRequest("acme/widgets", "12")).humanApprovedAt, APPROVED_AT);
   });
 
   it("names the merge token in a refused merge's error", async () => {
@@ -166,6 +219,59 @@ describe("GitLab with GITLAB_MERGE_TOKEN set", () => {
     ]);
   });
 
+  it("approves the merge request at the given head with the merge token", async () => {
+    const requests = stubFetch([
+      (request) =>
+        request.url === "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/approve" ? { json: {} } : null,
+    ]);
+    await gitlab.approveMergeRequest("acme/widgets", "5", "def456");
+    assert.deepEqual(requests, [
+      {
+        method: "POST",
+        url: "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/approve",
+        token: "gl-merge",
+        body: { sha: "def456" },
+      },
+    ]);
+  });
+
+  it("names the merge token in a refused approval's error", async () => {
+    stubFetch([() => ({ status: 401, text: "You are not allowed to approve" })]);
+    await assert.rejects(
+      gitlab.approveMergeRequest("acme/widgets", "5", "def456"),
+      /^Error: GitLab API error \(using GITLAB_MERGE_TOKEN\): 401 Error: You are not allowed to approve$/,
+    );
+  });
+
+  it("withdraws the merge token's approval when the merge request carries it", async () => {
+    const requests = stubFetch([
+      ...gitlabRoutes(["owner", "teammate"]),
+      (request) =>
+        request.url === "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/unapprove" ? { json: {} } : null,
+    ]);
+    await gitlab.unapproveMergeRequest("acme/widgets", "5");
+    assert.deepEqual(
+      requests.filter((request) => request.method === "POST"),
+      [
+        {
+          method: "POST",
+          url: "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5/unapprove",
+          token: "gl-merge",
+          body: undefined,
+        },
+      ],
+    );
+  });
+
+  it("leaves a merge request alone when the merge token has not approved it", async () => {
+    const requests = stubFetch(gitlabRoutes(["teammate"]));
+    await gitlab.unapproveMergeRequest("acme/widgets", "5");
+    assert.deepEqual(
+      requests.filter((request) => request.method !== "GET"),
+      [],
+    );
+  });
+
   it("rebases with the agent token", async () => {
     const requests = stubFetch(gitlabRoutes([]));
     await gitlab.rebaseMergeRequest("acme/widgets", "5");
@@ -185,9 +291,19 @@ describe("GitLab with GITLAB_MERGE_TOKEN set", () => {
 
   it("ignores approvals from the agent account and counts the merge token owner's", async () => {
     stubFetch(gitlabRoutes(["crc-bot"]));
-    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).approvedByHuman, false);
+    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).humanApprovedAt, null);
     stubFetch(gitlabRoutes(["owner"]));
-    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).approvedByHuman, true);
+    assert.equal((await gitlab.fetchMergeRequest("acme/widgets", "5")).humanApprovedAt, APPROVED_AT);
+  });
+
+  it("fails loudly when GitLab does not report when an approval was given", async () => {
+    const mr = "https://gitlab.test/api/v4/projects/acme%2Fwidgets/merge_requests/5";
+    stubFetch([
+      (request) =>
+        request.url === `${mr}/approvals` ? { json: { approved_by: [{ user: { username: "owner" } }] } } : null,
+      ...gitlabRoutes([]),
+    ]);
+    await assert.rejects(gitlab.fetchMergeRequest("acme/widgets", "5"), /did not report when owner approved !5/);
   });
 
   it("names the merge token in a refused merge's error", async () => {

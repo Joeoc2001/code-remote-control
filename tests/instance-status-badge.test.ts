@@ -64,6 +64,7 @@ for (const entry of [...CASES, ...BACKGROUND_CASES]) {
   stubs[`/api/containers/${entry.id}/code-status`] = {
     branch: "main",
     commitSha: "abc123",
+    headSha: "abc123",
     orgName: "example",
     repoName: "repo",
     provider: "github",

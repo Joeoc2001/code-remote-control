@@ -8,6 +8,7 @@ import type {
 import { GITHUB_AGENT_TOKEN, GITHUB_MERGE_TOKEN, loadConfigurations, type ForgeToken } from "../config.js";
 import { hashDiffText } from "./diff-hash.js";
 import { isStdinPlaceholderBody } from "./body.js";
+import { latestTimestamp } from "./timestamp.js";
 
 const MAX_PAGES = 10;
 const PULL_REQUESTS_PER_PAGE = 25;
@@ -17,6 +18,7 @@ const DIFF_TOO_LARGE_STATUS = 406;
 
 let repoCache: { repos: GitHubRepo[]; fetchedAt: number } | null = null;
 let viewerLoginPromise: Promise<string> | null = null;
+let mergeLoginPromise: Promise<string> | null = null;
 
 export async function fetchRepos(): Promise<GitHubRepo[]> {
   if (repoCache && Date.now() - repoCache.fetchedAt < CACHE_TTL_MS) {
@@ -140,7 +142,7 @@ export interface GitHubPullRequestNode {
     nodes: Array<{ isResolved: boolean; comments: { nodes: Array<{ body: string }> } }>;
   };
   latestOpinionatedReviews: {
-    nodes: Array<{ state: string; author: { login: string } | null }>;
+    nodes: Array<{ state: string; submittedAt: string | null; author: { login: string } | null }>;
   };
 }
 
@@ -170,7 +172,7 @@ const PULL_REQUEST_FIELDS = `
     }
   }
   latestOpinionatedReviews(first: 100) {
-    nodes { state author { login } }
+    nodes { state submittedAt author { login } }
   }
 `;
 
@@ -262,6 +264,18 @@ export function mapGitHubState(state: GitHubPullRequestNode["state"]): ReviewReq
   }
 }
 
+function latestHumanApprovalAt(node: GitHubPullRequestNode, viewerLogin: string): string | null {
+  const approvedAt = node.latestOpinionatedReviews.nodes
+    .filter((review) => review.state === "APPROVED" && review.author !== null && review.author.login !== viewerLogin)
+    .map((review) => {
+      if (review.submittedAt === null) {
+        throw new Error(`${node.url} has an APPROVED review by ${review.author!.login} without a submittedAt`);
+      }
+      return review.submittedAt;
+    });
+  return latestTimestamp(approvedAt);
+}
+
 export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: string): RepoReviewRequest {
   const rollupState = node.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null;
   return {
@@ -277,9 +291,7 @@ export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: str
     hasConflicts: node.mergeable === "CONFLICTING",
     needsRebase: node.mergeStateStatus === "BEHIND" || node.viewerCanUpdateBranch,
     mergeStateKnown: node.mergeable !== "UNKNOWN" && node.mergeStateStatus !== "UNKNOWN",
-    approvedByHuman: node.latestOpinionatedReviews.nodes.some(
-      (review) => review.state === "APPROVED" && review.author !== null && review.author.login !== viewerLogin,
-    ),
+    humanApprovedAt: latestHumanApprovalAt(node, viewerLogin),
     hasUnresolvedComments: node.reviewThreads.nodes.some((thread) => !thread.isResolved),
     hasPlaceholderComment: [
       ...node.comments.nodes,
@@ -369,7 +381,7 @@ export async function fetchPullRequestDiffHash(
   return hashDiffText(await response.text());
 }
 
-async function githubRest(token: ForgeToken, method: string, path: string, body?: unknown): Promise<void> {
+async function githubRest(token: ForgeToken, method: string, path: string, body?: unknown): Promise<Response> {
   const response = await fetch(`https://api.github.com${path}`, {
     method,
     headers: {
@@ -386,10 +398,63 @@ async function githubRest(token: ForgeToken, method: string, path: string, body?
       `GitHub API error (using ${token.envName}): ${response.status} ${response.statusText}: ${detail}`,
     );
   }
+
+  return response;
 }
 
 export async function rebasePullRequest(repoFullName: string, id: string): Promise<void> {
   await githubRest(GITHUB_AGENT_TOKEN, "PUT", `/repos/${repoFullName}/pulls/${id}/update-branch`);
+}
+
+export async function approvePullRequest(repoFullName: string, id: string, headSha: string): Promise<void> {
+  await githubRest(GITHUB_MERGE_TOKEN, "POST", `/repos/${repoFullName}/pulls/${id}/reviews`, {
+    commit_id: headSha,
+    event: "APPROVE",
+  });
+}
+
+async function fetchMergeLogin(): Promise<string> {
+  if (!mergeLoginPromise) {
+    mergeLoginPromise = githubRest(GITHUB_MERGE_TOKEN, "GET", "/user")
+      .then((response) => response.json() as Promise<{ login: string }>)
+      .then((user) => user.login);
+    mergeLoginPromise.catch(() => {
+      mergeLoginPromise = null;
+    });
+  }
+  return mergeLoginPromise;
+}
+
+interface GitHubReview {
+  id: number;
+  state: string;
+  user: { login: string } | null;
+}
+
+async function fetchReviews(repoFullName: string, id: string): Promise<GitHubReview[]> {
+  const reviews: GitHubReview[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const response = await githubRest(
+      GITHUB_AGENT_TOKEN,
+      "GET",
+      `/repos/${repoFullName}/pulls/${id}/reviews?per_page=100&page=${page}`,
+    );
+    const batch = (await response.json()) as GitHubReview[];
+    reviews.push(...batch);
+    if (batch.length < 100) return reviews;
+  }
+  throw new Error(`${repoFullName}#${id} has more than ${MAX_PAGES * 100} reviews`);
+}
+
+export async function unapprovePullRequest(repoFullName: string, id: string): Promise<void> {
+  const [mergeLogin, reviews] = await Promise.all([fetchMergeLogin(), fetchReviews(repoFullName, id)]);
+  for (const review of reviews) {
+    if (review.state !== "APPROVED" || review.user?.login !== mergeLogin) continue;
+    await githubRest(GITHUB_MERGE_TOKEN, "PUT", `/repos/${repoFullName}/pulls/${id}/reviews/${review.id}/dismissals`, {
+      message: "Approval revoked in Code Remote Control",
+      event: "DISMISS",
+    });
+  }
 }
 
 export async function mergePullRequest(repoFullName: string, id: string): Promise<void> {

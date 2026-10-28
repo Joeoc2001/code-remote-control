@@ -24,6 +24,12 @@ export function buildIssuePrompt(item: RepoWorkItem): string {
 
 export const CREATED_ISSUE_URL_PATH = "/run/crc-created-issue-url";
 
+export const IS_MATERIAL_PATH = "/run/crc-is-material";
+
+export function isMaterialGuidance(noun: string): string {
+  return `Before you finish, write \`true\` or \`false\` (and nothing else) to ${IS_MATERIAL_PATH}: \`true\` if your pushed changes alter the behaviour or substance of the ${noun} in a way a reviewer who already approved it would want to re-check; \`false\` if they are only a rebase onto main, conflict resolution that keeps the intended change, formatting, or a CI/nit fix that leaves the reviewed behaviour unchanged. If unsure, write \`true\`. The task is incomplete until that file holds \`true\` or \`false\`.`;
+}
+
 export function buildCreateIssuePrompt(text: string, source: RepoSource): string {
   const noun = source === "gitlab" ? "issue or work item" : "issue";
   const bodyCommand =
@@ -41,7 +47,7 @@ export function buildTaskImplementPrompt(
   source: RepoSource,
   mergedReviewRequestUrls: string[] = [],
 ): string {
-  return `Address issue ${item.reference} at ${item.url}.${earlierStagesGuidance(item, mergedReviewRequestUrls)} Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. If it fully addresses the issue, make it close the issue when merged (e.g. \`Closes ${item.reference}\` in its description). ${ISSUE_PROMPT_SUFFIX} ${forgeBodyGuidance(source)}`;
+  return `Address issue ${item.reference} at ${item.url}.${earlierStagesGuidance(item, mergedReviewRequestUrls)} Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. If it fully addresses the issue, make it close the issue when merged (e.g. \`Closes ${item.reference}\` in its description). ${ISSUE_PROMPT_SUFFIX} ${isMaterialGuidance(source === "gitlab" ? "merge request" : "pull request")} ${forgeBodyGuidance(source)}`;
 }
 
 export type ReviewNitMode = "threads" | "comment";
@@ -62,16 +68,16 @@ export function buildReviewRequestPrompt(
 }
 
 export function buildReviewCommentsPrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {
-  return `Address all open comments on ${reviewRequestNoun(item)} ${item.reference} at ${item.url}, closing comments as they are resolved. ${reviewRequestBodyGuidance(item)}`;
+  return `Address all open comments on ${reviewRequestNoun(item)} ${item.reference} at ${item.url}, closing comments as they are resolved. ${isMaterialGuidance(reviewRequestNoun(item))} ${reviewRequestBodyGuidance(item)}`;
 }
 
 export function buildRebasePrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {
   const noun = reviewRequestNoun(item);
-  return `Rebase ${noun} ${item.reference} at ${item.url} onto the main branch, resolving any merge conflicts, and force-push the rebased branch. Then, if previous review left any nits or minor non-blocking suggestions on the ${noun}, address them too in separate commits on top of the rebase and push those as well; if no such suggestions were given, or a suggestion is contentious or would expand the scope of the change, leave it alone rather than guessing. ${reviewRequestBodyGuidance(item)}`;
+  return `Rebase ${noun} ${item.reference} at ${item.url} onto the main branch, resolving any merge conflicts, and force-push the rebased branch. Then, if previous review left any nits or minor non-blocking suggestions on the ${noun}, address them too in separate commits on top of the rebase and push those as well; if no such suggestions were given, or a suggestion is contentious or would expand the scope of the change, leave it alone rather than guessing. ${isMaterialGuidance(noun)} ${reviewRequestBodyGuidance(item)}`;
 }
 
 export function buildFixCiPrompt(item: Pick<RepoReviewRequest, "kind" | "reference" | "url">): string {
-  return `Investigate the failing CI on ${reviewRequestNoun(item)} ${item.reference} at ${item.url} and push fixes to its branch until CI passes. ${reviewRequestBodyGuidance(item)}`;
+  return `Investigate the failing CI on ${reviewRequestNoun(item)} ${item.reference} at ${item.url} and push fixes to its branch until CI passes. ${isMaterialGuidance(reviewRequestNoun(item))} ${reviewRequestBodyGuidance(item)}`;
 }
 
 export interface StalledBackgroundTask {

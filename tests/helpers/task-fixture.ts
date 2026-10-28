@@ -27,6 +27,8 @@ export function makeTask(id: string, phase: TaskPhase, createdAt: string): Task 
     reviewRequest: null,
     lastReviewedSha: null,
     lastReviewedDiffHash: null,
+    approval: null,
+    approvalCancelledAt: null,
     activeContainerId: null,
     activeStep: null,
     attemptsByStep: { implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },

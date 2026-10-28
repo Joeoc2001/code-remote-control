@@ -243,6 +243,67 @@ seconds and spawns exactly the agent the current state calls for:
    (approvals from the bot's own forge account are ignored), then merges via
    the forge API.
 
+### Approvals stored in CRC
+
+Once CRC sees a human approval it stores it on the task, so it survives forges
+that reset approvals on push (e.g. GitLab's "Reset approvals on push" after a
+rebase). Every agent that pushes code (implement, rebase, fix CI, address
+comments) must write `true` or `false` to `/run/crc-is-material` before it
+finishes; an agent that leaves it unwritten is held like any other missing
+deliverable. Anything else in the file makes the container's code-status
+request fail, so the task records an error on every tick and fails after
+`MAX_CONSECUTIVE_ERRORS`. The stored approval then follows the PR/MR's head:
+
+- `true` (a material change) cancels it, and the task waits for a fresh human
+  approval.
+- `false` lets it carry over to exactly the head the agent pushed, and a rebase
+  via the forge API lets it carry over to the head the forge reports once that
+  rebase lands, but only if the agent or rebase started from a head the
+  approval covers. If the head had already moved, or moves again afterwards,
+  the diff check below decides.
+- While the forge still shows a human approval, CRC follows it, as before (so
+  on GitHub without "Dismiss stale pull request approvals" an outside push is
+  merged on the existing approval). Once the forge has dropped it, any other
+  head change keeps the stored approval only if the diff is identical to the
+  approved one; an unexplained push with a different diff cancels it. A human
+  withdrawing their approval on the forge, without the head moving, cancels it
+  too.
+
+A stored approval only replaces the final human-approval gate: CI, rebasing,
+review, and unresolved threads still gate the merge. When it carries over to a
+head the forge no longer shows as approved, the server re-approves the PR/MR
+at that head with the merge token before merging, so the merge token's account
+must be allowed to approve it (and must not be the author if the project
+forbids self-approval). The task view shows the stored approval with a
+**Revoke approval** button, and each attempt's material / not-material report.
+
+Because the merge token's account counts as human, CRC's own re-approval would
+otherwise look like a fresh human approval on the next tick. So whenever CRC
+cancels a stored approval (a material change, an unexplained push, or **Revoke
+approval**) it also withdraws every approval the merge token's account holds on
+the PR/MR: GitLab's `unapprove`, or dismissing those reviews on GitHub (which
+needs the merge token's account to be allowed to dismiss reviews). If your own
+PAT is the merge token, this withdraws your own approval too. CRC also records
+when it cancelled, and from then on only counts forge approvals given after
+that moment, so approvals from other accounts that the forge keeps (GitHub
+without "Dismiss stale pull request approvals", GitLab without "Reset
+approvals on push") cannot re-record it. On GitLab this relies on the
+approvals API reporting `approved_at`; CRC fails the request if it doesn't.
+The cancellation time comes from the CRC server's clock and the approval time
+from the forge's, so clock skew matters only for an approval given within a few
+seconds of a cancellation; a fast CRC clock just ignores it, and a slow one may
+count an approval given just before the cancellation.
+On GitLab, a human who is still listed as an approver after a cancellation
+(because "Reset approvals on push" is off) has to revoke their approval and
+approve again, so that their `approved_at` falls after the cancellation.
+
+Two narrow races remain. CRC treats the head it saw when it decided to spawn an
+agent as the head the agent started from, so an outside push that lands
+between that decision and the agent's clone is carried over with the agent's
+`false`. And the first new head the forge reports after a forge rebase is
+treated as the rebase's result, whoever pushed it.
+The stored approval is cleared once the PR/MR merges.
+
 ### Merge token
 
 Agents get `GITHUB_TOKEN` / `GITLAB_TOKEN`, which should not be able to merge
@@ -255,8 +316,8 @@ privileged token instead:
 - `GITLAB_MERGE_TOKEN` — a token with the `api` scope whose account has
   Maintainer access or is "allowed to merge" on the protected branch.
 
-The merge token is used only for the merge call and is never passed to agent
-containers; the server refuses to create a container whose `env` would carry
+The merge token is used only for the approve, unapprove and merge calls and is never
+passed to agent containers; the server refuses to create a container whose `env` would carry
 it. Every other forge call, including the fast-forward rebase, uses the agent
 token. Approvals are attributed against the agent token's account, so approvals
 made by the merge token's account (e.g. your own PAT) still count as human.

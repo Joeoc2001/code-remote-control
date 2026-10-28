@@ -1,16 +1,16 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Task, TaskAttempt } from "../types.js";
+import type { Task, TaskApproval, TaskAttempt } from "../types.js";
 
 function isMissingFileError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-type StoredAttempt = Omit<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt"> &
-  Partial<Pick<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt">>;
+type StoredAttempt = Omit<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial"> &
+  Partial<Pick<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial">>;
 
-type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "attempts"> &
-  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId">> & {
+type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval" | "approvalCancelledAt" | "attempts"> &
+  Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval" | "approvalCancelledAt">> & {
     attempts: StoredAttempt[];
   };
 
@@ -20,6 +20,7 @@ function migrateAttempt(stored: StoredAttempt): TaskAttempt {
     pokeCount: stored.pokeCount ?? 0,
     lastPokedAt: stored.lastPokedAt ?? null,
     resumedAt: stored.resumedAt ?? null,
+    isMaterial: stored.isMaterial ?? null,
   };
 }
 
@@ -32,6 +33,22 @@ function hasValidPokeFields(attempt: TaskAttempt): boolean {
   );
 }
 
+function isNullableString(value: unknown): boolean {
+  return value === null || typeof value === "string";
+}
+
+function isValidApproval(approval: TaskApproval | null): boolean {
+  if (approval === null) return true;
+  return (
+    typeof approval === "object" &&
+    typeof approval.approvedAt === "string" &&
+    typeof approval.headSha === "string" &&
+    isNullableString(approval.diffHash) &&
+    isNullableString(approval.carriesTo) &&
+    isNullableString(approval.rebasingFrom)
+  );
+}
+
 function migrateTask(stored: StoredTask, tasksPath: string): Task {
   const task: Task = {
     ...stored,
@@ -40,6 +57,8 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
     stageStartedAt: stored.stageStartedAt ?? stored.createdAt,
     mergedAt: stored.mergedAt ?? null,
     quickPromptId: stored.quickPromptId ?? null,
+    approval: stored.approval ?? null,
+    approvalCancelledAt: stored.approvalCancelledAt ?? null,
   };
   if (
     !Array.isArray(task.completedStages) ||
@@ -50,6 +69,15 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
   }
   if (!task.attempts.every(hasValidPokeFields)) {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an attempt with invalid poke fields`);
+  }
+  if (!task.attempts.every((attempt) => attempt.isMaterial === null || typeof attempt.isMaterial === "boolean")) {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an attempt with an invalid isMaterial`);
+  }
+  if (!isNullableString(task.approvalCancelledAt)) {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid approvalCancelledAt`);
+  }
+  if (!isValidApproval(task.approval)) {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid approval`);
   }
   if (task.quickPromptId !== null && typeof task.quickPromptId !== "string") {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid quickPromptId`);

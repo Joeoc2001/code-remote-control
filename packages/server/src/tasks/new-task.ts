@@ -73,6 +73,8 @@ export function makeNewTask(
     reviewRequest: null,
     lastReviewedSha: null,
     lastReviewedDiffHash: null,
+    approval: null,
+    approvalCancelledAt: null,
     activeContainerId: null,
     activeStep: null,
     attemptsByStep: Object.fromEntries(TASK_STEPS.map((step) => [step, 0])) as Record<TaskStep, number>,

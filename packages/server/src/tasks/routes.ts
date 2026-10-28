@@ -4,6 +4,7 @@ import { broadcastRemoval, removeContainerIfPresent } from "../docker.js";
 import { getForge } from "../forge/index.js";
 import type { CreateTaskFromTextRequest, CreateTasksRequest, Task, TaskStep, UpdateTaskRequest } from "../types.js";
 import { parseRepo } from "../validation.js";
+import { withdrawApproval } from "./approval.js";
 import { makeNewTask, parseConfigByStep, resolveConfigByStep } from "./new-task.js";
 import { resumeTask, type ResumeDeps } from "./resume.js";
 import { broadcastTaskRemoved, broadcastTaskUpdated, taskStore } from "./runtime.js";
@@ -191,10 +192,15 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
       return;
     }
 
-    const { phase, configByStep, discardContainer } = req.body as UpdateTaskRequest;
+    const { phase, configByStep, discardContainer, approval } = req.body as UpdateTaskRequest;
 
-    if (phase === undefined && configByStep === undefined) {
-      res.status(400).json({ error: "Provide phase or configByStep" });
+    if (phase === undefined && configByStep === undefined && approval === undefined) {
+      res.status(400).json({ error: "Provide phase, configByStep or approval" });
+      return;
+    }
+
+    if (approval !== undefined && approval !== "revoke") {
+      res.status(400).json({ error: "approval must be 'revoke'" });
       return;
     }
 
@@ -238,6 +244,10 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
         return;
       }
       configByStepPatch = result.value;
+    }
+
+    if (approval === "revoke" && task.approval) {
+      await withdrawApproval(getForge(task.repoSource), task, new Date());
     }
 
     task.configByStep = { ...task.configByStep, ...configByStepPatch };

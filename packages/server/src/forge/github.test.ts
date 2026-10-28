@@ -68,7 +68,7 @@ describe("mapPullRequestNode", () => {
       hasConflicts: false,
       needsRebase: false,
       mergeStateKnown: true,
-      approvedByHuman: false,
+      humanApprovedAt: null,
       hasUnresolvedComments: false,
       hasPlaceholderComment: false,
     });
@@ -134,24 +134,39 @@ describe("mapPullRequestNode", () => {
 
   it("counts an approval only when it is not from the token's own account", () => {
     const selfApproved = makeNode({
-      latestOpinionatedReviews: { nodes: [{ state: "APPROVED", author: { login: "bot-login" } }] },
+      latestOpinionatedReviews: {
+        nodes: [{ state: "APPROVED", submittedAt: "2026-03-01T12:00:00Z", author: { login: "bot-login" } }],
+      },
     });
-    assert.equal(mapPullRequestNode(selfApproved, "bot-login").approvedByHuman, false);
+    assert.equal(mapPullRequestNode(selfApproved, "bot-login").humanApprovedAt, null);
 
     const humanApproved = makeNode({
       latestOpinionatedReviews: {
         nodes: [
-          { state: "CHANGES_REQUESTED", author: { login: "reviewer" } },
-          { state: "APPROVED", author: { login: "human" } },
+          { state: "CHANGES_REQUESTED", submittedAt: "2026-03-01T13:00:00Z", author: { login: "reviewer" } },
+          { state: "APPROVED", submittedAt: "2026-03-01T12:00:00Z", author: { login: "human" } },
         ],
       },
     });
-    assert.equal(mapPullRequestNode(humanApproved, "bot-login").approvedByHuman, true);
+    assert.equal(mapPullRequestNode(humanApproved, "bot-login").humanApprovedAt, "2026-03-01T12:00:00Z");
 
     const ghostApproved = makeNode({
-      latestOpinionatedReviews: { nodes: [{ state: "APPROVED", author: null }] },
+      latestOpinionatedReviews: { nodes: [{ state: "APPROVED", submittedAt: "2026-03-01T12:00:00Z", author: null }] },
     });
-    assert.equal(mapPullRequestNode(ghostApproved, "bot-login").approvedByHuman, false);
+    assert.equal(mapPullRequestNode(ghostApproved, "bot-login").humanApprovedAt, null);
+  });
+
+  it("reports the latest of several human approvals", () => {
+    const node = makeNode({
+      latestOpinionatedReviews: {
+        nodes: [
+          { state: "APPROVED", submittedAt: "2026-03-01T12:00:00Z", author: { login: "alice" } },
+          { state: "APPROVED", submittedAt: "2026-03-02T09:00:00Z", author: { login: "bob" } },
+          { state: "APPROVED", submittedAt: "2026-03-01T18:00:00Z", author: { login: "carol" } },
+        ],
+      },
+    });
+    assert.equal(mapPullRequestNode(node, "bot-login").humanApprovedAt, "2026-03-02T09:00:00Z");
   });
 
   it("flags a plain pull request comment whose whole body is a stdin placeholder", () => {

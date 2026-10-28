@@ -231,7 +231,7 @@ export interface RepoReviewRequest {
   hasConflicts: boolean;
   needsRebase: boolean;
   mergeStateKnown: boolean;
-  approvedByHuman: boolean;
+  humanApprovedAt: string | null;
   hasUnresolvedComments: boolean;
   hasPlaceholderComment: boolean;
 }
@@ -268,6 +268,15 @@ export interface TaskAttempt {
   pokeCount: number;
   lastPokedAt: string | null;
   resumedAt: string | null;
+  isMaterial: boolean | null;
+}
+
+export interface TaskApproval {
+  approvedAt: string;
+  headSha: string;
+  diffHash: string | null;
+  carriesTo: string | null;
+  rebasingFrom: string | null;
 }
 
 export interface TaskReviewRequestRef {
@@ -302,6 +311,8 @@ export interface Task {
   reviewRequest: TaskReviewRequestRef | null;
   lastReviewedSha: string | null;
   lastReviewedDiffHash: string | null;
+  approval: TaskApproval | null;
+  approvalCancelledAt: string | null;
   activeContainerId: string | null;
   activeStep: TaskStep | null;
   attemptsByStep: Record<TaskStep, number>;
@@ -370,6 +381,7 @@ export interface UpdateTaskRequest {
   phase?: "paused" | "resume";
   discardContainer?: boolean;
   configByStep?: Partial<Record<TaskStep, string>>;
+  approval?: "revoke";
 }
 
 export type SSEEvent =
