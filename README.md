@@ -40,13 +40,7 @@ Create your environment configuration file to specify the modes a container can 
                 "binds": [
                     "/srv/cache/claude:/workspace/.cache"
                 ],
-                "device_requests": [
-                    {
-                        "driver": "nvidia",
-                        "count": -1,
-                        "capabilities": [["gpu"]]
-                    }
-                ]
+                "cdi_devices": ["nvidia.com/gpu=all"]
             },
             "claude": {
                 "model": "claude-opus-4-8"
@@ -126,13 +120,18 @@ When a task's agent stalls, the server pokes it by typing a one-line prompt into
 the container's tmux session (named by `CRC_TMUX_SESSION`, which the server passes
 to the container) with `docker exec tmux send-keys`, followed by Enter.
 
-The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `device_requests`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`.
+The `docker` block is optional per configuration. It maps directly to Docker host config fields in snake_case (for example `network_mode`, `cap_add`, `runtime`, `restart_policy`, `ulimits`, and `devices`). Configure per-runner network attachment with `docker.networks`. Unknown keys in the `docker` block are rejected at load time.
 
 `docker.auto_remove` may only be `false`: a container that deletes itself on exit
 takes the workspace and the Claude Code transcripts with it, so the session could
 never be resumed. Configs that enable it are rejected at load time.
 
-For GPU passthrough, set `device_requests` with NVIDIA capabilities as shown above.
+For GPU passthrough, list fully qualified CDI device names in `cdi_devices`, as
+shown above. This is the equivalent of `docker run --device nvidia.com/gpu=all`: the
+host daemon needs CDI enabled (`features.cdi`) and a generated NVIDIA CDI spec (on
+NixOS, `hardware.nvidia-container-toolkit.enable = true`). The legacy
+`--gpus`/`nvidia` driver form is not supported. Prefer a dedicated GPU configuration
+over the top-level defaults so only agents that need the GPU get device access.
 
 The optional top-level `merge_method` (`"merge"`, `"squash"`, or `"rebase"`)
 controls how Tasks merge PRs. On GitLab only `"squash"` changes behaviour (the
