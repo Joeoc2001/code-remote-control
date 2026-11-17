@@ -44,7 +44,6 @@ const WORKSPACE_DIR = "/workspace";
 type ClaudeSettings = Record<string, unknown>;
 type DockerHostConfig = NonNullable<Dockerode.ContainerCreateOptions["HostConfig"]>;
 type DockerDevice = NonNullable<DockerConfig["devices"]>[number];
-type DockerDeviceRequest = NonNullable<DockerConfig["device_requests"]>[number];
 type DockerUlimit = NonNullable<DockerConfig["ulimits"]>[number];
 
 interface CreateContainerOptions {
@@ -89,13 +88,7 @@ function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConf
       CgroupPermissions: device.cgroup_permissions,
     })),
     DeviceCgroupRules: dockerConfig?.device_cgroup_rules,
-    DeviceRequests: dockerConfig?.device_requests?.map((request: DockerDeviceRequest) => ({
-      Driver: request.driver,
-      Count: request.count,
-      DeviceIDs: request.device_ids,
-      Capabilities: request.capabilities,
-      Options: request.options,
-    })),
+    DeviceRequests: dockerConfig?.cdi_devices && [{ Driver: "cdi", DeviceIDs: dockerConfig.cdi_devices }],
     Runtime: dockerConfig?.runtime,
     RestartPolicy: buildRestartPolicy(dockerConfig),
     Ulimits: dockerConfig?.ulimits?.map((ulimit: DockerUlimit) => ({

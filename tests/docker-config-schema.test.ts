@@ -44,3 +44,31 @@ describe("docker.auto_remove", () => {
     assert.throws(() => parseWithDocker({ auto_remove: true }, "configuration"), /resume/);
   });
 });
+
+describe("docker.cdi_devices", () => {
+  test("accepts fully qualified CDI device names", () => {
+    const parsed = parseWithDocker({ cdi_devices: ["nvidia.com/gpu=all"] }, "configuration");
+    assert.deepEqual(parsed.configurations[0].docker?.cdi_devices, ["nvidia.com/gpu=all"]);
+  });
+
+  test("rejects unqualified device names", () => {
+    assert.throws(() => parseWithDocker({ cdi_devices: ["gpu"] }, "configuration"), /fully qualified/);
+  });
+
+  test("rejects an empty list", () => {
+    assert.throws(() => parseWithDocker({ cdi_devices: [] }, "configuration"));
+  });
+});
+
+describe("docker block keys", () => {
+  test("rejects the removed device_requests field", () => {
+    assert.throws(
+      () => parseWithDocker({ device_requests: [{ driver: "nvidia", count: -1, capabilities: [["gpu"]] }] }, "configuration"),
+      /device_requests/,
+    );
+  });
+
+  test("rejects unknown keys on the top-level defaults block", () => {
+    assert.throws(() => parseWithDocker({ not_a_docker_field: true }, "top-level"), /not_a_docker_field/);
+  });
+});
