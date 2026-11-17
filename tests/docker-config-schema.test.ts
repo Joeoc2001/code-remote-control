@@ -100,6 +100,12 @@ describe("docker.mounts", () => {
     });
   }
 
+  test("rejects a tmpfs mode of 0", () => {
+    assert.throws(() =>
+      parseWithDocker({ mounts: [{ type: "tmpfs", target: "/scratch", tmpfs_options: { mode: 0 } }] }, "configuration"),
+    );
+  });
+
   test("rejects an unknown mount type", () => {
     assert.throws(() => parseWithDocker({ mounts: [{ type: "image", source: "x", target: "/y" }] }, "configuration"));
   });

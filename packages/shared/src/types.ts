@@ -55,7 +55,7 @@ const dockerMountSchema = z
     tmpfs_options: z
       .object({
         size_bytes: z.number().int().positive().optional(),
-        mode: z.number().int().min(0).max(0o7777).optional(),
+        mode: z.number().int().positive().max(0o7777).optional(),
       })
       .optional(),
   })
