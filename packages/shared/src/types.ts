@@ -30,6 +30,58 @@ const dockerRestartPolicySchema = z.object({
   maximum_retry_count: z.number().int().min(0).optional(),
 });
 
+const dockerMountSchema = z
+  .object({
+    type: z.enum(["bind", "volume", "tmpfs"]),
+    source: z.string().min(1).optional(),
+    target: z.string().min(1),
+    read_only: z.boolean().optional(),
+    consistency: z.enum(["default", "consistent", "cached", "delegated"]).optional(),
+    bind_options: z
+      .object({
+        propagation: z.enum(["private", "rprivate", "shared", "rshared", "slave", "rslave"]),
+      })
+      .optional(),
+    volume_options: z
+      .object({
+        no_copy: z.boolean().optional(),
+        labels: z.record(z.string(), z.string()).optional(),
+        driver_config: z.object({
+          name: z.string().min(1),
+          options: z.record(z.string(), z.string()).optional(),
+        }),
+      })
+      .optional(),
+    tmpfs_options: z
+      .object({
+        size_bytes: z.number().int().positive().optional(),
+        mode: z.number().int().min(0).max(0o7777).optional(),
+      })
+      .optional(),
+  })
+  .superRefine((mount, ctx) => {
+    if (mount.type === "bind" && mount.source === undefined) {
+      ctx.addIssue({ code: "custom", path: ["source"], message: "docker.mounts: a bind mount requires a source" });
+    }
+    if (mount.type === "tmpfs" && mount.source !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["source"], message: "docker.mounts: a tmpfs mount must not have a source" });
+    }
+    const typedOptions = [
+      ["bind_options", "bind"],
+      ["volume_options", "volume"],
+      ["tmpfs_options", "tmpfs"],
+    ] as const;
+    for (const [key, type] of typedOptions) {
+      if (mount[key] !== undefined && mount.type !== type) {
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: `docker.mounts: ${key} is only allowed on a ${type} mount, not a ${mount.type} mount`,
+        });
+      }
+    }
+  });
+
 export const dockerConfigSchema = z.object({
   auto_remove: z
     .literal(false, {
@@ -41,6 +93,7 @@ export const dockerConfigSchema = z.object({
   networks: z.array(z.string().min(1)).optional(),
   network_aliases: z.array(z.string().min(1)).optional(),
   binds: z.array(z.string().min(1)).optional(),
+  mounts: z.array(dockerMountSchema).optional(),
   tmpfs: z.record(z.string(), z.string()).optional(),
   shm_size: z.number().int().positive().optional(),
   memory: z.number().int().positive().optional(),

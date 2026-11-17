@@ -46,6 +46,7 @@ type DockerHostConfig = NonNullable<Dockerode.ContainerCreateOptions["HostConfig
 type DockerDevice = NonNullable<DockerConfig["devices"]>[number];
 type DockerDeviceRequest = NonNullable<DockerConfig["device_requests"]>[number];
 type DockerUlimit = NonNullable<DockerConfig["ulimits"]>[number];
+type DockerMount = NonNullable<DockerConfig["mounts"]>[number];
 
 interface CreateContainerOptions {
   initialPrompt?: string;
@@ -63,11 +64,35 @@ function buildRestartPolicy(dockerConfig: DockerConfig | undefined): DockerHostC
   return { Name: name, MaximumRetryCount: maximumRetryCount };
 }
 
-function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConfig {
+export function buildMount(mount: DockerMount): Dockerode.MountSettings {
+  return {
+    Type: mount.type,
+    Source: mount.source ?? "",
+    Target: mount.target,
+    ReadOnly: mount.read_only,
+    Consistency: mount.consistency,
+    BindOptions: mount.bind_options && { Propagation: mount.bind_options.propagation },
+    VolumeOptions: mount.volume_options && {
+      NoCopy: mount.volume_options.no_copy ?? false,
+      Labels: mount.volume_options.labels ?? {},
+      DriverConfig: {
+        Name: mount.volume_options.driver_config.name,
+        Options: mount.volume_options.driver_config.options ?? {},
+      },
+    },
+    TmpfsOptions: mount.tmpfs_options && {
+      SizeBytes: mount.tmpfs_options.size_bytes ?? 0,
+      Mode: mount.tmpfs_options.mode ?? 0,
+    },
+  };
+}
+
+export function buildHostConfig(dockerConfig: DockerConfig | undefined): DockerHostConfig {
   return {
     AutoRemove: false,
     NetworkMode: dockerConfig?.network_mode,
     Binds: dockerConfig?.binds,
+    Mounts: dockerConfig?.mounts?.map(buildMount),
     Tmpfs: dockerConfig?.tmpfs,
     ShmSize: dockerConfig?.shm_size,
     Memory: dockerConfig?.memory,

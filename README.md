@@ -40,6 +40,9 @@ Create your environment configuration file to specify the modes a container can 
                 "binds": [
                     "/srv/cache/claude:/workspace/.cache"
                 ],
+                "mounts": [
+                    { "type": "volume", "source": "claude-npm-cache", "target": "/root/.npm" }
+                ],
                 "device_requests": [
                     {
                         "driver": "nvidia",
@@ -63,6 +66,19 @@ top-level `env` of `{"FOO": "1", "BAR": "2"}` combined with a configuration
 `env` of `{"BAR": "3", "BAZ": "4"}` yields `{"FOO": "1", "BAR": "3", "BAZ":
 "4"}`. Each configuration must end up with an `oauth` block, either its own or
 the top-level default.
+
+The `docker` block accepts both `binds` (Docker's short-form `"src:dst[:opts]"`
+strings) and `mounts`, which follows Docker's structured `HostConfig.Mounts` with
+snake_case keys: `type` (`bind`, `volume` or `tmpfs`), `source`, `target`,
+`read_only`, `consistency`, and the per-type `bind_options.propagation`,
+`volume_options` (`no_copy`, `labels`, `driver_config.{name,options}`) and
+`tmpfs_options` (`size_bytes`, `mode`). A bind mount needs a `source`, a tmpfs
+mount must not have one, each `*_options` block is only allowed on its own
+mount type, and `volume_options` must include a `driver_config`. Named volumes
+created through `mounts` outlive the container (only anonymous volumes are
+removed with it), which makes them suitable for caches shared between
+containers. As with every other `docker` key, a configuration's `mounts`
+replaces the top-level default list rather than extending it.
 
 Each configuration carries its own Claude OAuth credentials in the `oauth` block;
 the server writes them to `~/.claude/.credentials.json` inside the container at
