@@ -76,8 +76,8 @@ export function buildMount(mount: DockerMount): Dockerode.MountSettings {
       NoCopy: mount.volume_options.no_copy ?? false,
       Labels: mount.volume_options.labels ?? {},
       DriverConfig: {
-        Name: mount.volume_options.driver_config.name,
-        Options: mount.volume_options.driver_config.options ?? {},
+        Name: mount.volume_options.driver_config?.name ?? "",
+        Options: mount.volume_options.driver_config?.options ?? {},
       },
     },
     TmpfsOptions: mount.tmpfs_options && {

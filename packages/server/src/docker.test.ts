@@ -49,6 +49,13 @@ describe("buildHostConfig mounts", () => {
     assert.deepEqual(mount.VolumeOptions, { NoCopy: false, Labels: {}, DriverConfig: { Name: "local", Options: {} } });
   });
 
+  it("sends an empty driver config when volume_options omits driver_config", () => {
+    const [mount] = buildHostConfig({
+      mounts: [{ type: "volume", source: "claude-npm-cache", target: "/root/.npm", volume_options: { no_copy: true } }],
+    }).Mounts!;
+    assert.deepEqual(mount.VolumeOptions, { NoCopy: true, Labels: {}, DriverConfig: { Name: "", Options: {} } });
+  });
+
   it("maps a read-only bind with propagation", () => {
     const hostConfig = buildHostConfig({
       mounts: [

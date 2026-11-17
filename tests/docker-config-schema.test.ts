@@ -114,9 +114,18 @@ describe("docker.mounts", () => {
     assert.throws(() => parseWithDocker({ mounts: [{ type: "volume", source: "v" }] }, "configuration"));
   });
 
-  test("rejects volume_options without a driver_config", () => {
-    assert.throws(() =>
+  test("accepts volume_options without a driver_config", () => {
+    assert.doesNotThrow(() =>
       parseWithDocker({ mounts: [{ type: "volume", target: "/y", volume_options: { no_copy: true } }] }, "configuration"),
+    );
+  });
+
+  test("rejects a driver_config without a name", () => {
+    assert.throws(() =>
+      parseWithDocker(
+        { mounts: [{ type: "volume", target: "/y", volume_options: { driver_config: { options: { type: "tmpfs" } } } }] },
+        "configuration",
+      ),
     );
   });
 

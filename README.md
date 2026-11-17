@@ -74,7 +74,8 @@ snake_case keys: `type` (`bind`, `volume` or `tmpfs`), `source`, `target`,
 `volume_options` (`no_copy`, `labels`, `driver_config.{name,options}`) and
 `tmpfs_options` (`size_bytes`, `mode`). A bind mount needs a `source`, a tmpfs
 mount must not have one, each `*_options` block is only allowed on its own
-mount type, and `volume_options` must include a `driver_config`. Named volumes
+mount type, and a `driver_config`, if given, must have a `name`; omit it to use
+Docker's default volume driver. Named volumes
 created through `mounts` outlive the container (only anonymous volumes are
 removed with it), which makes them suitable for caches shared between
 containers. As with every other `docker` key, a configuration's `mounts`

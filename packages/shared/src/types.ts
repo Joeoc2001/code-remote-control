@@ -46,10 +46,12 @@ const dockerMountSchema = z
       .object({
         no_copy: z.boolean().optional(),
         labels: z.record(z.string(), z.string()).optional(),
-        driver_config: z.object({
-          name: z.string().min(1),
-          options: z.record(z.string(), z.string()).optional(),
-        }),
+        driver_config: z
+          .object({
+            name: z.string().min(1),
+            options: z.record(z.string(), z.string()).optional(),
+          })
+          .optional(),
       })
       .optional(),
     tmpfs_options: z
