@@ -24,7 +24,6 @@ import {
   HELD_CONTAINER_SUFFIX,
   CLOSURE_GRACE_MS,
   MAX_CONSECUTIVE_ERRORS,
-  MAX_STAGES,
   STALL_POKE_INTERVAL_MS,
   runTaskSchedulerTick,
   type SchedulerDeps,
@@ -2430,40 +2429,8 @@ describe("scheduler: multi-stage tasks", () => {
     );
   });
 
-  it("fails instead of starting another stage once the stage cap is reached", async () => {
-    const earlierStages = Array.from({ length: MAX_STAGES - 1 }, (_, index) => ({
-      reviewRequest: { id: `${index}`, url: `https://github.com/acme/widgets/pull/${index}`, sourceBranch: "b" },
-      startedAt: "2026-08-20T08:00:00.000Z",
-      mergedAt: "2026-08-20T09:00:00.000Z",
-      firstAttemptIndex: 0,
-      attemptCount: 0,
-    }));
-    const task = makeCheckingTask({ completedStages: earlierStages });
-    const options: HarnessOptions = { tasks: [task], workItems: [openIssue()], now: AFTER_GRACE };
-    const harness = makeHarness(options);
-
-    await runTaskSchedulerTick(harness.deps);
-
-    assert.equal(task.phase, "failed");
-    assert.match(task.error ?? "", new RegExp(`#7 is still open after ${MAX_STAGES} merged stages`));
-    assert.match(task.error ?? "", /close it by hand before resuming/);
-    assert.equal(task.completedStages.length, MAX_STAGES - 1);
-    assert.equal(harness.created.length, 0);
-
-    await resumeTask({ removeContainer: async () => {}, now: () => AFTER_GRACE }, task, false);
-    await runTaskSchedulerTick(harness.deps);
-    assert.equal(task.phase, "failed");
-    assert.match(task.error ?? "", /still open after/);
-
-    await resumeTask({ removeContainer: async () => {}, now: () => AFTER_GRACE }, task, false);
-    assert.equal(task.phase, "checking_closure");
-    options.workItems = [];
-    await runTaskSchedulerTick(harness.deps);
-    assert.equal(task.phase, "merged");
-  });
-
-  it("starts the last allowed stage when one below the cap", async () => {
-    const earlierStages = Array.from({ length: MAX_STAGES - 2 }, (_, index) => ({
+  it("keeps starting new stages however many have already merged", async () => {
+    const earlierStages = Array.from({ length: 10 }, (_, index) => ({
       reviewRequest: { id: `${index}`, url: `https://github.com/acme/widgets/pull/${index}`, sourceBranch: "b" },
       startedAt: "2026-08-20T08:00:00.000Z",
       mergedAt: "2026-08-20T09:00:00.000Z",
@@ -2476,7 +2443,8 @@ describe("scheduler: multi-stage tasks", () => {
     await runTaskSchedulerTick(harness.deps);
 
     assert.equal(task.phase, "spawning");
-    assert.equal(task.completedStages.length, MAX_STAGES - 1);
+    assert.equal(task.completedStages.length, 11);
+    assert.equal(task.error, null);
   });
 
   it("records a forge error during the closure check as a task error and keeps checking", async () => {
