@@ -36,7 +36,6 @@ export const STALL_POKE_INTERVAL_MS = 30 * 60 * 1000;
 export const ATTEMPT_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 export const MAX_CONSECUTIVE_ERRORS = 5;
 export const CLOSURE_GRACE_MS = 2 * 60 * 1000;
-export const MAX_STAGES = 5;
 export const HELD_CONTAINER_SUFFIX = "; its container was kept so the agent can be inspected or prompted from the terminal";
 const MATERIALITY_REPORTING_STEPS: readonly TaskStep[] = ["implement", "rebase", "fix_ci", "address_comments"];
 
@@ -288,14 +287,6 @@ async function checkWorkItemClosure(deps: SchedulerDeps, forge: Forge, task: Tas
   }
   if (deps.now().getTime() - Date.parse(task.mergedAt) < CLOSURE_GRACE_MS) {
     if (clearTaskError(task)) saveTask(deps, task);
-    return;
-  }
-  if (task.completedStages.length + 1 >= MAX_STAGES) {
-    failTask(
-      deps,
-      task,
-      `${task.workItem.reference} is still open after ${MAX_STAGES} merged stages — close it by hand before resuming the task (resuming while it is still open fails again straight away), or finish the remaining work manually`,
-    );
     return;
   }
   startNextStage(deps, task, openItem);
