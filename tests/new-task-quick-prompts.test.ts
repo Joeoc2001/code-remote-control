@@ -148,11 +148,11 @@ describe("New Task modal quick-prompts", () => {
     );
   }
 
-  test("offers three modes and asks for a repository before showing quick-prompts", async () => {
+  test("offers four modes and asks for a repository before showing quick-prompts", async () => {
     const { page, backend } = await openModal();
     try {
       const tabs = await page.locator("button", { hasText: /^From / }).allTextContents();
-      assert.deepEqual(tabs, ["From work items", "From pasted text", "From quick-prompt"]);
+      assert.deepEqual(tabs, ["From work items", "From pasted text", "From quick-prompt", "From open PR/MR"]);
 
       await page.getByRole("button", { name: "From quick-prompt" }).click();
       await page.getByText("Select a repository first.").waitFor();

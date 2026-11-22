@@ -3,6 +3,8 @@ export type {
   ManagedContainer,
   ConfigSummary,
   CreateQuickPromptRequest,
+  AttachableReviewRequest,
+  CreateTaskFromReviewRequestRequest,
   CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,

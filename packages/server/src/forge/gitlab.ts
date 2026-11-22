@@ -302,6 +302,9 @@ export interface GitLabMergeRequestDetail {
   web_url: string;
   description: string | null;
   state: string;
+  source_branch: string;
+  source_project_id: number;
+  target_project_id: number;
   sha: string;
   has_conflicts: boolean;
   diverged_commits_count?: number;
@@ -366,6 +369,8 @@ export function mapMergeRequestDetail(
     body: detail.description,
     kind: "merge_request",
     state: mapGitLabState(detail.state),
+    sourceBranch: detail.source_branch,
+    fromFork: detail.source_project_id !== detail.target_project_id,
     headSha: detail.sha,
     ciState: mapGitLabCiState(detail.head_pipeline?.status ?? null),
     hasConflicts: detail.has_conflicts,

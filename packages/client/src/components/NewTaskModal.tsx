@@ -1,5 +1,5 @@
 import { memo, useState, useEffect, useCallback } from "react";
-import type { ConfigSummary, QuickPrompt, RepoWorkItem, Task, TaskStep } from "../types";
+import type { AttachableReviewRequest, ConfigSummary, QuickPrompt, RepoWorkItem, Task, TaskStep } from "../types";
 import { TASK_STEPS } from "../types";
 import {
   fetchConfigs,
@@ -12,6 +12,8 @@ import {
   createQuickPrompt,
   deleteQuickPrompt,
   launchQuickPrompt,
+  fetchAttachableReviewRequests,
+  createTaskFromReviewRequest,
 } from "../api";
 import RepoPicker, { type RepoEntry } from "./RepoPicker";
 import ProseTextArea from "./ProseTextArea";
@@ -24,12 +26,13 @@ interface NewTaskModalProps {
 
 type WorkItemChoice = { item: RepoWorkItem; selected: boolean };
 
-type TaskMode = "work_items" | "text" | "quick_prompt";
+type TaskMode = "work_items" | "text" | "quick_prompt" | "review_request";
 
 const TASK_MODES: Array<{ mode: TaskMode; label: string }> = [
   { mode: "work_items", label: "From work items" },
   { mode: "text", label: "From pasted text" },
   { mode: "quick_prompt", label: "From quick-prompt" },
+  { mode: "review_request", label: "From open PR/MR" },
 ];
 
 function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
@@ -47,7 +50,12 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
   const [newQuickPromptText, setNewQuickPromptText] = useState("");
   const [customisePerStep, setCustomisePerStep] = useState(false);
   const [configByStep, setConfigByStep] = useState<Partial<Record<TaskStep, string>>>({});
-  const usesTextPipeline = mode !== "work_items";
+  const [attachable, setAttachable] = useState<AttachableReviewRequest[] | null>(null);
+  const [selectedReviewRequestId, setSelectedReviewRequestId] = useState<string | null>(null);
+  const [selectedAttachWorkItemId, setSelectedAttachWorkItemId] = useState<string | null>(null);
+  const usesTextPipeline = mode === "text" || mode === "quick_prompt";
+  const selectedAttachable =
+    attachable?.find((entry) => entry.reviewRequest.id === selectedReviewRequestId) ?? null;
   const selectedQuickPrompt = quickPrompts?.find((prompt) => prompt.id === selectedQuickPromptId) ?? null;
   const stepsForMode = usesTextPipeline ? TASK_STEPS : TASK_STEPS.filter((step) => step !== "create_issue");
   const configByStepForMode = () => (customisePerStep ? pickConfigOverrides(stepsForMode, configByStep) : undefined);
@@ -113,6 +121,30 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
       cancelled = true;
     };
   }, [mode, selectedRepo]);
+
+  useEffect(() => {
+    setAttachable(null);
+    setSelectedReviewRequestId(null);
+    setSelectedAttachWorkItemId(null);
+    if (mode !== "review_request" || !selectedRepo) return;
+
+    let cancelled = false;
+    fetchAttachableReviewRequests(selectedRepo.fullName, selectedRepo.source)
+      .then((items) => {
+        if (!cancelled) setAttachable(items);
+      })
+      .catch((err) => {
+        if (!cancelled) setError("Failed to load open PRs/MRs: " + String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, selectedRepo]);
+
+  const selectAttachable = (entry: AttachableReviewRequest) => {
+    setSelectedReviewRequestId(entry.reviewRequest.id);
+    setSelectedAttachWorkItemId(entry.workItems[0].id);
+  };
 
   const handleLoadWorkItems = async () => {
     if (!selectedRepo) return;
@@ -229,6 +261,24 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
     );
   };
 
+  const handleAttachToReviewRequest = async () => {
+    if (!selectedAttachable || !selectedAttachWorkItemId) {
+      setError("Select a PR/MR first");
+      return;
+    }
+    if (!selectedRepo) return;
+    await submitTask(() =>
+      createTaskFromReviewRequest({
+        repoFullName: selectedRepo.fullName,
+        repoSource: selectedRepo.source,
+        reviewRequestId: selectedAttachable.reviewRequest.id,
+        workItemId: selectedAttachWorkItemId,
+        configName: selectedConfig,
+        configByStep: configByStepForMode(),
+      }),
+    );
+  };
+
   const saveQuickPrompt = async (text: string): Promise<QuickPrompt | null> => {
     if (!selectedRepo) return null;
     setWorking(true);
@@ -272,11 +322,27 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
     }
   };
 
-  const handleSubmit =
-    mode === "text" ? handleCreateFromText : mode === "quick_prompt" ? handleCreateFromQuickPrompt : handleCreate;
+  const handleSubmit = {
+    text: handleCreateFromText,
+    quick_prompt: handleCreateFromQuickPrompt,
+    review_request: handleAttachToReviewRequest,
+    work_items: handleCreate,
+  }[mode];
 
-  const submitDisabledForMode =
-    mode === "text" ? pastedText.trim() === "" : mode === "quick_prompt" ? !selectedQuickPrompt : selectedCount === 0;
+  const submitDisabledForMode = {
+    text: pastedText.trim() === "",
+    quick_prompt: !selectedQuickPrompt,
+    review_request: !selectedAttachable || selectedAttachable.unusableReason !== null,
+    work_items: selectedCount === 0,
+  }[mode];
+
+  const submitLabel = working
+    ? "Working..."
+    : mode === "review_request"
+      ? "Attach Task"
+      : usesTextPipeline
+        ? "Create Task"
+        : `Create ${selectedCount} Task${selectedCount === 1 ? "" : "s"}`;
 
   return (
     <div
@@ -326,7 +392,7 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
                 onSelect={setSelectedRepo}
               />
 
-              <div className="grid grid-cols-3 gap-px bg-slate-700 border border-slate-700 rounded-lg overflow-hidden">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-700 border border-slate-700 rounded-lg overflow-hidden">
                 {TASK_MODES.map(({ mode: taskMode, label }) => (
                   <button
                     key={taskMode}
@@ -440,6 +506,75 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
                     </div>
                   </div>
                 )
+              ) : mode === "review_request" ? (
+                !selectedRepo ? (
+                  <p className="text-xs text-slate-500">Select a repository first.</p>
+                ) : attachable === null ? (
+                  <div className="flex justify-center py-4">
+                    <div className="animate-spin h-5 w-5 border-2 border-slate-500 border-t-transparent rounded-full" />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500">
+                      Attaches to an existing PR/MR and goes straight to review, rebase, CI fixes and comment
+                      addressing — no issue or implementation step.
+                    </p>
+                    {attachable.length === 0 ? (
+                      <p className="text-sm text-slate-400 border border-slate-700 rounded-lg px-3 py-2">
+                        No open PRs/MRs that mention an open issue and are not already handled by a task.
+                      </p>
+                    ) : (
+                      <div
+                        role="radiogroup"
+                        aria-label="Open PRs/MRs"
+                        className="max-h-48 overflow-y-auto border border-slate-700 rounded-lg divide-y divide-slate-800"
+                      >
+                        {attachable.map((entry) => (
+                          <label
+                            key={entry.reviewRequest.id}
+                            className={`flex items-start gap-2 px-3 py-2 text-sm ${entry.unusableReason ? "text-slate-500 cursor-not-allowed" : "text-slate-300 hover:bg-slate-800 cursor-pointer"}`}
+                          >
+                            <input
+                              type="radio"
+                              name="review-request"
+                              checked={selectedReviewRequestId === entry.reviewRequest.id}
+                              disabled={entry.unusableReason !== null}
+                              onChange={() => selectAttachable(entry)}
+                              className="mt-0.5 accent-indigo-500"
+                            />
+                            <span className="min-w-0 break-words">
+                              <span>
+                                {entry.reviewRequest.reference} {entry.reviewRequest.title}
+                              </span>
+                              <span className="block text-xs text-slate-500">
+                                Mentions {entry.workItems.map((item) => item.reference).join(", ")}
+                              </span>
+                              {entry.unusableReason && (
+                                <span className="block text-xs text-amber-300/80">{entry.unusableReason}</span>
+                              )}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {selectedAttachable && selectedAttachable.workItems.length > 1 && (
+                      <label className="flex flex-col gap-1 text-xs text-slate-400">
+                        Issue this task tracks
+                        <select
+                          value={selectedAttachWorkItemId ?? ""}
+                          onChange={(e) => setSelectedAttachWorkItemId(e.target.value)}
+                          className="bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm"
+                        >
+                          {selectedAttachable.workItems.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.reference} {item.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                )
               ) : workItems === null ? (
                 <button
                   type="button"
@@ -520,11 +655,7 @@ function NewTaskModal({ onClose, onCreated }: NewTaskModalProps) {
             }
             className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {working
-              ? "Working..."
-              : usesTextPipeline
-                ? "Create Task"
-                : `Create ${selectedCount} Task${selectedCount === 1 ? "" : "s"}`}
+            {submitLabel}
           </button>
         </div>
       </div>

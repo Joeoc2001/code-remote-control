@@ -20,6 +20,9 @@ function makeDetail(overrides: Partial<GitLabMergeRequestDetail> = {}): GitLabMe
     web_url: "https://gitlab.com/acme/widgets/-/merge_requests/34",
     description: "body",
     state: "opened",
+    source_branch: "feature/widgets",
+    source_project_id: 5,
+    target_project_id: 5,
     sha: "abc123",
     has_conflicts: false,
     diverged_commits_count: 0,
@@ -81,6 +84,8 @@ describe("mapMergeRequestDetail", () => {
       body: "body",
       kind: "merge_request",
       state: "open",
+      sourceBranch: "feature/widgets",
+      fromFork: false,
       headSha: "abc123",
       ciState: "success",
       hasConflicts: false,
@@ -90,6 +95,16 @@ describe("mapMergeRequestDetail", () => {
       hasUnresolvedComments: false,
       hasPlaceholderComment: false,
     });
+  });
+
+  it("maps the source branch and flags merge requests from forks", () => {
+    const item = mapMergeRequestDetail(
+      makeDetail({ source_branch: "fix/thing", source_project_id: 6, target_project_id: 5 }),
+      noDiscussionFlags,
+      null,
+    );
+    assert.equal(item.sourceBranch, "fix/thing");
+    assert.equal(item.fromFork, true);
   });
 
   it("flags divergence from the target branch as needing rebase", () => {

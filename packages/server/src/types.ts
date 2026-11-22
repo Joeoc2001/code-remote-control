@@ -17,6 +17,8 @@ export type {
   CreateContainersRequest,
   CreateContainersResponse,
   CreateQuickPromptRequest,
+  AttachableReviewRequest,
+  CreateTaskFromReviewRequestRequest,
   CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,

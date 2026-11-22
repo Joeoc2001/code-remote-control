@@ -281,6 +281,8 @@ export interface RepoReviewRequest {
   body: string | null;
   kind: "pull_request" | "merge_request";
   state: ReviewRequestState;
+  sourceBranch: string;
+  fromFork: boolean;
   headSha: string;
   ciState: ReviewRequestCiState;
   hasConflicts: boolean;
@@ -395,6 +397,21 @@ export interface CreateTaskFromTextRequest {
   text: string;
   configName: string;
   configByStep?: Partial<Record<TaskStep, string>>;
+}
+
+export interface CreateTaskFromReviewRequestRequest {
+  repoFullName: string;
+  repoSource: RepoSource;
+  reviewRequestId: string;
+  workItemId: string;
+  configName: string;
+  configByStep?: Partial<Record<TaskStep, string>>;
+}
+
+export interface AttachableReviewRequest {
+  reviewRequest: RepoReviewRequest;
+  workItems: RepoWorkItem[];
+  unusableReason: string | null;
 }
 
 export interface QuickPrompt {

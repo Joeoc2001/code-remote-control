@@ -16,6 +16,8 @@ function makeNode(overrides: Partial<GitHubPullRequestNode> = {}): GitHubPullReq
     url: "https://github.com/acme/widgets/pull/12",
     body: "body",
     state: "OPEN",
+    headRefName: "feature/widgets",
+    isCrossRepository: false,
     headRefOid: "abc123",
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
@@ -63,6 +65,8 @@ describe("mapPullRequestNode", () => {
       body: "body",
       kind: "pull_request",
       state: "open",
+      sourceBranch: "feature/widgets",
+      fromFork: false,
       headSha: "abc123",
       ciState: "success",
       hasConflicts: false,
@@ -91,6 +95,19 @@ describe("mapPullRequestNode", () => {
     assert.equal(item.hasConflicts, true);
     assert.equal(item.needsRebase, false);
     assert.equal(item.hasUnresolvedComments, true);
+  });
+
+  it("maps the head branch and flags pull requests from forks", () => {
+    const item = mapPullRequestNode(makeNode({ headRefName: "fix/thing", isCrossRepository: true }), "bot-login");
+    assert.equal(item.sourceBranch, "fix/thing");
+    assert.equal(item.fromFork, true);
+  });
+
+  it("requests the head branch and fork flag in both pull request queries", () => {
+    for (const query of [PULL_REQUEST_QUERY, PULL_REQUESTS_QUERY]) {
+      assert.match(query, /headRefName/);
+      assert.match(query, /isCrossRepository/);
+    }
   });
 
   it("flags a PR behind its base branch as needing rebase", () => {

@@ -94,7 +94,7 @@ function rebaseDecision(task: Task, reviewRequest: RepoReviewRequest): TaskDecis
   return null;
 }
 
-function unusableBodyReason(reviewRequest: RepoReviewRequest): string | null {
+export function unusableBodyReason(reviewRequest: RepoReviewRequest): string | null {
   const description = reviewRequest.body?.trim() ?? "";
   if (isStdinPlaceholderBody(description)) {
     return `${reviewRequest.reference}'s description is the stdin placeholder '${description}': an agent passed it to a command that does not read the body from stdin, so the real description was never posted`;

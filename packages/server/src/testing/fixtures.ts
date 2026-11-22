@@ -74,6 +74,8 @@ export function makeReviewRequest(overrides: Partial<RepoReviewRequest> = {}): R
     body: "Adds widgets",
     kind: "pull_request",
     state: "open",
+    sourceBranch: "feature",
+    fromFork: false,
     headSha: "abc123",
     ciState: "success",
     hasConflicts: false,
