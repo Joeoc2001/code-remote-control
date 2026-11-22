@@ -111,6 +111,8 @@ interface HarnessOptions {
   getContainerError?: Error;
   getReviewRequest?: (repoFullName: string, id: string) => Promise<RepoReviewRequest>;
   diffHash?: string | null;
+  closingReferences?: string[];
+  closingReferencesError?: Error;
   workItemsError?: Error;
   instanceStatus?: Record<string, InstanceStatus>;
   codeStatus?: Record<string, ContainerCodeStatus>;
@@ -131,6 +133,7 @@ function makeHarness(options: HarnessOptions) {
   const removed: string[] = [];
   const rebased: string[] = [];
   const diffHashFetches: string[] = [];
+  const closingReferenceFetches: Array<{ repoFullName: string; id: string }> = [];
   const merged: string[] = [];
   const approved: Array<{ id: string; headSha: string }> = [];
   const unapproved: string[] = [];
@@ -161,6 +164,11 @@ function makeHarness(options: HarnessOptions) {
       (async (_repo, id) => {
         throw new Error(`No single-item fetch stubbed for ${id}`);
       }),
+    getClosingWorkItemReferences: async (repoFullName, id) => {
+      closingReferenceFetches.push({ repoFullName, id });
+      if (options.closingReferencesError) throw options.closingReferencesError;
+      return options.closingReferences ?? [];
+    },
     getDiffHash: async (_repo, id) => {
       diffHashFetches.push(id);
       return options.diffHash === undefined ? "diff-hash-1" : options.diffHash;
@@ -241,6 +249,7 @@ function makeHarness(options: HarnessOptions) {
     promptBroadcasts,
     reviewRequestListings,
     diffHashFetches,
+    closingReferenceFetches,
   };
 }
 
@@ -1253,7 +1262,15 @@ describe("scheduler: resuming a held attempt", () => {
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
 
+    assert.deepEqual(harness.removed, []);
+    assert.equal(harness.pokes.length, 1);
+    assert.match(harness.pokes[0].message, /pull request #12 .* will not close #7 when merged/);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
     assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(harness.pokes.length, 1);
     assert.equal(task.reviewRequest?.id, "12");
     assert.equal(task.activeContainerId, null);
     assert.ok(task.attempts[0].finishedAt);
@@ -1309,7 +1326,15 @@ describe("scheduler: resuming a held attempt", () => {
     await runTaskSchedulerTick(harness.deps);
     await runTaskSchedulerTick(harness.deps);
 
+    assert.deepEqual(harness.removed, []);
+    assert.equal(harness.pokes.length, 1);
+    assert.match(harness.pokes[0].message, /pull request #12 .* will not close #7 when merged/);
+
+    await runTaskSchedulerTick(harness.deps);
+    await runTaskSchedulerTick(harness.deps);
+
     assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(harness.pokes.length, 1);
     assert.equal(task.reviewRequest?.id, "12");
     assert.equal(task.activeContainerId, null);
     assert.ok(task.attempts[0].finishedAt);
@@ -1898,6 +1923,7 @@ describe("scheduler: recovering agent containers after a restart", () => {
       lastPokedAt: null,
       resumedAt: null,
       isMaterial: null,
+      closureNotice: null,
     });
     assert.equal(harness.store.list()[0].activeContainerId, ORPHAN_ID);
   });
@@ -2915,7 +2941,15 @@ describe("scheduler: approvals stored in CRC", () => {
   function finishActiveAttempt(step: TaskAttempt["step"], isMaterialChange: boolean | null, overrides: Partial<Task> = {}) {
     const task = makeActiveTask({
       activeStep: step,
-      attempts: [makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "abc123" })],
+      attempts: [
+        makeAttempt({
+          step,
+          containerId: CONTAINER_ID,
+          startedAt: RECENT_START,
+          headShaBefore: "abc123",
+          closureNotice: step === "implement" ? { closesWorkItem: true, sentAt: RECENT_START } : null,
+        }),
+      ],
       attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0, [step]: 1 },
       approval: { approvedAt: APPROVED_AT, headSha: "abc123", diffHash: "diff-hash-1", carriesTo: null, rebasingFrom: null },
       ...overrides,
@@ -3525,5 +3559,320 @@ describe("scheduler: approvals stored in CRC", () => {
 
     assert.equal(task.completedStages.length, 1);
     assert.equal(task.approval, null);
+  });
+});
+
+describe("scheduler: telling the implement agent whether its PR/MR closes the work item", () => {
+  const PR = { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" };
+
+  function makeImplementHarness(
+    overrides: Partial<HarnessOptions> = {},
+    taskOverrides: Partial<Task> = {},
+    attemptOverrides: Partial<TaskAttempt> = {},
+  ) {
+    const task = makeTask({
+      phase: "agent_running",
+      activeContainerId: CONTAINER_ID,
+      activeStep: "implement",
+      attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [makeAttempt({ step: "implement", containerId: CONTAINER_ID, startedAt: RECENT_START, ...attemptOverrides })],
+      ...taskOverrides,
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(PR) },
+      snapshot: [makeReviewRequest({ ciState: "pending" })],
+      ...overrides,
+    });
+    return { task, harness };
+  }
+
+  async function tick(harness: ReturnType<typeof makeHarness>, times: number): Promise<void> {
+    for (let i = 0; i < times; i++) await runTaskSchedulerTick(harness.deps);
+  }
+
+  it("tells the agent once that its PR will close the issue when the forge lists it, and keeps the container", async () => {
+    const { task, harness } = makeImplementHarness({ closingReferences: ["#3", "#7"] });
+
+    await tick(harness, 1);
+    assert.equal(harness.pokes.length, 0);
+    assert.equal(harness.closingReferenceFetches.length, 0);
+
+    await tick(harness, 1);
+
+    assert.deepEqual(harness.closingReferenceFetches, [{ repoFullName: "acme/widgets", id: "12" }]);
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(harness.pokes[0].containerId, CONTAINER_ID);
+    assert.match(
+      harness.pokes[0].message,
+      /^According to GitHub, pull request #12 at https:\/\/github\.com\/acme\/widgets\/pull\/12 is currently set to close #7 when merged\./,
+    );
+    assert.doesNotMatch(harness.pokes[0].message, /[\r\n]/);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.attempts[0].finishedAt, null);
+    assert.equal(task.attempts[0].finishedObservation, null);
+    assert.deepEqual(task.attempts[0].closureNotice, { closesWorkItem: true, sentAt: NOW.toISOString() });
+    assert.deepEqual(harness.store.get(task.id)?.attempts[0].closureNotice, {
+      closesWorkItem: true,
+      sentAt: NOW.toISOString(),
+    });
+    assert.equal(task.attempts[0].pokeCount, 0);
+  });
+
+  it("tells the agent its PR will not close the issue when the forge does not list it", async () => {
+    const { task, harness } = makeImplementHarness({ closingReferences: ["#3", "#70"] });
+
+    await tick(harness, 2);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.match(
+      harness.pokes[0].message,
+      /^According to GitHub, pull request #12 at https:\/\/github\.com\/acme\/widgets\/pull\/12 will not close #7 when merged\./,
+    );
+    assert.doesNotMatch(harness.pokes[0].message, /[\r\n]/);
+    assert.deepEqual(harness.removed, []);
+    assert.deepEqual(task.attempts[0].closureNotice, { closesWorkItem: false, sentAt: NOW.toISOString() });
+  });
+
+  it("words the notice for GitLab on a GitLab task", async () => {
+    const { harness } = makeImplementHarness(
+      {
+        closingReferences: ["#7"],
+        codeStatus: {
+          [CONTAINER_NAME]: makeCodeStatus({
+            id: "45",
+            url: "https://gitlab.com/acme/widgets/-/merge_requests/45",
+            sourceBranch: "feature",
+          }),
+        },
+      },
+      { repoSource: "gitlab" },
+    );
+
+    await tick(harness, 2);
+
+    assert.deepEqual(harness.closingReferenceFetches, [{ repoFullName: "acme/widgets", id: "45" }]);
+    assert.match(
+      harness.pokes[0].message,
+      /^According to GitLab, merge request !45 at https:\/\/gitlab\.com\/acme\/widgets\/-\/merge_requests\/45 is currently set to close #7 when merged\./,
+    );
+  });
+
+  it("finishes the attempt normally once the agent has settled again, without a second notice", async () => {
+    const { task, harness } = makeImplementHarness({ closingReferences: ["#7"] });
+
+    await tick(harness, 2);
+    assert.equal(harness.pokes.length, 1);
+
+    await tick(harness, 1);
+    assert.deepEqual(harness.removed, []);
+    assert.deepEqual(task.attempts[0].finishedObservation, { headSha: "abc123", observedAt: NOW.toISOString() });
+
+    await tick(harness, 1);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(harness.closingReferenceFetches.length, 1);
+    assert.equal(task.activeContainerId, null);
+    assert.ok(task.attempts[0].finishedAt);
+    assert.equal(task.attempts[0].error, null);
+    assert.equal(task.reviewRequest?.id, "12");
+    assert.deepEqual(task.attempts[0].closureNotice, { closesWorkItem: true, sentAt: NOW.toISOString() });
+  });
+
+  it("waits while the agent works on the notice, then settles on the head it pushed", async () => {
+    const { task, harness } = makeImplementHarness({ closingReferences: [] });
+
+    await tick(harness, 2);
+    assert.equal(harness.pokes.length, 1);
+
+    harness.options.instanceStatus = { [CONTAINER_NAME]: instanceStatus("working", NOW.toISOString()) };
+    await tick(harness, 3);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.attempts[0].finishedObservation, null);
+
+    harness.options.instanceStatus = { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) };
+    harness.options.codeStatus = { [CONTAINER_NAME]: { ...makeCodeStatus(PR), headSha: "def456" } };
+    await tick(harness, 1);
+    assert.deepEqual(harness.removed, []);
+    assert.deepEqual(task.attempts[0].finishedObservation, { headSha: "def456", observedAt: NOW.toISOString() });
+
+    await tick(harness, 1);
+
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(harness.closingReferenceFetches.length, 1);
+    assert.ok(task.attempts[0].finishedAt);
+  });
+
+  for (const step of ["fix_ci", "rebase", "address_comments", "review"] as const) {
+    it(`sends no notice to a finished ${step} agent`, async () => {
+      const task = makeActiveTask({
+        activeStep: step,
+        attempts: [makeAttempt({ step, containerId: CONTAINER_ID, startedAt: RECENT_START, headShaBefore: "abc123" })],
+        attemptsByStep: { create_issue: 0, implement: 1, fix_ci: 0, rebase: 0, review: 0, address_comments: 0, [step]: 1 },
+      });
+      const harness = makeHarness({
+        tasks: [task],
+        containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+        instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
+        codeStatus: { [CONTAINER_NAME]: makeCodeStatus(PR) },
+        snapshot: [makeReviewRequest({ ciState: "pending" })],
+        closingReferences: ["#7"],
+      });
+
+      await tick(harness, 2);
+
+      assert.deepEqual(harness.pokes, []);
+      assert.deepEqual(harness.closingReferenceFetches, []);
+      assert.deepEqual(harness.removed, [CONTAINER_ID]);
+      assert.equal(task.attempts[0].closureNotice, null);
+    });
+  }
+
+  it("sends no notice to a finished create_issue agent", async () => {
+    const task = makeTextTask({
+      phase: "agent_running",
+      activeContainerId: CONTAINER_ID,
+      activeStep: "create_issue",
+      attemptsByStep: { create_issue: 1, implement: 0, fix_ci: 0, rebase: 0, review: 0, address_comments: 0 },
+      attempts: [makeAttempt({ step: "create_issue", containerId: CONTAINER_ID, startedAt: RECENT_START })],
+    });
+    const harness = makeHarness({
+      tasks: [task],
+      containers: [makeContainer(CONTAINER_ID, CONTAINER_NAME)],
+      instanceStatus: { [CONTAINER_NAME]: instanceStatus("finished", NOW.toISOString()) },
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null, "https://github.com/acme/widgets/issues/7") },
+      workItems: [makeTask().workItem!],
+    });
+
+    await tick(harness, 2);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.deepEqual(harness.closingReferenceFetches, []);
+    assert.deepEqual(harness.removed, [CONTAINER_ID]);
+  });
+
+  it("holds the attempt without a notice when the agent opened no PR/MR", async () => {
+    const { task, harness } = makeImplementHarness({
+      closingReferences: ["#7"],
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(null) },
+    });
+
+    await tick(harness, 2);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.deepEqual(harness.closingReferenceFetches, []);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /Implement agent finished without opening a PR\/MR/);
+    assert.equal(task.attempts[0].closureNotice, null);
+    assert.deepEqual(harness.removed, []);
+  });
+
+  it("holds the attempt without a notice when the agent did not report is_material", async () => {
+    const { task, harness } = makeImplementHarness({
+      closingReferences: ["#7"],
+      codeStatus: { [CONTAINER_NAME]: makeCodeStatus(PR, null, null) },
+    });
+
+    await tick(harness, 2);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.deepEqual(harness.closingReferenceFetches, []);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /without writing true\/false/);
+    assert.equal(task.attempts[0].closureNotice, null);
+  });
+
+  it("records a task error and keeps the attempt active when the forge cannot report closing links, then retries", async () => {
+    const { task, harness } = makeImplementHarness({
+      closingReferences: ["#7"],
+      closingReferencesError: new Error("GitLab API error: 500"),
+    });
+
+    await tick(harness, 2);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.error, "GitLab API error: 500");
+    assert.equal(task.consecutiveErrors, 1);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.attempts[0].finishedAt, null);
+    assert.equal(task.attempts[0].closureNotice, null);
+
+    harness.options.closingReferencesError = undefined;
+    await tick(harness, 1);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.equal(task.error, null);
+    assert.equal(task.consecutiveErrors, 0);
+    assert.deepEqual(task.attempts[0].closureNotice, { closesWorkItem: true, sentAt: NOW.toISOString() });
+  });
+
+  it("holds the container after repeated forge errors instead of finishing without a notice", async () => {
+    const { task, harness } = makeImplementHarness({ closingReferencesError: new Error("GitLab API error: 500") });
+
+    await tick(harness, 1 + MAX_CONSECUTIVE_ERRORS);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.deepEqual(harness.removed, []);
+    assert.equal(task.phase, "failed");
+    assert.match(task.error ?? "", /GitLab API error: 500; its container was kept/);
+    assert.equal(task.activeContainerId, CONTAINER_ID);
+    assert.equal(task.attempts[0].closureNotice, null);
+  });
+
+  it("does not record the notice as sent when the poke fails, and sends it on the next tick", async () => {
+    const { task, harness } = makeImplementHarness({
+      closingReferences: ["#7"],
+      pokeError: new Error("'tmux send-keys -t' exited with status 1"),
+    });
+
+    await tick(harness, 2);
+
+    assert.equal(task.attempts[0].closureNotice, null);
+    assert.equal(task.consecutiveErrors, 1);
+    assert.deepEqual(harness.removed, []);
+
+    harness.options.pokeError = undefined;
+    await tick(harness, 1);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.deepEqual(task.attempts[0].closureNotice, { closesWorkItem: true, sentAt: NOW.toISOString() });
+    assert.equal(task.consecutiveErrors, 0);
+  });
+
+  it("counts the notice as a sign of life so the agent is not stall-poked straight after it", async () => {
+    const stale = minutesAgo(STALL_POKE_INTERVAL_MS / 60_000 + 5);
+    const { task, harness } = makeImplementHarness(
+      { instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", stale) } },
+      {},
+      { startedAt: stale, closureNotice: { closesWorkItem: true, sentAt: minutesAgo(1) } },
+    );
+
+    await tick(harness, 1);
+
+    assert.deepEqual(harness.pokes, []);
+    assert.equal(task.attempts[0].pokeCount, 0);
+  });
+
+  it("still stall-pokes an agent that has been silent for the whole interval since the notice", async () => {
+    const stale = minutesAgo(STALL_POKE_INTERVAL_MS / 60_000 + 5);
+    const { task, harness } = makeImplementHarness(
+      { instanceStatus: { [CONTAINER_NAME]: instanceStatus("working", stale) } },
+      {},
+      { startedAt: stale, closureNotice: { closesWorkItem: true, sentAt: stale } },
+    );
+
+    await tick(harness, 1);
+
+    assert.equal(harness.pokes.length, 1);
+    assert.match(harness.pokes[0].message, /No activity has been recorded/);
+    assert.equal(task.attempts[0].pokeCount, 1);
   });
 });

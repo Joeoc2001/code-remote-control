@@ -1,13 +1,13 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Task, TaskApproval, TaskAttempt } from "../types.js";
+import type { ClosureNotice, Task, TaskApproval, TaskAttempt } from "../types.js";
 
 function isMissingFileError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-type StoredAttempt = Omit<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial"> &
-  Partial<Pick<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial">>;
+type StoredAttempt = Omit<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial" | "closureNotice"> &
+  Partial<Pick<TaskAttempt, "pokeCount" | "lastPokedAt" | "resumedAt" | "isMaterial" | "closureNotice">>;
 
 type StoredTask = Omit<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval" | "approvalCancelledAt" | "attempts"> &
   Partial<Pick<Task, "completedStages" | "stageStartedAt" | "mergedAt" | "quickPromptId" | "approval" | "approvalCancelledAt">> & {
@@ -21,6 +21,7 @@ function migrateAttempt(stored: StoredAttempt): TaskAttempt {
     lastPokedAt: stored.lastPokedAt ?? null,
     resumedAt: stored.resumedAt ?? null,
     isMaterial: stored.isMaterial ?? null,
+    closureNotice: stored.closureNotice ?? null,
   };
 }
 
@@ -35,6 +36,11 @@ function hasValidPokeFields(attempt: TaskAttempt): boolean {
 
 function isNullableString(value: unknown): boolean {
   return value === null || typeof value === "string";
+}
+
+function isValidClosureNotice(notice: ClosureNotice | null): boolean {
+  if (notice === null) return true;
+  return typeof notice === "object" && typeof notice.closesWorkItem === "boolean" && typeof notice.sentAt === "string";
 }
 
 function isValidApproval(approval: TaskApproval | null): boolean {
@@ -72,6 +78,9 @@ function migrateTask(stored: StoredTask, tasksPath: string): Task {
   }
   if (!task.attempts.every((attempt) => attempt.isMaterial === null || typeof attempt.isMaterial === "boolean")) {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an attempt with an invalid isMaterial`);
+  }
+  if (!task.attempts.every((attempt) => isValidClosureNotice(attempt.closureNotice))) {
+    throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an attempt with an invalid closureNotice`);
   }
   if (!isNullableString(task.approvalCancelledAt)) {
     throw new Error(`Task store file ${tasksPath} is malformed: task ${task.id} has an invalid approvalCancelledAt`);

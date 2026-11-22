@@ -129,6 +129,36 @@ describe("TaskStore", () => {
     assert.throws(() => new TaskStore(stateDir), /task task-1 has an invalid quickPromptId/);
   });
 
+  it("migrates attempts saved before closure notices existed", () => {
+    const stateDir = makeStateDir();
+    const { closureNotice: _closureNotice, ...legacyAttempt } = makeAttempt();
+    writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), attempts: [legacyAttempt] }]), "utf-8");
+
+    assert.equal(new TaskStore(stateDir).get("task-1")?.attempts[0].closureNotice, null);
+  });
+
+  it("persists an attempt's closure notice across instances", () => {
+    const stateDir = makeStateDir();
+    const closureNotice = { closesWorkItem: false, sentAt: "2026-08-20T11:00:00.000Z" };
+    new TaskStore(stateDir).save(makeTask({ attempts: [makeAttempt({ closureNotice }), makeAttempt()] }));
+
+    const reloaded = new TaskStore(stateDir).get("task-1");
+
+    assert.deepEqual(reloaded?.attempts.map((attempt) => attempt.closureNotice), [closureNotice, null]);
+  });
+
+  for (const closureNotice of ["yes", { closesWorkItem: "true", sentAt: "2026-08-20T11:00:00.000Z" }, { closesWorkItem: true }]) {
+    it(`fails loudly on an attempt with a malformed closure notice ${JSON.stringify(closureNotice)}`, () => {
+      const stateDir = makeStateDir();
+      writeFileSync(
+        join(stateDir, "tasks.json"),
+        JSON.stringify([{ ...makeTask(), attempts: [{ ...makeAttempt(), closureNotice }] }]),
+        "utf-8",
+      );
+      assert.throws(() => new TaskStore(stateDir), /task task-1 has an attempt with an invalid closureNotice/);
+    });
+  }
+
   it("fails loudly on a task with malformed stage fields", () => {
     const stateDir = makeStateDir();
     writeFileSync(join(stateDir, "tasks.json"), JSON.stringify([{ ...makeTask(), completedStages: "nope" }]), "utf-8");

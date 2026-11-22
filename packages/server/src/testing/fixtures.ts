@@ -102,6 +102,7 @@ export function makeAttempt(overrides: Partial<TaskAttempt> = {}): TaskAttempt {
     lastPokedAt: null,
     resumedAt: null,
     isMaterial: null,
+    closureNotice: null,
     ...overrides,
   };
 }

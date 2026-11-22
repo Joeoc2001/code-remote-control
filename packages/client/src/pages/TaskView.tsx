@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { currentStageFirstAttemptIndex, type Task, type TaskApproval, type TaskAttempt, type TaskStage } from "../types";
+import { currentStageFirstAttemptIndex, type ClosureNotice, type Task, type TaskApproval, type TaskAttempt, type TaskStage } from "../types";
 import { deleteTask, fetchTask, fetchTaskAttemptLog, subscribeToEvents, updateTask } from "../api";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
@@ -66,6 +66,18 @@ function MaterialityChip({ isMaterial }: { isMaterial: boolean | null }) {
       title="The agent reported a non-material change, so any approval stored in CRC carries over"
     >
       Not material
+    </span>
+  );
+}
+
+function ClosureNoticeChip({ notice }: { notice: ClosureNotice | null }) {
+  if (notice === null) return null;
+  return (
+    <span
+      className="inline-flex items-center rounded-full border border-sky-800/80 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300"
+      title={`The agent was told at ${formatTimestamp(notice.sentAt)} what the forge reported: its PR/MR ${notice.closesWorkItem ? "will close" : "will not close"} the issue when merged`}
+    >
+      {notice.closesWorkItem ? "Told: closes issue" : "Told: leaves issue open"}
     </span>
   );
 }
@@ -160,6 +172,7 @@ function AttemptRow({ taskId, attempt, index, isActive, activeContainerId }: Att
           {attempt.finishedAt && ` · ${formatDuration(attempt.startedAt, attempt.finishedAt)}`}
         </span>
         <MaterialityChip isMaterial={attempt.isMaterial} />
+        <ClosureNoticeChip notice={attempt.closureNotice} />
         <PokeSummary attempt={attempt} />
         <div className="ml-auto flex items-center gap-2">
           {isActive && activeContainerId && (

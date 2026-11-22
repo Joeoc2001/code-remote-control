@@ -22,6 +22,7 @@ export type {
   CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,
+  ClosureNotice,
   GitHubRepo,
   GitLabRepo,
   MergeMethod,

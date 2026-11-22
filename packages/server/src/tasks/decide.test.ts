@@ -159,6 +159,7 @@ describe("decide: rules 0-1 (no PR/MR yet)", () => {
           lastPokedAt: "2026-08-20T11:30:00.000Z",
           resumedAt: null,
           isMaterial: null,
+          closureNotice: null,
         },
       ],
     });

@@ -1,6 +1,7 @@
 export type {
   ContainerHealth,
   ManagedContainer,
+  ClosureNotice,
   ConfigSummary,
   CreateQuickPromptRequest,
   AttachableReviewRequest,

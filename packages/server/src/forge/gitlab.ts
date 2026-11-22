@@ -437,6 +437,34 @@ export async function fetchMergeRequest(repoFullName: string, id: string): Promi
   return buildMergeRequest(apiBase, encodedProject, parseInt(id, 10));
 }
 
+export async function fetchMergeRequestClosingReferences(repoFullName: string, id: string): Promise<string[]> {
+  const apiBase = await gitlabApiBase();
+  const mergeRequestUrl = `${apiBase}/api/v4/projects/${encodeURIComponent(repoFullName)}/merge_requests/${id}`;
+  const detailResponse = await gitlabRequest("GET", mergeRequestUrl);
+  const { target_project_id: projectId } = (await detailResponse.json()) as GitLabMergeRequestDetail;
+  if (typeof projectId !== "number") {
+    throw new Error(`GitLab merge request ${repoFullName}!${id} reported no target project id`);
+  }
+
+  const references: string[] = [];
+  const perPage = 100;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const response = await gitlabRequest("GET", `${mergeRequestUrl}/closes_issues?per_page=${perPage}&page=${page}`);
+    const data = (await response.json()) as Array<{ iid?: number; project_id?: number }>;
+
+    for (const issue of data) {
+      if (issue.project_id === projectId && typeof issue.iid === "number") {
+        references.push(`#${issue.iid}`);
+      }
+    }
+
+    if (data.length < perPage) return references;
+  }
+
+  throw new Error(`GitLab merge request ${repoFullName}!${id} closes more than ${MAX_PAGES * perPage} issues`);
+}
+
 export interface GitLabMergeRequestDiff {
   old_path: string;
   new_path: string;
