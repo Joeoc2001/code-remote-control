@@ -364,6 +364,16 @@ container's log tail and PR/MR link are captured, the container is removed, and
 the task settles for one tick before deciding again.
 The task detail page shows the full attempt timeline with the captured logs.
 
+Before a finished implement agent's container is removed, the scheduler asks the
+forge which issues the new PR/MR will close on merge (GitLab's `closes_issues`,
+GitHub's `closingIssuesReferences`) and types one follow-up message into the
+agent's session saying whether the task's work item is among them. Closing
+keywords match even when negated ("does not close #12" closes #12), so this lets
+the agent redraft a description that closes an issue it meant to leave open, or
+leaves open one it meant to close. The notice is sent once per implement attempt;
+the attempt then has to settle again (two `finished` ticks with an unchanged
+HEAD) before it completes, and the timeline shows what the agent was told.
+
 Safety rails: fix-CI and rebase each spawn at most 3 times, an implement agent
 that ends without opening a PR/MR is never retried automatically, and a task
 spawns at most 12 agents in total before failing; a stalled attempt is poked

@@ -313,6 +313,11 @@ export interface FinishedObservation {
   observedAt: string;
 }
 
+export interface ClosureNotice {
+  closesWorkItem: boolean;
+  sentAt: string;
+}
+
 export interface TaskAttempt {
   step: TaskStep;
   containerId: string | null;
@@ -326,6 +331,7 @@ export interface TaskAttempt {
   lastPokedAt: string | null;
   resumedAt: string | null;
   isMaterial: boolean | null;
+  closureNotice: ClosureNotice | null;
 }
 
 export interface TaskApproval {

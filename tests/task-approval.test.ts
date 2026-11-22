@@ -18,6 +18,7 @@ function attempt(overrides: Partial<TaskAttempt>): TaskAttempt {
     lastPokedAt: null,
     resumedAt: null,
     isMaterial: null,
+    closureNotice: null,
     ...overrides,
   };
 }

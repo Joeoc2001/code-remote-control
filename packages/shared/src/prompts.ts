@@ -42,12 +42,32 @@ function earlierStagesGuidance(item: RepoWorkItem, mergedReviewRequestUrls: stri
   return ` Earlier pull/merge requests for this issue (${mergedReviewRequestUrls.join(", ")}) have already been merged but did not close it; work out what remains, implement only that, and make sure the new pull/merge request closes the issue when merged (e.g. \`Closes ${item.reference}\` in its description).`;
 }
 
+function negatedClosingKeywordGuidance(item: Pick<RepoWorkItem, "reference">): string {
+  return `If it does not fully address the issue, keep closing keywords next to the issue reference out of the description and commit messages: they match even when negated, so "does not close ${item.reference}" still closes the issue — write e.g. "Part of ${item.reference}" instead.`;
+}
+
 export function buildTaskImplementPrompt(
   item: RepoWorkItem,
   source: RepoSource,
   mergedReviewRequestUrls: string[] = [],
 ): string {
-  return `Address issue ${item.reference} at ${item.url}.${earlierStagesGuidance(item, mergedReviewRequestUrls)} Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. If it fully addresses the issue, make it close the issue when merged (e.g. \`Closes ${item.reference}\` in its description). ${ISSUE_PROMPT_SUFFIX} ${isMaterialGuidance(source === "gitlab" ? "merge request" : "pull request")} ${forgeBodyGuidance(source)}`;
+  return `Address issue ${item.reference} at ${item.url}.${earlierStagesGuidance(item, mergedReviewRequestUrls)} Commit your work to a new branch, push it, and open a pull/merge request for it — the deliverable is an open pull/merge request, and the task is incomplete without one. If it fully addresses the issue, make it close the issue when merged (e.g. \`Closes ${item.reference}\` in its description). ${negatedClosingKeywordGuidance(item)} ${ISSUE_PROMPT_SUFFIX} ${isMaterialGuidance(source === "gitlab" ? "merge request" : "pull request")} ${forgeBodyGuidance(source)}`;
+}
+
+export function buildClosureNoticePrompt(
+  source: RepoSource,
+  reviewRequest: { id: string; url: string },
+  workItem: Pick<RepoWorkItem, "reference">,
+  closesWorkItem: boolean,
+): string {
+  const gitlab = source === "gitlab";
+  const forgeName = gitlab ? "GitLab" : "GitHub";
+  const noun = gitlab ? "merge request" : "pull request";
+  const reference = `${gitlab ? "!" : "#"}${reviewRequest.id}`;
+  const verdict = closesWorkItem
+    ? `According to ${forgeName}, ${noun} ${reference} at ${reviewRequest.url} is currently set to close ${workItem.reference} when merged. If the ${noun} fully addresses the issue, no action is needed. If it does not, reword its description (and any commit message) so the issue stays open: closing keywords match even when negated, so "does not close ${workItem.reference}" still closes it — write e.g. "Part of ${workItem.reference}" instead. Re-read the description after editing.`
+    : `According to ${forgeName}, ${noun} ${reference} at ${reviewRequest.url} will not close ${workItem.reference} when merged. If work remains on the issue, no action is needed. If the ${noun} fully addresses it, add \`Closes ${workItem.reference}\` on its own line in the description.`;
+  return `${verdict} ${forgeBodyGuidance(source)}`;
 }
 
 export type ReviewNitMode = "threads" | "comment";

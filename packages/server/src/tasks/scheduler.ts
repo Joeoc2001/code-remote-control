@@ -1,5 +1,6 @@
 import type { ContainerCodeStatus, InstanceStatus } from "@crc/container-metadata-types";
 import {
+  buildClosureNoticePrompt,
   buildCreateIssuePrompt,
   buildFixCiPrompt,
   buildRebasePrompt,
@@ -302,7 +303,7 @@ function isSettledState(status: InstanceStatus | null): boolean {
 
 function isStalled(attempt: TaskAttempt, status: InstanceStatus | null, now: number): boolean {
   if (isSettledState(status)) return false;
-  const lastSignOfLife = latestTime(attempt.startedAt, attempt.resumedAt, attempt.lastPokedAt, status?.lastActivityAt ?? status?.updatedAt ?? null);
+  const lastSignOfLife = latestTime(attempt.startedAt, attempt.resumedAt, attempt.lastPokedAt, attempt.closureNotice?.sentAt ?? null, status?.lastActivityAt ?? status?.updatedAt ?? null);
   return now - lastSignOfLife >= STALL_POKE_INTERVAL_MS;
 }
 
@@ -313,6 +314,24 @@ function hasOutlivedLifetime(attempt: TaskAttempt, status: InstanceStatus | null
 
 function pluralise(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+async function sendClosureNotice(deps: SchedulerDeps, task: Task, attempt: TaskAttempt, containerId: string): Promise<void> {
+  if (!task.workItem || !task.reviewRequest) {
+    throw new Error(`Task ${task.id} finished an implement attempt without a work item and a PR/MR to compare`);
+  }
+  const closingReferences = await deps
+    .getForge(task.repoSource)
+    .getClosingWorkItemReferences(task.repoFullName, task.reviewRequest.id);
+  const closesWorkItem = closingReferences.includes(task.workItem.reference);
+  await deps.pokeAgent(
+    containerId,
+    buildClosureNoticePrompt(task.repoSource, task.reviewRequest, task.workItem, closesWorkItem),
+  );
+  attempt.closureNotice = { closesWorkItem, sentAt: deps.now().toISOString() };
+  attempt.finishedObservation = null;
+  clearTaskError(task);
+  saveTask(deps, task);
 }
 
 async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"settle" | "evaluate"> {
@@ -399,6 +418,10 @@ async function evaluateActiveAgent(deps: SchedulerDeps, task: Task): Promise<"se
   const missingDeliverable = missingDeliverableReason(task, attempt);
   if (missingDeliverable !== null) {
     await holdAttempt(deps, task, attemptIndex, `${missingDeliverable}${HELD_CONTAINER_SUFFIX}`);
+    return "settle";
+  }
+  if (attempt.step === "implement" && attempt.closureNotice === null) {
+    await sendClosureNotice(deps, task, attempt, containerId);
     return "settle";
   }
   if (attempt.isMaterial === true) {
@@ -511,6 +534,7 @@ function recordSpawnedAgent(
     lastPokedAt: null,
     resumedAt: null,
     isMaterial: null,
+    closureNotice: null,
   });
   task.attemptsByStep[spawn.step] += 1;
   task.activeContainerId = container.id;

@@ -197,6 +197,20 @@ query($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
+const CLOSING_ISSUES_PER_PAGE = 100;
+
+export const CLOSING_ISSUES_QUERY = `
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      closingIssuesReferences(first: ${CLOSING_ISSUES_PER_PAGE}, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { number repository { nameWithOwner } }
+      }
+    }
+  }
+}`;
+
 const VIEWER_QUERY = `query { viewer { login } }`;
 
 async function githubGraphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
@@ -359,6 +373,49 @@ export async function fetchPullRequest(repoFullName: string, id: string): Promis
   }
 
   return mapPullRequestNode(data.repository.pullRequest, viewerLogin);
+}
+
+interface ClosingIssuesPage {
+  repository: {
+    pullRequest: {
+      closingIssuesReferences: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: Array<{ number: number; repository: { nameWithOwner: string } }>;
+      };
+    } | null;
+  } | null;
+}
+
+export async function fetchPullRequestClosingReferences(repoFullName: string, id: string): Promise<string[]> {
+  const [owner, name] = repoFullName.split("/");
+  const references: string[] = [];
+  let cursor: string | null = null;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const data: ClosingIssuesPage = await githubGraphql<ClosingIssuesPage>(CLOSING_ISSUES_QUERY, {
+      owner,
+      name,
+      number: parseInt(id, 10),
+      cursor,
+    });
+
+    const pullRequest = data.repository?.pullRequest;
+    if (!pullRequest) {
+      throw new Error(`GitHub pull request not found: ${repoFullName}#${id}`);
+    }
+
+    const { nodes, pageInfo } = pullRequest.closingIssuesReferences;
+    for (const node of nodes) {
+      if (node.repository.nameWithOwner.toLowerCase() === repoFullName.toLowerCase()) {
+        references.push(`#${node.number}`);
+      }
+    }
+
+    if (!pageInfo.hasNextPage) return references;
+    cursor = pageInfo.endCursor;
+  }
+
+  throw new Error(`${repoFullName}#${id} closes more than ${MAX_PAGES * CLOSING_ISSUES_PER_PAGE} issues`);
 }
 
 export async function fetchPullRequestDiffHash(
