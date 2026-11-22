@@ -260,6 +260,19 @@ seconds and spawns exactly the agent the current state calls for:
    (approvals from the bot's own forge account are ignored), then merges via
    the forge API.
 
+### Attaching to an existing PR/MR
+
+The New Task modal's **From open PR/MR** mode lists the repository's open
+PRs/MRs that mention an open issue (by its URL, or by a same-repository `#N`
+reference in the title or description) and are not already held by a live
+task. Attaching to one creates a task already linked to both the issue and the
+PR/MR, so it skips the issue and implement steps and goes straight into the
+loop above from step 2. When a PR/MR mentions several issues you pick which one
+the task tracks. PRs/MRs from forks, or whose description is empty or a stdin
+placeholder, are listed but cannot be attached. Any human approval already on
+the PR/MR counts as usual. A failed task cannot be resumed while another live
+task holds its PR/MR.
+
 ### Approvals stored in CRC
 
 Once CRC sees a human approval it stores it on the task, so it survives forges

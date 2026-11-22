@@ -1,7 +1,9 @@
 import type {
+  AttachableReviewRequest,
   ManagedContainer,
   ConfigSummary,
   CreateQuickPromptRequest,
+  CreateTaskFromReviewRequestRequest,
   CreateTaskFromTextRequest,
   CreateTasksRequest,
   CreateTasksResponse,
@@ -179,6 +181,26 @@ export async function createTaskFromText(request: CreateTaskFromTextRequest): Pr
 
 function repoQuery(repoFullName: string, repoSource: RepoSource): string {
   return new URLSearchParams({ repoFullName, repoSource }).toString();
+}
+
+export async function fetchAttachableReviewRequests(
+  repoFullName: string,
+  repoSource: RepoSource,
+): Promise<AttachableReviewRequest[]> {
+  const res = await fetch(`${BASE}/attachable-review-requests?${repoQuery(repoFullName, repoSource)}`);
+  if (!res.ok) throw new Error(await errorMessage(res, "Failed to fetch attachable PRs/MRs"));
+  const data = (await res.json()) as { items: AttachableReviewRequest[] };
+  return data.items;
+}
+
+export async function createTaskFromReviewRequest(request: CreateTaskFromReviewRequestRequest): Promise<Task> {
+  const res = await fetch(`${BASE}/tasks/from-review-request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) throw new Error(await errorMessage(res, "Failed to attach task to PR/MR"));
+  return res.json();
 }
 
 export async function fetchQuickPrompts(repoFullName: string, repoSource: RepoSource): Promise<QuickPrompt[]> {

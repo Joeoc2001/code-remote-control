@@ -2,10 +2,29 @@ import { Router } from "express";
 import { loadConfigurations } from "../config.js";
 import { broadcastRemoval, removeContainerIfPresent } from "../docker.js";
 import { getForge } from "../forge/index.js";
-import type { CreateTaskFromTextRequest, CreateTasksRequest, Task, TaskStep, UpdateTaskRequest } from "../types.js";
+import { mentionedWorkItems } from "../forge/mentions.js";
+import type {
+  AttachableReviewRequest,
+  CreateTaskFromReviewRequestRequest,
+  CreateTaskFromTextRequest,
+  CreateTasksRequest,
+  RepoReviewRequest,
+  RepoSource,
+  RepoWorkItem,
+  Task,
+  TaskStep,
+  UpdateTaskRequest,
+} from "../types.js";
 import { parseRepo } from "../validation.js";
 import { withdrawApproval } from "./approval.js";
-import { makeNewTask, parseConfigByStep, resolveConfigByStep } from "./new-task.js";
+import { unusableBodyReason } from "./decide.js";
+import {
+  findLiveTaskHoldingReviewRequest,
+  findLiveTaskHoldingWorkItem,
+  makeNewTask,
+  parseConfigByStep,
+  resolveConfigByStep,
+} from "./new-task.js";
 import { resumeTask, type ResumeDeps } from "./resume.js";
 import { broadcastTaskRemoved, broadcastTaskUpdated, taskStore } from "./runtime.js";
 
@@ -20,10 +39,6 @@ const resumeDeps: ResumeDeps = {
   },
   now: () => new Date(),
 };
-
-function isLive(task: Task): boolean {
-  return task.phase !== "merged" && task.phase !== "failed";
-}
 
 function saveAndBroadcast(task: Task): void {
   taskStore.save(task);
@@ -112,15 +127,7 @@ tasksRouter.post("/api/tasks", async (req, res) => {
         continue;
       }
 
-      const existing = taskStore
-        .list()
-        .find(
-          (task) =>
-            isLive(task) &&
-            task.repoSource === repoSource &&
-            task.repoFullName === repoFullName &&
-            task.workItem?.id === workItemId,
-        );
+      const existing = findLiveTaskHoldingWorkItem(taskStore, repoSource, repoFullName, workItemId);
       if (existing) {
         errors.push({ workItemId, error: `Work item already has a live task (${existing.id})` });
         continue;
@@ -184,6 +191,138 @@ tasksRouter.post("/api/tasks/from-text", async (req, res) => {
   }
 });
 
+interface ReviewRequestCandidates {
+  reviewRequests: RepoReviewRequest[];
+  workItems: RepoWorkItem[];
+}
+
+async function fetchReviewRequestCandidates(
+  repoSource: RepoSource,
+  repoFullName: string,
+): Promise<ReviewRequestCandidates> {
+  const forge = getForge(repoSource);
+  const [reviewRequests, workItems] = await Promise.all([
+    forge.listReviewRequests(repoFullName),
+    forge.listWorkItems(repoFullName),
+  ]);
+  return { reviewRequests, workItems };
+}
+
+function unattachableReason(reviewRequest: RepoReviewRequest): string | null {
+  if (reviewRequest.fromFork) {
+    return `${reviewRequest.reference} comes from a fork, so agents cannot push to its source branch`;
+  }
+  return unusableBodyReason(reviewRequest);
+}
+
+tasksRouter.get("/api/attachable-review-requests", async (req, res) => {
+  try {
+    const repo = parseRepo(req.query.repoSource, req.query.repoFullName);
+    if ("error" in repo) {
+      res.status(400).json({ error: repo.error });
+      return;
+    }
+    const { repoSource: source, repoFullName } = repo;
+
+    const { reviewRequests, workItems } = await fetchReviewRequestCandidates(source, repoFullName);
+    const items: AttachableReviewRequest[] = reviewRequests
+      .filter((reviewRequest) => reviewRequest.state === "open")
+      .filter((reviewRequest) => !findLiveTaskHoldingReviewRequest(taskStore, source, repoFullName, reviewRequest.id))
+      .map((reviewRequest) => ({
+        reviewRequest,
+        workItems: mentionedWorkItems(reviewRequest, workItems),
+        unusableReason: unattachableReason(reviewRequest),
+      }))
+      .filter((item) => item.workItems.length > 0);
+
+    res.json({ items });
+  } catch (err) {
+    console.error("Error listing attachable review requests:", err);
+    res.status(500).json({ error: "Failed to list attachable PRs/MRs" });
+  }
+});
+
+tasksRouter.post("/api/tasks/from-review-request", async (req, res) => {
+  try {
+    const { repoFullName, repoSource, reviewRequestId, workItemId, configName, configByStep } =
+      req.body as CreateTaskFromReviewRequestRequest;
+
+    if (!repoFullName || !configName || typeof reviewRequestId !== "string" || typeof workItemId !== "string") {
+      res.status(400).json({ error: "repoFullName, configName, reviewRequestId, and workItemId are required" });
+      return;
+    }
+
+    const repo = parseRepo(repoSource, repoFullName);
+    if ("error" in repo) {
+      res.status(400).json({ error: repo.error });
+      return;
+    }
+
+    const configs = await loadConfigurations();
+    const configNames = new Set(configs.configurations.map((c) => c.name));
+    const configByStepResult = resolveConfigByStep(configName, configByStep, configNames);
+    if ("error" in configByStepResult) {
+      res.status(400).json({ error: configByStepResult.error });
+      return;
+    }
+
+    const { reviewRequests, workItems } = await fetchReviewRequestCandidates(repoSource, repoFullName);
+
+    const reviewRequest = reviewRequests.find(
+      (candidate) => candidate.id === reviewRequestId && candidate.state === "open",
+    );
+    if (!reviewRequest) {
+      res.status(404).json({ error: "PR/MR not found among the repository's open PRs/MRs" });
+      return;
+    }
+
+    const workItem = workItems.find((candidate) => candidate.id === workItemId);
+    if (!workItem) {
+      res.status(400).json({ error: "Work item not found among the repository's open items" });
+      return;
+    }
+
+    if (!mentionedWorkItems(reviewRequest, [workItem]).length) {
+      res.status(400).json({ error: `${reviewRequest.reference} does not mention ${workItem.reference}` });
+      return;
+    }
+
+    const reason = unattachableReason(reviewRequest);
+    if (reason) {
+      res.status(400).json({ error: reason });
+      return;
+    }
+
+    const holdingReviewRequest = findLiveTaskHoldingReviewRequest(taskStore, repoSource, repoFullName, reviewRequestId);
+    if (holdingReviewRequest) {
+      res.status(409).json({ error: `PR/MR already has a live task (${holdingReviewRequest.id})` });
+      return;
+    }
+
+    const holdingWorkItem = findLiveTaskHoldingWorkItem(taskStore, repoSource, repoFullName, workItemId);
+    if (holdingWorkItem) {
+      res.status(409).json({ error: `Work item already has a live task (${holdingWorkItem.id})` });
+      return;
+    }
+
+    const task = makeNewTask(
+      repoFullName,
+      repoSource,
+      configByStepResult.value,
+      {
+        workItem,
+        reviewRequest: { id: reviewRequest.id, url: reviewRequest.url, sourceBranch: reviewRequest.sourceBranch },
+      },
+      new Date(),
+    );
+    saveAndBroadcast(task);
+    res.status(201).json(task);
+  } catch (err) {
+    console.error("Error creating task from review request:", err);
+    res.status(500).json({ error: "Failed to create task from PR/MR" });
+  }
+});
+
 tasksRouter.patch("/api/tasks/:id", async (req, res) => {
   try {
     const task = taskStore.get(req.params.id);
@@ -232,6 +371,20 @@ tasksRouter.patch("/api/tasks/:id", async (req, res) => {
     if (phase === "resume" && task.phase !== "failed" && task.phase !== "paused") {
       res.status(409).json({ error: `Cannot resume a task in phase '${task.phase}'` });
       return;
+    }
+
+    if (phase === "resume" && task.reviewRequest) {
+      const holder = findLiveTaskHoldingReviewRequest(
+        taskStore,
+        task.repoSource,
+        task.repoFullName,
+        task.reviewRequest.id,
+        task.id,
+      );
+      if (holder) {
+        res.status(409).json({ error: `Another live task (${holder.id}) already holds this PR/MR` });
+        return;
+      }
     }
 
     let configByStepPatch: Partial<Record<TaskStep, string>> = {};

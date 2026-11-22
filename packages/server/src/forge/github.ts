@@ -125,6 +125,8 @@ export interface GitHubPullRequestNode {
   url: string;
   body: string;
   state: "OPEN" | "CLOSED" | "MERGED";
+  headRefName: string;
+  isCrossRepository: boolean;
   headRefOid: string;
   mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   mergeStateStatus: string;
@@ -152,6 +154,8 @@ const PULL_REQUEST_FIELDS = `
   url
   body
   state
+  headRefName
+  isCrossRepository
   headRefOid
   mergeable
   mergeStateStatus
@@ -286,6 +290,8 @@ export function mapPullRequestNode(node: GitHubPullRequestNode, viewerLogin: str
     body: node.body || null,
     kind: "pull_request",
     state: mapGitHubState(node.state),
+    sourceBranch: node.headRefName,
+    fromFork: node.isCrossRepository,
     headSha: node.headRefOid,
     ciState: mapGitHubCiState(rollupState),
     hasConflicts: node.mergeable === "CONFLICTING",

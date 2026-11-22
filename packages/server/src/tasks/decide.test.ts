@@ -10,6 +10,7 @@ import {
   TOTAL_SPAWN_CAP,
 } from "./decide.js";
 import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask } from "../testing/fixtures.js";
+import { makeNewTask } from "./new-task.js";
 
 const CHANGED_DIFF = "sha256-of-a-different-diff";
 const REVIEWED_DIFF = "sha256-of-the-reviewed-diff";
@@ -1024,5 +1025,73 @@ describe("decide: multi-stage tasks", () => {
     const decision = await decide(task, null, noDiffFetch);
     assert.equal(decision.kind, "fail");
     assert.match(decision.kind === "fail" ? decision.reason : "", /this stage's failure/);
+  });
+});
+
+describe("decide: a task attached to an existing PR/MR", () => {
+  const attached = (): Task =>
+    makeNewTask(
+      "acme/widgets",
+      "github",
+      makeTask().configByStep,
+      {
+        workItem: makeTask().workItem!,
+        reviewRequest: { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+      },
+      new Date("2026-08-20T10:00:00.000Z"),
+    );
+
+  it("waits for CI rather than implementing", async () => {
+    assert.deepEqual(await decide(attached(), makeReviewRequest({ ciState: "running" }), noDiffFetch), {
+      kind: "noop",
+      phase: "waiting_ci",
+    });
+  });
+
+  it("fixes failing CI", async () => {
+    assert.deepEqual(await decide(attached(), makeReviewRequest({ ciState: "failed" }), noDiffFetch), {
+      kind: "spawn",
+      step: "fix_ci",
+      headShaBefore: "abc123",
+      diffHashBefore: null,
+    });
+  });
+
+  it("rebases a conflicting PR/MR", async () => {
+    assert.deepEqual(await decide(attached(), makeReviewRequest({ hasConflicts: true }), noDiffFetch), {
+      kind: "spawn",
+      step: "rebase",
+      headShaBefore: "abc123",
+      diffHashBefore: null,
+    });
+  });
+
+  it("reviews a green, up-to-date PR/MR it has never reviewed", async () => {
+    assert.deepEqual(await decide(attached(), makeReviewRequest(), changedDiff()), {
+      kind: "spawn",
+      step: "review",
+      headShaBefore: "abc123",
+      diffHashBefore: CHANGED_DIFF,
+    });
+  });
+
+  it("never spawns implement or create_issue, whatever the forge state", async () => {
+    const states = [
+      makeReviewRequest(),
+      makeReviewRequest({ ciState: "pending" }),
+      makeReviewRequest({ ciState: "failed" }),
+      makeReviewRequest({ ciState: "none" }),
+      makeReviewRequest({ needsRebase: true }),
+      makeReviewRequest({ mergeStateKnown: false }),
+      makeReviewRequest({ hasUnresolvedComments: true }),
+      makeReviewRequest({ humanApprovedAt: "2026-08-20T09:00:00.000Z" }),
+    ];
+    for (const state of states) {
+      const decision = await decide(attached(), state, changedDiff());
+      assert.ok(
+        decision.kind !== "spawn" || (decision.step !== "implement" && decision.step !== "create_issue"),
+        `${JSON.stringify(state)} led to ${JSON.stringify(decision)}`,
+      );
+    }
   });
 });

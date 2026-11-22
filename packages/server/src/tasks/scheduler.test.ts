@@ -30,6 +30,7 @@ import {
 } from "./scheduler.js";
 import { DISCARDED_CONTAINER_ERROR, resumeTask } from "./resume.js";
 import { withdrawApproval } from "./approval.js";
+import { makeNewTask } from "./new-task.js";
 import { makeAttempt, makeLinkedTask, makeReviewRequest, makeTask, makeTextTask } from "../testing/fixtures.js";
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
@@ -305,6 +306,36 @@ describe("scheduler: spawning", () => {
     assert.equal(task.attempts[0].headShaBefore, "def456");
     assert.equal(task.attempts[0].diffHashBefore, "diff-hash-1");
     assert.deepEqual(harness.diffHashFetches, ["12"]);
+  });
+
+  it("goes straight to reviewing on the first tick of a task attached to an existing PR/MR", async () => {
+    const task = makeNewTask(
+      "acme/widgets",
+      "github",
+      makeTask().configByStep,
+      {
+        workItem: makeTask().workItem!,
+        reviewRequest: { id: "12", url: "https://github.com/acme/widgets/pull/12", sourceBranch: "feature" },
+      },
+      NOW,
+    );
+    const harness = makeHarness({ tasks: [task], snapshot: [makeReviewRequest({ headSha: "def456" })] });
+
+    await runTaskSchedulerTick(harness.deps);
+
+    assert.equal(harness.created.length, 1);
+    assert.match(harness.created[0].prompt, /Review pull request #12/);
+    assert.doesNotMatch(harness.created[0].prompt, /open a pull\/merge request/);
+    assert.equal(task.phase, "agent_running");
+    assert.equal(task.activeStep, "review");
+    assert.equal(task.attemptsByStep.implement, 0);
+    assert.equal(task.attemptsByStep.review, 1);
+    assert.equal(task.attempts[0].headShaBefore, "def456");
+    assert.deepEqual(task.reviewRequest, {
+      id: "12",
+      url: "https://github.com/acme/widgets/pull/12",
+      sourceBranch: "feature",
+    });
   });
 
   it("tells the first review agent to leave nits as resolvable threads", async () => {

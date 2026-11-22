@@ -1,10 +1,54 @@
 import crypto from "node:crypto";
 import { TASK_STEPS } from "../types.js";
-import type { RepoWorkItem, Task, TaskStep } from "../types.js";
+import type { RepoSource, RepoWorkItem, Task, TaskReviewRequestRef, TaskStep } from "../types.js";
 import type { TaskStore } from "./store.js";
 
 export function findUnfinishedInstance(tasks: TaskStore, quickPromptId: string): Task | null {
   return tasks.list().find((task) => task.quickPromptId === quickPromptId && task.phase !== "merged") ?? null;
+}
+
+export function isLive(task: Task): boolean {
+  return task.phase !== "merged" && task.phase !== "failed";
+}
+
+export function findLiveTaskHoldingReviewRequest(
+  tasks: TaskStore,
+  repoSource: RepoSource,
+  repoFullName: string,
+  reviewRequestId: string,
+  excludeTaskId: string | null = null,
+): Task | null {
+  return (
+    tasks
+      .list()
+      .find(
+        (task) =>
+          task.id !== excludeTaskId &&
+          isLive(task) &&
+          task.repoSource === repoSource &&
+          task.repoFullName === repoFullName &&
+          task.reviewRequest?.id === reviewRequestId,
+      ) ?? null
+  );
+}
+
+export function findLiveTaskHoldingWorkItem(
+  tasks: TaskStore,
+  repoSource: RepoSource,
+  repoFullName: string,
+  workItemId: string,
+): Task | null {
+  return (
+    tasks
+      .list()
+      .find(
+        (task) =>
+          isLive(task) &&
+          task.repoSource === repoSource &&
+          task.repoFullName === repoFullName &&
+          task.workItem?.id === workItemId,
+      ) ?? null
+  );
 }
 
 export function parseConfigByStep(
@@ -56,7 +100,10 @@ export function makeNewTask(
   repoFullName: string,
   repoSource: Task["repoSource"],
   configByStep: Record<TaskStep, string>,
-  origin: { workItem: RepoWorkItem } | { sourceText: string; quickPromptId: string | null },
+  origin:
+    | { workItem: RepoWorkItem }
+    | { workItem: RepoWorkItem; reviewRequest: TaskReviewRequestRef }
+    | { sourceText: string; quickPromptId: string | null },
   now: Date,
 ): Task {
   const timestamp = now.toISOString();
@@ -70,7 +117,7 @@ export function makeNewTask(
     createdIssueUrl: null,
     configByStep,
     phase: "spawning",
-    reviewRequest: null,
+    reviewRequest: "reviewRequest" in origin ? origin.reviewRequest : null,
     lastReviewedSha: null,
     lastReviewedDiffHash: null,
     approval: null,
