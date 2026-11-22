@@ -56,6 +56,10 @@ describe("mentionedWorkItems", () => {
     assert.deepEqual(ids("Add widgets", "https://github.com/other/repo/issues/12", [issue(12)]), []);
   });
 
+  it("does not treat a numeric HTML entity as a reference", () => {
+    assert.deepEqual(ids("Bump it&#39;s version", "it&#39;s a bump", [issue(39)]), []);
+  });
+
   it("matches a GitLab work item without an iid only by URL", () => {
     assert.deepEqual(ids("Work 9001", "Mentions 9001 and #9001", [gitlabWorkItem]), []);
     assert.deepEqual(ids("Work", "https://gitlab.com/acme/widgets/-/work_items/9001", [gitlabWorkItem]), [

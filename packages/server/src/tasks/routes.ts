@@ -230,7 +230,9 @@ tasksRouter.get("/api/attachable-review-requests", async (req, res) => {
       .filter((reviewRequest) => !findLiveTaskHoldingReviewRequest(taskStore, source, repoFullName, reviewRequest.id))
       .map((reviewRequest) => ({
         reviewRequest,
-        workItems: mentionedWorkItems(reviewRequest, workItems),
+        workItems: mentionedWorkItems(reviewRequest, workItems).filter(
+          (workItem) => !findLiveTaskHoldingWorkItem(taskStore, source, repoFullName, workItem.id),
+        ),
         unusableReason: unattachableReason(reviewRequest),
       }))
       .filter((item) => item.workItems.length > 0);

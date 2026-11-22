@@ -10,7 +10,7 @@ function mentionsUrl(text: string, url: string): boolean {
 
 function mentionsReference(text: string, reference: string): boolean {
   if (!/^#\d+$/.test(reference)) return false;
-  return new RegExp(`(?<![\\w/])${escapeRegExp(reference)}(?!\\d)`).test(text);
+  return new RegExp(`(?<![\\w/&])${escapeRegExp(reference)}(?!\\d)`).test(text);
 }
 
 export function mentionedWorkItems(

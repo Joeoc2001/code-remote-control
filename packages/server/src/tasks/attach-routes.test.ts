@@ -184,6 +184,18 @@ describe("attaching tasks to open PRs/MRs", () => {
       assert.deepEqual(items.map((item) => item.reviewRequest.reference), ["#12"]);
     });
 
+    it("drops work items held by a live task, and PRs left mentioning none", async () => {
+      stubForge([pullRequest(12, { body: "Closes #7" }), pullRequest(13, { body: "Closes #7 and #8" })]);
+      resetStore([makeTask({ id: "implementing", phase: "spawning" })]);
+
+      const { items } = await list();
+
+      assert.deepEqual(
+        items.map((item) => [item.reviewRequest.reference, item.workItems.map((workItem) => workItem.reference)]),
+        [["#13", ["#8"]]],
+      );
+    });
+
     it("lists PRs whose description is unusable or which come from a fork with the reason they cannot be attached", async () => {
       stubForge([
         pullRequest(12, { title: "Fix #7", body: "" }),
