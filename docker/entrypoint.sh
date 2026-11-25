@@ -45,14 +45,14 @@ cd "/workspace"
 echo "Starting container metadata server..."
 tsx /opt/crc/packages/container-metadata-server/src/index.ts &
 
-CLAUDE_SESSION="${CRC_TMUX_SESSION:?CRC_TMUX_SESSION must name the tmux session the server pokes}"
-/opt/crc/start-claude-session.sh "$CLAUDE_SESSION"
+AGENT_SESSION="${CRC_TMUX_SESSION:?CRC_TMUX_SESSION must name the tmux session the server pokes}"
+/opt/crc/start-agent-session.sh "$AGENT_SESSION"
 
 echo "Starting web terminal..."
 ttyd -p 8080 -i 0.0.0.0 -W \
   -I /opt/crc/ttyd-index.html \
   -t "fontFamily=\"${TTYD_FONT_FAMILY}\", monospace" \
-  tmux attach -t "$CLAUDE_SESSION" &
+  tmux attach -t "$AGENT_SESSION" &
 TTYD_PID=$!
 trap 'kill "$TTYD_PID" 2>/dev/null || true' TERM INT
 

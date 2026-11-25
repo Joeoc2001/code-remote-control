@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/hooks/task-description.js" }] },
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/hooks/instance-status.js working" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node /opt/crc/hooks/instance-status.js waiting" }] }
+    ],
+    "Notification": [
+      { "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "node /opt/crc/hooks/instance-status.js waiting" }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/hooks/instance-status.js working" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/hooks/git-hygiene.js", "timeout": 1230 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node /opt/crc/hooks/instance-status.js finished" }] }
+    ]
+  }
+}

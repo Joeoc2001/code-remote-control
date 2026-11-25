@@ -66,6 +66,8 @@ describe("merging without merge tokens set", () => {
       gitUsername: "bot",
       gitEmail: "bot@example.com",
       initialPrompt: undefined,
+      agent: "claude" as const,
+      harnessEnv: {},
       configEnv: undefined,
     });
     assert.ok(env.includes("GITHUB_TOKEN=gh-agent"));
@@ -79,6 +81,8 @@ describe("merging without merge tokens set", () => {
       gitUsername: "bot",
       gitEmail: "bot@example.com",
       initialPrompt: undefined,
+      agent: "claude" as const,
+      harnessEnv: {},
       configEnv: undefined,
     });
     assert.ok(env.includes("CRC_TMUX_SESSION=crc"));

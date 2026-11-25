@@ -10,6 +10,7 @@ import type { ConfigSummary, ManagedContainer } from "../types";
 import { fetchConfigs, fetchGitHubRepos, fetchGitLabRepos, createContainer, createContainers, fetchRepoReviewRequests, fetchRepoWorkItems } from "../api";
 import RepoPicker, { type RepoEntry } from "./RepoPicker";
 import ProseTextArea from "./ProseTextArea";
+import { configOptionLabel } from "./ConfigStepPicker";
 
 interface NewContainerModalProps {
   onClose: () => void;
@@ -281,7 +282,7 @@ function NewContainerModal({
                 >
                   {configs.map((c) => (
                     <option key={c.name} value={c.name}>
-                      {c.name}
+                      {configOptionLabel(c)}
                     </option>
                   ))}
                 </select>

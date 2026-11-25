@@ -4,7 +4,7 @@ const { spawn } = require("node:child_process");
 const { closeSync, openSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const path = require("node:path");
 const { git, makeRoot, makeWorkspace, runHook, statusPathFor, writeStub, writeTranscript } = require("./helpers/git-hygiene-harness.js");
-const { isHeldOpenByAnyProcess } = require("../claude/hooks/background-tasks.js");
+const { isHeldOpenByAnyProcess } = require("../agent-hooks/hooks/background-tasks.js");
 
 function backgroundBashLaunch(taskId, outputFile) {
   return {
@@ -258,7 +258,8 @@ describe("git-hygiene stop hook", () => {
       assert.equal(result.decision.decision, "block");
       assert.match(result.decision.reason, /background shells are still running/);
       assert.ok(result.decision.reason.includes("- bq17zaptz: until test -f /tmp/done; do sleep 5; done (Wait for the CI run)"));
-      assert.match(result.decision.reason, /TaskStop/);
+      assert.match(result.decision.reason, /Stop each shell you are no longer waiting on/);
+      assert.doesNotMatch(result.decision.reason, /TaskStop/);
       assert.match(result.decision.reason, /end your turn again/);
     });
 

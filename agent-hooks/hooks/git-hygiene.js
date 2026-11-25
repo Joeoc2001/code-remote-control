@@ -2,6 +2,9 @@ const { spawnSync } = require("node:child_process");
 const { readFileSync, writeFileSync } = require("node:fs");
 const { writeInstanceStatus } = require("./instance-status.js");
 const { readPendingBackgroundTasks } = require("./background-tasks.js");
+const { harnessFromArgv, readPayload, reply } = require("./harness.js");
+
+const HARNESS = harnessFromArgv(process.argv);
 
 const CWD = process.env.CRC_WORKSPACE_DIR || "/workspace";
 const RUN_DIR = process.env.CRC_RUN_DIR || "/run";
@@ -31,9 +34,19 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function endTurn() {
+  process.stdout.write(reply(HARNESS).stopAllowed());
+  process.exit(0);
+}
+
 function allowStop() {
   writeInstanceStatus("finished");
-  process.exit(0);
+  endTurn();
+}
+
+function waitForUser() {
+  writeInstanceStatus("waiting");
+  endTurn();
 }
 
 function awaitBackgroundWork(pendingTasks) {
@@ -41,12 +54,12 @@ function awaitBackgroundWork(pendingTasks) {
   writeInstanceStatus("awaiting-background", {
     pendingTasks: pendingTasks.map(({ id, kind, label }) => ({ id, kind, label })),
   });
-  process.exit(0);
+  endTurn();
 }
 
 function blockStop(reason) {
   writeInstanceStatus("working");
-  process.stdout.write(JSON.stringify({ decision: "block", reason }));
+  process.stdout.write(reply(HARNESS).stopBlocked(reason));
   process.exit(0);
 }
 
@@ -103,9 +116,9 @@ function getGitState() {
   return { hasUncommittedChanges, hasUnpushedCommits, upstream, aheadCount, branch, headSha };
 }
 
-function dirtyReminder(state, pendingTasks) {
+function dirtyReminder(state, backgroundBusy) {
   const reminder = baseDirtyReminder(state);
-  if (pendingTasks.length === 0) return reminder;
+  if (!backgroundBusy) return reminder;
   return `${reminder} If background tasks that are still running will make these changes themselves, end your turn again to wait for them.`;
 }
 
@@ -215,35 +228,37 @@ function runningShellsReminder(shells) {
     "You are ending your turn while these background shells are still running:",
     ...shells.map(describeShell),
     "Shells that never exit never notify you, and they keep this container marked as waiting on background tasks.",
-    "Stop each shell you are no longer waiting on with TaskStop. If you really are waiting for them to finish, end your turn again.",
+    "Stop each shell you are no longer waiting on. If you really are waiting for them to finish, end your turn again.",
   ].join("\n");
 }
 
 async function main() {
-  const payload = tryParseJson(await readStdin()) || {};
-  const sessionId = payload.session_id;
+  const payload = readPayload(HARNESS, tryParseJson(await readStdin()) || {});
+  const sessionId = payload.sessionId;
+  if (payload.cancelledByUser) waitForUser();
 
-  const pendingTasks = readPendingBackgroundTasks(payload.transcript_path);
+  const pendingTasks = HARNESS === "claude" ? readPendingBackgroundTasks(payload.transcriptPath) : [];
+  const backgroundBusy = pendingTasks.length > 0 || payload.backgroundBusy;
   const state = getGitState();
   const fingerprint = readFingerprint(sessionId);
 
   const isDirty = state !== null && (state.hasUncommittedChanges || state.hasUnpushedCommits);
   const dirtyKey = isDirty ? `${state.hasUncommittedChanges}:${state.hasUnpushedCommits}:${state.upstream}:${state.aheadCount}` : null;
-  if (isDirty && (!payload.stop_hook_active || fingerprint.dirtyKey !== dirtyKey)) {
+  if (isDirty && (!payload.continuedByStopHook || fingerprint.dirtyKey !== dirtyKey)) {
     writeFingerprint(sessionId, { dirtyKey });
-    blockStop(dirtyReminder(state, pendingTasks));
+    blockStop(dirtyReminder(state, backgroundBusy));
   }
 
   const shells = pendingTasks.filter((task) => task.kind === "shell");
   if (shells.length > 0) {
     const shellsKey = shells.map((task) => task.id).sort().join(",");
-    if (!payload.stop_hook_active || fingerprint.shellsKey !== shellsKey) {
+    if (!payload.continuedByStopHook || fingerprint.shellsKey !== shellsKey) {
       writeFingerprint(sessionId, { watchedHead: fingerprint.watchedHead, dirtyKey, shellsKey });
       blockStop(runningShellsReminder(shells));
     }
   }
 
-  if (pendingTasks.length > 0) awaitBackgroundWork(pendingTasks);
+  if (backgroundBusy) awaitBackgroundWork(pendingTasks);
   if (!state || isDirty) allowStop();
 
   if (state.branch === "HEAD") allowStop();

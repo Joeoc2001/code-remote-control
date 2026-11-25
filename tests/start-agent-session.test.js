@@ -5,7 +5,7 @@ const { START_SESSION_SCRIPT, startSession } = require("./helpers/session-harnes
 
 const AWKWARD_PROMPT = 'Fix the "quoting" bug in $HOME; `echo hi` && rm -rf / -- now';
 
-describe("start-claude-session.sh", () => {
+describe("start-agent-session.sh", () => {
   test("is valid bash", () => {
     execFileSync("bash", ["-n", START_SESSION_SCRIPT]);
   });
@@ -192,7 +192,7 @@ describe("start-claude-session.sh", () => {
 
     assert.notEqual(result.error, null);
     assert.notEqual(result.error.status, 0);
-    assert.match(String(result.error.stderr), /usage: start-claude-session\.sh/);
+    assert.match(String(result.error.stderr), /usage: start-agent-session\.sh/);
   });
 
   test("reports which branch it took", () => {

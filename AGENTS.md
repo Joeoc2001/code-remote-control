@@ -1,16 +1,18 @@
-This is a repo for a web app which lets me manage containers for running Claude Code remote instances on my home PC. It is built with Node/Express/React/Tailwind and integrates with both Docker and GitHub.
+This is a repo for a web app which lets me manage containers for running remote coding-agent instances (Claude Code or the Google Antigravity CLI) on my home PC. It is built with Node/Express/React/Tailwind and integrates with both Docker and GitHub.
 
 ## Functionality
 
-This app functions as a wrapper around Docker to spawn containers which each run Claude Code inside a mobile-friendly web terminal (ttyd attached to a tmux session).
+This app functions as a wrapper around Docker to spawn containers which each run a coding agent inside a mobile-friendly web terminal (ttyd attached to a tmux session).
 
 ## Repo setup
 
 The repo is composed of 2 docker container definitions:
-- `env` describes the container which is spun up for each Claude Code instance, providing devtools and a sandbox;
+- `env` describes the container which is spun up for each agent instance, providing devtools and a sandbox;
 - `app` gives the webserver.
 
 These can both be found in `./docker`.
+
+The hook scripts both agent harnesses run inside the `env` container live in `./agent-hooks`; `hooks/harness.js` adapts each harness's hook payloads and replies. The server-side half of each harness (the files and env injected at container creation) is in `packages/server/src/harness`.
 
 The remainder of the TS code is in `./packages`:
 

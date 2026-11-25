@@ -112,7 +112,7 @@ function singleLine(text: string): string {
 export function buildStallPokePrompt(pendingTasks: StalledBackgroundTask[] | null, idleMinutes: number): string {
   if (pendingTasks !== null && pendingTasks.length > 0) {
     const listed = pendingTasks.map((task) => `${task.kind} "${singleLine(task.label)}"`).join(", ");
-    return `This session has been waiting on background work for over ${idleMinutes} minutes without making progress: ${listed}. Check whether each one is still making progress by reading its output file or agent status. Stop any that are hung with TaskStop, then either carry on with the task or finish it.`;
+    return `This session has been waiting on background work for over ${idleMinutes} minutes without making progress: ${listed}. Check whether each one is still making progress by reading its output file or agent status. Stop any that are hung, then either carry on with the task or finish it.`;
   }
   return `No activity has been recorded in this session for over ${idleMinutes} minutes. If the command you are running is hung, interrupt it and retry it in the background or with a timeout; otherwise carry on with the task, and finish it if it is complete.`;
 }

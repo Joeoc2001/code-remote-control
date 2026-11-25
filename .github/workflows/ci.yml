@@ -17,7 +17,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run check:claude-assets
+      - run: npm run check:agent-hooks
 
       - run: npm run typecheck
 

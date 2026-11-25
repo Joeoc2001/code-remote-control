@@ -11,7 +11,7 @@ const {
   readPendingBackgroundTasks,
   readSessionStartedAt,
   sessionStartedAtPath,
-} = require("../claude/hooks/background-tasks.js");
+} = require("../agent-hooks/hooks/background-tasks.js");
 
 function transcript(...entries) {
   return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;

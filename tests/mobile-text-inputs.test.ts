@@ -33,9 +33,10 @@ function stoppedContainer(updatedName: string): ManagedContainer {
     id: "container-1",
     name: `crc-${updatedName}`,
     configName: "default",
+    agent: "claude",
     repoName: "example/repo",
     status: "exited",
-    health: { container: "stopped", claude: "unknown" },
+    health: { container: "stopped", agent: "unknown" },
     subdomain: "container-1",
     createdAt: "2026-01-01T00:00:00.000Z",
   };

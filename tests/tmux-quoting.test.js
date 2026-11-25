@@ -5,7 +5,7 @@ const { startSessionWithRealTmux, resumePromptFromScript } = require("./helpers/
 const RESUME_PROMPT = resumePromptFromScript();
 const AWKWARD_PROMPT = 'Fix the "quoting" bug in $HOME; `echo hi` && rm -rf / -- now';
 
-describe("start-claude-session.sh under real tmux", () => {
+describe("start-agent-session.sh under real tmux", () => {
   test("hands the initial prompt to claude as a single unmangled argument", async () => {
     const result = await startSessionWithRealTmux({
       transcriptFiles: [],

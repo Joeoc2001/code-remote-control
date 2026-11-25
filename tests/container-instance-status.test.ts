@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { instanceStatusPath, readInstanceStatus } from "../packages/container-metadata-server/src/instance-status.js";
-import { writeInstanceStatus } from "../claude/hooks/instance-status.js";
+import { writeInstanceStatus } from "../agent-hooks/hooks/instance-status.js";
 
 describe("container metadata server: instance status", () => {
   let root: string;

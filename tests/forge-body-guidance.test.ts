@@ -14,7 +14,7 @@ import {
 } from "@crc/shared/prompts";
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const containerMemory = readFileSync(path.join(repoRoot, "docker", "claude-memory.md"), "utf-8");
+const containerMemory = readFileSync(path.join(repoRoot, "docker", "agent-memory.md"), "utf-8");
 
 const workItem = {
   id: "7",
@@ -152,7 +152,7 @@ describe("container agent memory", () => {
     for (const source of ["github", "gitlab"] as const) {
       assert.ok(
         containerMemory.includes(forgeBodyGuidance(source)),
-        `docker/claude-memory.md has drifted from the ${source} guidance`,
+        `docker/agent-memory.md has drifted from the ${source} guidance`,
       );
     }
   });

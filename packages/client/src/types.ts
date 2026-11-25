@@ -1,4 +1,5 @@
 export type {
+  AgentKind,
   ContainerHealth,
   ManagedContainer,
   ClosureNotice,
@@ -27,7 +28,7 @@ export type {
   UpdateTaskRequest,
 } from "@crc/shared";
 
-export { currentStageFirstAttemptIndex, TASK_STEPS } from "@crc/shared";
+export { AGENT_DISPLAY_NAMES, currentStageFirstAttemptIndex, TASK_STEPS } from "@crc/shared";
 
 export type {
   ContainerCodeStatus,

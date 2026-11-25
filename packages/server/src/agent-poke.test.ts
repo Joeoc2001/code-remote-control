@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { buildStallPokePrompt } from "@crc/shared/prompts";
-import { buildPokeCommands, CLAUDE_TMUX_SESSION } from "./agent-poke.js";
+import { buildPokeCommands, AGENT_TMUX_SESSION } from "./agent-poke.js";
 
 const root = mkdtempSync(join(tmpdir(), "crc-agent-poke-"));
 const socket = join(root, "tmux.sock");
@@ -36,9 +36,9 @@ after(() => {
 describe("agent poke commands", () => {
   it("targets the tmux session the env container starts claude in", () => {
     const entrypoint = readFileSync(join(import.meta.dirname, "..", "..", "..", "docker", "entrypoint.sh"), "utf-8");
-    assert.match(entrypoint, /CLAUDE_SESSION="\$\{CRC_TMUX_SESSION:\?/);
-    assert.match(entrypoint, /tmux attach -t "\$CLAUDE_SESSION"/);
-    assert.equal(CLAUDE_TMUX_SESSION, "crc");
+    assert.match(entrypoint, /AGENT_SESSION="\$\{CRC_TMUX_SESSION:\?/);
+    assert.match(entrypoint, /tmux attach -t "\$AGENT_SESSION"/);
+    assert.equal(AGENT_TMUX_SESSION, "crc");
   });
 
   it("types the message literally and submits it as one line in a real tmux session", async () => {
@@ -73,7 +73,8 @@ describe("stall poke prompt", () => {
 
     assert.match(prompt, /over 30 minutes/);
     assert.match(prompt, /shell "Wait for CI", agent "Review the diff", remote "Remote work"/);
-    assert.match(prompt, /TaskStop/);
+    assert.match(prompt, /Stop any that are hung/);
+    assert.doesNotMatch(prompt, /TaskStop/);
     assert.doesNotThrow(() => buildPokeCommands(session, prompt));
   });
 

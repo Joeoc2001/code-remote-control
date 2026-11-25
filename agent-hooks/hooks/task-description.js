@@ -1,6 +1,7 @@
 const { writeFileSync } = require("node:fs");
+const { harnessFromArgv, optionFromArgv, readPayload, reply } = require("./harness.js");
 
-const TASK_DESCRIPTION_PATH = "/run/crc-current-task-description";
+const TASK_DESCRIPTION_PATH = `${process.env.CRC_RUN_DIR || "/run"}/crc-current-task-description`;
 const MAX_LENGTH = 500;
 
 function isResumePrompt(prompt) {
@@ -26,12 +27,13 @@ function readStdin() {
 }
 
 async function main() {
-  const raw = await readStdin();
-  const payload = JSON.parse(raw);
+  const harness = harnessFromArgv(process.argv);
+  const payload = readPayload(harness, JSON.parse(await readStdin()));
   const description = taskDescriptionFor(payload.prompt);
-  if (!description) return;
-
-  writeFileSync(TASK_DESCRIPTION_PATH, `${description}\n`, { encoding: "utf-8", mode: 0o644 });
+  if (description) {
+    writeFileSync(TASK_DESCRIPTION_PATH, `${description}\n`, { encoding: "utf-8", mode: 0o644 });
+  }
+  process.stdout.write(reply(harness).event(optionFromArgv(process.argv, "--event")));
 }
 
 module.exports = { TASK_DESCRIPTION_PATH, taskDescriptionFor };

@@ -1,6 +1,6 @@
 const { test, describe, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { taskDescriptionFor } = require("../claude/hooks/task-description.js");
+const { taskDescriptionFor } = require("../agent-hooks/hooks/task-description.js");
 const { resumePromptFromScript } = require("./helpers/session-harness.js");
 
 const RESUME_PROMPT = resumePromptFromScript();

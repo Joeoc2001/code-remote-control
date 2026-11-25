@@ -5,7 +5,10 @@ export type {
   EnvironmentConfig,
   ResolvedEnvironmentConfig,
   DockerConfig,
+  AgentKind,
   ClaudeOauth,
+  ResolvedClaudeConfig,
+  ResolvedAntigravityConfig,
   ConfigFile,
   ResolvedConfigFile,
   ConfigSummary,
@@ -46,6 +49,8 @@ export type {
 } from "@crc/shared";
 
 export {
+  agentKindSchema,
+  DEFAULT_AGENT_KIND,
   configFileSchema,
   currentStageFirstAttemptIndex,
   environmentConfigSchema,

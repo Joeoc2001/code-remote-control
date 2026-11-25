@@ -322,6 +322,8 @@ describe("buildContainerEnv with merge tokens set", () => {
     gitUsername: "bot",
     gitEmail: "bot@example.com",
     initialPrompt: undefined,
+    agent: "claude" as const,
+    harnessEnv: {},
     configEnv: { FOO: "bar" },
   };
 
