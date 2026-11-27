@@ -4,15 +4,15 @@ import { PassThrough } from "node:stream";
 import tar from "tar-stream";
 import type {
   ManagedContainer,
+  AgentKind,
   ContainerHealth,
   ResolvedEnvironmentConfig,
   ResolvedConfigFile,
   DockerConfig,
-  ClaudeOauth,
   TaskContainer,
   TaskSpawn,
 } from "./types.js";
-import { taskSpawnSchema } from "./types.js";
+import { agentKindSchema, DEFAULT_AGENT_KIND, taskSpawnSchema } from "./types.js";
 import {
   GITHUB_AGENT_TOKEN,
   GITHUB_MERGE_TOKEN,
@@ -23,7 +23,8 @@ import {
 
 
 import type { RepoSource } from "./types.js";
-import { buildPokeCommands, CLAUDE_TMUX_SESSION } from "./agent-poke.js";
+import { buildPokeCommands, AGENT_TMUX_SESSION } from "./agent-poke.js";
+import { buildHarnessSetup, type HarnessFile } from "./harness/index.js";
 
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 
@@ -31,17 +32,12 @@ export const CONTAINER_INTERNAL_PORT = 8080;
 export const CONTAINER_METADATA_INTERNAL_PORT = 8081;
 const CONTAINER_PREFIX = "crc-";
 const LABEL_CONFIG_NAME = "crc.config-name";
+const LABEL_AGENT = "crc.agent";
 const LABEL_REPO_NAME = "crc.repo-name";
 const LABEL_SUBDOMAIN = "crc.subdomain";
 const LABEL_TASK_SPAWN = "crc.task-spawn";
 const HEALTH_CHECK_TIMEOUT_MS = 1_000;
-const CLAUDE_SETTINGS_RELATIVE_PATH = "root/.claude/settings.json";
-const CLAUDE_CREDENTIALS_RELATIVE_PATH = "root/.claude/.credentials.json";
-const CLAUDE_CONFIG_RELATIVE_PATH = "root/.claude.json";
-const CLAUDE_HOOKS_DIR = "/opt/crc/claude-hooks";
-const WORKSPACE_DIR = "/workspace";
 
-type ClaudeSettings = Record<string, unknown>;
 type DockerHostConfig = NonNullable<Dockerode.ContainerCreateOptions["HostConfig"]>;
 type DockerDevice = NonNullable<DockerConfig["devices"]>[number];
 type DockerDeviceRequest = NonNullable<DockerConfig["device_requests"]>[number];
@@ -143,78 +139,7 @@ function buildEndpointConfig(
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-const FORCED_ALLOWED_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"];
-
-function buildClaudePermissions(permissions: unknown): Record<string, unknown> {
-  const permissionsRecord = isRecord(permissions) ? permissions : {};
-  const existingAllow = Array.isArray(permissionsRecord.allow)
-    ? permissionsRecord.allow.filter((entry): entry is string => typeof entry === "string")
-    : [];
-
-  return {
-    ...permissionsRecord,
-    defaultMode: "bypassPermissions",
-    allow: [...new Set([...existingAllow, ...FORCED_ALLOWED_TOOLS])],
-  };
-}
-
-const GIT_HYGIENE_HOOK_TIMEOUT_SECONDS = 1230;
-
-export function buildClaudeHooks(): Record<string, unknown> {
-  const command = (script: string, timeout?: number) => ({
-    hooks: [{ type: "command", command: `node ${CLAUDE_HOOKS_DIR}/${script}`, ...(timeout ? { timeout } : {}) }],
-  });
-  const matching = (matcher: string, script: string) => ({ matcher, ...command(script) });
-
-  return {
-    UserPromptSubmit: [command("task-description.js"), command("instance-status.js working")],
-    PreToolUse: [matching("AskUserQuestion", "instance-status.js waiting")],
-    Notification: [matching("permission_prompt", "instance-status.js waiting")],
-    PostToolUse: [command("instance-status.js working")],
-    Stop: [command("git-hygiene.js", GIT_HYGIENE_HOOK_TIMEOUT_SECONDS)],
-    SessionEnd: [command("instance-status.js finished")],
-  };
-}
-
-function buildClaudeSettings(config: ClaudeSettings | undefined): ClaudeSettings {
-  const baseConfig = isRecord(config) ? config : {};
-
-  return {
-    ...baseConfig,
-    permissions: buildClaudePermissions(baseConfig.permissions),
-    hooks: buildClaudeHooks(),
-    skipDangerousModePermissionPrompt: true,
-  };
-}
-
-function buildClaudeCredentials(oauth: ClaudeOauth): Record<string, unknown> {
-  return { claudeAiOauth: oauth };
-}
-
-function buildClaudeConfig(): Record<string, unknown> {
-  return {
-    hasCompletedOnboarding: true,
-    theme: "dark",
-    projects: {
-      [WORKSPACE_DIR]: {
-        hasTrustDialogAccepted: true,
-        hasCompletedProjectOnboarding: true,
-      },
-    },
-  };
-}
-
-interface TarEntry {
-  path: string;
-  content: Buffer;
-  mode: number;
-}
-
-function createTar(entries: TarEntry[]): Promise<Buffer> {
+function createTar(entries: HarnessFile[]): Promise<Buffer> {
   const pack = tar.pack();
 
   const addEntry = (index: number): void => {
@@ -304,6 +229,10 @@ async function assertManagedContainer(id: string): Promise<void> {
   }
 }
 
+export function agentFromLabels(labels: Record<string, string>): AgentKind {
+  return labels[LABEL_AGENT] === undefined ? DEFAULT_AGENT_KIND : agentKindSchema.parse(labels[LABEL_AGENT]);
+}
+
 function buildManagedContainer(
   id: string,
   name: string,
@@ -314,10 +243,11 @@ function buildManagedContainer(
   const configName = labels[LABEL_CONFIG_NAME] || "unknown";
   const repoName = labels[LABEL_REPO_NAME] || "unknown";
   const subdomain = labels[LABEL_SUBDOMAIN] || "";
+  const agent = agentFromLabels(labels);
 
   const health = healthCache.get(id) || {
     container: status === "running" ? "running" as const : "stopped" as const,
-    claude: "unknown" as const,
+    agent: "unknown" as const,
   };
 
   const createdAtStr = typeof createdAt === "number"
@@ -328,6 +258,7 @@ function buildManagedContainer(
     id,
     name,
     configName,
+    agent,
     repoName,
     status,
     health,
@@ -412,6 +343,8 @@ interface ContainerEnvOptions {
   gitUsername: string;
   gitEmail: string;
   initialPrompt: string | undefined;
+  agent: AgentKind;
+  harnessEnv: Record<string, string>;
   configEnv: Record<string, string> | undefined;
 }
 
@@ -430,9 +363,10 @@ export function buildContainerEnv(options: ContainerEnvOptions): string[] {
     `GIT_USER_NAME=${options.gitUsername}`,
     `GIT_USER_EMAIL=${options.gitEmail}`,
     "IS_SANDBOX=1",
-    `CRC_TMUX_SESSION=${CLAUDE_TMUX_SESSION}`,
+    `CRC_TMUX_SESSION=${AGENT_TMUX_SESSION}`,
+    `CRC_AGENT=${options.agent}`,
     ...(options.initialPrompt ? [`CRC_INITIAL_PROMPT=${options.initialPrompt}`] : []),
-    ...Object.entries(options.configEnv || {}).map(([k, v]) => `${k}=${v}`),
+    ...Object.entries({ ...options.harnessEnv, ...options.configEnv }).map(([k, v]) => `${k}=${v}`),
   ];
 
   const leaked = envVars.find((entry) => entry.split("=", 1)[0].endsWith("_MERGE_TOKEN"));
@@ -476,6 +410,7 @@ export async function createContainer(
     ? `${gitlabHost}/${repoFullName}.git`
     : `https://github.com/${repoFullName}.git`;
 
+  const harness = buildHarnessSetup(config);
   const envVars = buildContainerEnv({
     repoUrl,
     repoSource,
@@ -483,6 +418,8 @@ export async function createContainer(
     gitUsername: appConfig.git.username,
     gitEmail: appConfig.git.email,
     initialPrompt: options.initialPrompt,
+    agent: config.agent,
+    harnessEnv: harness.env,
     configEnv: config.env,
   });
 
@@ -495,6 +432,7 @@ export async function createContainer(
     Env: envVars,
     Labels: {
       [LABEL_CONFIG_NAME]: config.name,
+      [LABEL_AGENT]: config.agent,
       [LABEL_REPO_NAME]: repoFullName,
       [LABEL_SUBDOMAIN]: subdomain,
       ...(options.task ? { [LABEL_TASK_SPAWN]: JSON.stringify(options.task) } : {}),
@@ -503,15 +441,7 @@ export async function createContainer(
   });
 
   try {
-    const settingsJson = Buffer.from(JSON.stringify(buildClaudeSettings(config.claude)));
-    const credentialsJson = Buffer.from(JSON.stringify(buildClaudeCredentials(config.oauth)));
-    const configJson = Buffer.from(JSON.stringify(buildClaudeConfig()));
-    const claudeTar = await createTar([
-      { path: CLAUDE_SETTINGS_RELATIVE_PATH, content: settingsJson, mode: 0o444 },
-      { path: CLAUDE_CREDENTIALS_RELATIVE_PATH, content: credentialsJson, mode: 0o600 },
-      { path: CLAUDE_CONFIG_RELATIVE_PATH, content: configJson, mode: 0o600 },
-    ]);
-    await container.putArchive(claudeTar, { path: "/" });
+    await container.putArchive(await createTar(harness.files), { path: "/" });
 
     const endpointConfig = buildEndpointConfig(config.docker);
     const networkNames = config.docker?.networks || [];
@@ -605,7 +535,7 @@ async function execInContainer(container: Dockerode.Container, cmd: string[]): P
 
 export async function pokeAgent(id: string, message: string): Promise<void> {
   await assertManagedContainer(id);
-  const commands = buildPokeCommands(CLAUDE_TMUX_SESSION, message);
+  const commands = buildPokeCommands(AGENT_TMUX_SESSION, message);
   const container = docker.getContainer(id);
   await execInContainer(container, commands.type);
   await new Promise((resolve) => setTimeout(resolve, POKE_SUBMIT_DELAY_MS));
@@ -677,7 +607,7 @@ export function broadcastRemoval(id: string): void {
   broadcastSSE("container-removed", { id });
 }
 
-async function checkClaudeHealth(container: ManagedContainer): Promise<ContainerHealth["claude"]> {
+async function checkAgentHealth(container: ManagedContainer): Promise<ContainerHealth["agent"]> {
   try {
     const response = await fetch(`http://${container.name}:${CONTAINER_INTERNAL_PORT}/`, {
       signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
@@ -713,21 +643,21 @@ export async function runHealthChecks(): Promise<void> {
         containerState = "error";
       }
 
-      const claudeState: ContainerHealth["claude"] =
+      const agentState: ContainerHealth["agent"] =
         containerState === "running"
-          ? await checkClaudeHealth(managed)
+          ? await checkAgentHealth(managed)
           : "unknown";
 
       const health: ContainerHealth = {
         container: containerState,
-        claude: claudeState,
+        agent: agentState,
       };
 
       const prev = healthCache.get(managed.id);
       const changed =
         !prev ||
         prev.container !== health.container ||
-        prev.claude !== health.claude;
+        prev.agent !== health.agent;
 
       healthCache.set(managed.id, health);
       return { id: managed.id, changed };

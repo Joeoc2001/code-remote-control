@@ -224,7 +224,7 @@ export default function Home() {
           message={
             deleteScope === "all"
               ? "This will stop and remove all containers. This action cannot be undone."
-              : "This will stop and remove every container whose Claude instance has finished. This action cannot be undone."
+              : "This will stop and remove every container whose agent has finished. This action cannot be undone."
           }
           confirmLabel={deleteScope === "all" ? "Delete All" : "Delete Finished"}
           onConfirm={deleteScope === "all" ? deleteAllContainers : deleteFinishedContainers}

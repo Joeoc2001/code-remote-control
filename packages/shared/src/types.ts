@@ -88,7 +88,7 @@ export const dockerConfigSchema = z.object({
   auto_remove: z
     .literal(false, {
       error:
-        "docker.auto_remove must not be enabled: it deletes the container on exit, which discards the workspace and the Claude Code transcripts needed to resume the session after a restart",
+        "docker.auto_remove must not be enabled: it deletes the container on exit, which discards the workspace and the agent transcripts needed to resume the session after a restart",
     })
     .optional(),
   network_mode: z.string().min(1).optional(),
@@ -127,9 +127,18 @@ export const claudeOauthSchema = z.object({
   subscriptionType: z.string().min(1).optional(),
 });
 
+export const agentKindSchema = z.enum(["claude", "antigravity"]);
+
+export const geminiAuthSchema = z.object({
+  api_key: z.string().min(1),
+});
+
 const configDefaultsSchema = z.object({
+  agent: agentKindSchema.optional(),
   oauth: claudeOauthSchema.optional(),
   claude: z.record(z.string(), z.unknown()).optional(),
+  gemini: geminiAuthSchema.optional(),
+  antigravity: z.record(z.string(), z.unknown()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   docker: dockerConfigSchema.optional(),
 });
@@ -152,11 +161,38 @@ export type GitConfig = z.infer<typeof gitConfigSchema>;
 export type MergeMethod = z.infer<typeof mergeMethodSchema>;
 export type DockerConfig = z.infer<typeof dockerConfigSchema>;
 export type ClaudeOauth = z.infer<typeof claudeOauthSchema>;
+export type AgentKind = z.infer<typeof agentKindSchema>;
+export type GeminiAuth = z.infer<typeof geminiAuthSchema>;
 export type ConfigDefaults = z.infer<typeof configDefaultsSchema>;
 export type EnvironmentConfig = z.infer<typeof environmentConfigSchema>;
 export type ConfigFile = z.infer<typeof configFileSchema>;
 
-export type ResolvedEnvironmentConfig = EnvironmentConfig & { oauth: ClaudeOauth };
+export const DEFAULT_AGENT_KIND: AgentKind = "claude";
+
+export const AGENT_DISPLAY_NAMES: Record<AgentKind, string> = {
+  claude: "Claude Code",
+  antigravity: "Antigravity",
+};
+
+interface ResolvedConfigBase {
+  name: string;
+  env?: Record<string, string>;
+  docker?: DockerConfig;
+}
+
+export type ResolvedClaudeConfig = ResolvedConfigBase & {
+  agent: "claude";
+  oauth: ClaudeOauth;
+  claude?: Record<string, unknown>;
+};
+
+export type ResolvedAntigravityConfig = ResolvedConfigBase & {
+  agent: "antigravity";
+  gemini: GeminiAuth;
+  antigravity?: Record<string, unknown>;
+};
+
+export type ResolvedEnvironmentConfig = ResolvedClaudeConfig | ResolvedAntigravityConfig;
 export type ResolvedConfigFile = Omit<ConfigFile, "configurations"> & {
   configurations: ResolvedEnvironmentConfig[];
 };
@@ -171,19 +207,30 @@ export function resolveEnvironmentConfig(
   defaults: ConfigDefaults,
   config: EnvironmentConfig,
 ): ResolvedEnvironmentConfig {
-  const oauth = mergeBlock(defaults.oauth, config.oauth);
-  if (!oauth) {
-    throw new Error(
-      `Configuration '${config.name}' has no oauth block and no top-level oauth default is set`,
-    );
-  }
-  return {
+  const base = {
     name: config.name,
-    oauth,
-    claude: mergeBlock(defaults.claude, config.claude),
     env: mergeBlock(defaults.env, config.env),
     docker: mergeBlock(defaults.docker, config.docker),
   };
+  const agent = config.agent ?? defaults.agent ?? DEFAULT_AGENT_KIND;
+
+  if (agent === "antigravity") {
+    const gemini = mergeBlock(defaults.gemini, config.gemini);
+    if (!gemini) {
+      throw new Error(
+        `Configuration '${config.name}' uses the antigravity agent but has no gemini block and no top-level gemini default is set`,
+      );
+    }
+    return { ...base, agent, gemini, antigravity: mergeBlock(defaults.antigravity, config.antigravity) };
+  }
+
+  const oauth = mergeBlock(defaults.oauth, config.oauth);
+  if (!oauth) {
+    throw new Error(
+      `Configuration '${config.name}' uses the claude agent but has no oauth block and no top-level oauth default is set`,
+    );
+  }
+  return { ...base, agent, oauth, claude: mergeBlock(defaults.claude, config.claude) };
 }
 
 export function resolveConfigFile(file: ConfigFile): ResolvedConfigFile {
@@ -197,13 +244,14 @@ export function resolveConfigFile(file: ConfigFile): ResolvedConfigFile {
 
 export interface ContainerHealth {
   container: "running" | "stopped" | "error";
-  claude: "healthy" | "unhealthy" | "unknown";
+  agent: "healthy" | "unhealthy" | "unknown";
 }
 
 export interface ManagedContainer {
   id: string;
   name: string;
   configName: string;
+  agent: AgentKind;
   repoName: string;
   status: string;
   health: ContainerHealth;
@@ -218,6 +266,7 @@ export interface CreateContainerRequest {
 
 export interface ConfigSummary {
   name: string;
+  agent: AgentKind;
 }
 
 export interface ConfigSummaryFile {

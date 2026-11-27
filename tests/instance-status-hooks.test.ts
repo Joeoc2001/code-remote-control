@@ -2,8 +2,8 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { buildClaudeHooks } from "../packages/server/src/docker.js";
-import { INSTANCE_STATES } from "../claude/hooks/instance-status.js";
+import { buildClaudeHooks } from "../packages/server/src/harness/claude.js";
+import { INSTANCE_STATES } from "../agent-hooks/hooks/instance-status.js";
 
 const repoRoot = path.join(__dirname, "..");
 const hooks = buildClaudeHooks() as Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; timeout?: number }> }>>;
@@ -59,7 +59,7 @@ describe("instance status hook wiring", () => {
   });
 
   test("the git hygiene hook only ever writes states the hook script accepts", () => {
-    const source = readFileSync(path.join(repoRoot, "claude", "hooks", "git-hygiene.js"), "utf-8");
+    const source = readFileSync(path.join(repoRoot, "agent-hooks", "hooks", "git-hygiene.js"), "utf-8");
     const calls = [...source.matchAll(/writeInstanceStatus\(([^,)]*)/g)].map((match) => match[1]);
 
     assert.ok(calls.length > 0);
@@ -77,7 +77,7 @@ describe("instance status hook wiring", () => {
   });
 
   test("the checked-in settings template matches the hooks the server injects", () => {
-    const template = JSON.parse(readFileSync(path.join(repoRoot, "claude", "settings.template.json"), "utf-8"));
+    const template = JSON.parse(readFileSync(path.join(repoRoot, "agent-hooks", "claude-settings.template.json"), "utf-8"));
 
     assert.deepEqual(template.hooks, hooks);
   });

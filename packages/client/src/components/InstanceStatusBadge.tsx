@@ -7,25 +7,25 @@ interface InstanceStatusBadgeProps {
 const VARIANTS: Record<InstanceState, { label: string; idle: string; pill: string; dot: string }> = {
   working: {
     label: "Working",
-    idle: "Claude is working",
+    idle: "The agent is working",
     pill: "border-sky-800/80 bg-sky-500/10 text-sky-300",
     dot: "bg-sky-300 animate-pulse",
   },
   waiting: {
     label: "Waiting",
-    idle: "Claude is waiting for your input",
+    idle: "The agent is waiting for your input",
     pill: "border-amber-800/80 bg-amber-500/10 text-amber-300",
     dot: "bg-amber-300 animate-pulse",
   },
   "awaiting-background": {
     label: "Waiting on background tasks",
-    idle: "Claude is waiting on background tasks",
+    idle: "The agent is waiting on background tasks",
     pill: "border-violet-800/80 bg-violet-500/10 text-violet-300",
     dot: "bg-violet-300 animate-pulse",
   },
   finished: {
     label: "Finished",
-    idle: "Claude has finished",
+    idle: "The agent has finished",
     pill: "border-emerald-800/80 bg-emerald-500/10 text-emerald-300",
     dot: "bg-emerald-300",
   },

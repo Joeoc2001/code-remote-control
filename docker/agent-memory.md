@@ -1,4 +1,4 @@
-# Claude Code agent memory
+# Agent memory
 
 ## Posting descriptions and comments to GitHub
 

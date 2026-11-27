@@ -5,9 +5,10 @@ export function makeContainer(id: string, createdAt: string, status = "running")
     id,
     name: `crc-${id}`,
     configName: "default",
+    agent: "claude",
     repoName: "example/repo",
     status,
-    health: { container: status === "running" ? "running" : "stopped", claude: "unknown" },
+    health: { container: status === "running" ? "running" : "stopped", agent: "unknown" },
     subdomain: id,
     createdAt,
   };

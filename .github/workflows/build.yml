@@ -56,6 +56,12 @@ jobs:
           echo "TSX_VERSION=${TSX_VERSION}" >> $GITHUB_ENV
           echo "WITHONE_CLI_VERSION=${WITHONE_CLI_VERSION}" >> $GITHUB_ENV
 
+      - name: Resolve latest Antigravity CLI release
+        run: |
+          MANIFEST=$(curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json)
+          echo "ANTIGRAVITY_CLI_URL=$(jq -er .url <<< "$MANIFEST")" >> $GITHUB_ENV
+          echo "ANTIGRAVITY_CLI_SHA512=$(jq -er .sha512 <<< "$MANIFEST")" >> $GITHUB_ENV
+
       - name: Build environment image (push on main)
         uses: docker/build-push-action@v6
         with:
@@ -68,6 +74,8 @@ jobs:
             CLAUDE_CODE_VERSION=${{ env.CLAUDE_CODE_VERSION }}
             TSX_VERSION=${{ env.TSX_VERSION }}
             WITHONE_CLI_VERSION=${{ env.WITHONE_CLI_VERSION }}
+            ANTIGRAVITY_CLI_URL=${{ env.ANTIGRAVITY_CLI_URL }}
+            ANTIGRAVITY_CLI_SHA512=${{ env.ANTIGRAVITY_CLI_SHA512 }}
           tags: |
             ${{ env.ENV_IMAGE }}:latest
             ${{ env.ENV_IMAGE }}:${{ github.sha }}

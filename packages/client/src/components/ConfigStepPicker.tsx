@@ -1,4 +1,4 @@
-import type { ConfigSummary, TaskStep } from "../types";
+import { AGENT_DISPLAY_NAMES, type ConfigSummary, type TaskStep } from "../types";
 import { TASK_STEP_LABELS } from "./taskStepLabels";
 
 interface ConfigStepPickerProps {
@@ -11,6 +11,10 @@ interface ConfigStepPickerProps {
   customised: boolean;
   onCustomisedChange: (customised: boolean) => void;
   label?: string;
+}
+
+export function configOptionLabel(config: ConfigSummary): string {
+  return `${config.name} · ${AGENT_DISPLAY_NAMES[config.agent]}`;
 }
 
 export function pickConfigOverrides(
@@ -42,7 +46,7 @@ export default function ConfigStepPicker({
         >
           {configs.map((c) => (
             <option key={c.name} value={c.name}>
-              {c.name}
+              {configOptionLabel(c)}
             </option>
           ))}
         </select>
@@ -66,7 +70,7 @@ export default function ConfigStepPicker({
               >
                 {configs.map((c) => (
                   <option key={c.name} value={c.name}>
-                    {c.name}
+                    {configOptionLabel(c)}
                   </option>
                 ))}
               </select>

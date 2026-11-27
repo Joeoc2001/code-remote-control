@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { InstanceStatus, ManagedContainer, ReviewRequestStatus } from "../types";
+import { AGENT_DISPLAY_NAMES, type InstanceStatus, type ManagedContainer, type ReviewRequestStatus } from "../types";
 import { deleteContainer } from "../api";
 import HealthDot from "./HealthDot";
 import InstanceStatusBadge from "./InstanceStatusBadge";
@@ -77,6 +77,9 @@ export default function ContainerCard({
           </h3>
           <p className="text-slate-400 text-sm mt-1 truncate" title={container.repoName}>
             {container.repoName}
+          </p>
+          <p className="text-slate-500 text-xs mt-0.5 truncate" data-testid="container-agent">
+            {AGENT_DISPLAY_NAMES[container.agent]}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2 empty:mt-0">
             <InstanceStatusBadge instanceStatus={instanceStatus} />

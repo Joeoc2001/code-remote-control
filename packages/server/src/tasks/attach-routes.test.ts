@@ -14,8 +14,8 @@ process.env.GITHUB_TOKEN = "gh-agent";
 process.env.CRC_STATE_DIR = mkdtempSync(join(tmpdir(), "crc-attach-routes-"));
 process.env.CRC_CONFIG_PATH = writeTestConfig({
   configurations: [
-    { name: "default", oauth: { accessToken: "token" } },
-    { name: "big", oauth: { accessToken: "token" } },
+    { name: "default", agent: "claude", oauth: { accessToken: "token" } },
+    { name: "big", agent: "claude", oauth: { accessToken: "token" } },
   ],
 });
 

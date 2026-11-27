@@ -117,7 +117,7 @@ describe("Quick-prompts page", () => {
 
   before(async () => {
     harness = await startClientApp({
-      "/api/configs": { configurations: [{ name: "default" }, { name: "big" }] },
+      "/api/configs": { configurations: [{ name: "default", agent: "claude" }, { name: "big", agent: "antigravity" }] },
       "/api/github/repos": {
         repos: [
           { fullName: "example/repo", description: null },

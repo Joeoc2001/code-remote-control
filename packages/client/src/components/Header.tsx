@@ -24,7 +24,7 @@ export default function Header({ actions }: HeaderProps) {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
           <div>
             <h1 className="text-xl font-semibold text-slate-100">Code Remote Control</h1>
-            <p className="text-xs text-slate-400 mt-0.5">Manage Claude Code containers on your host</p>
+            <p className="text-xs text-slate-400 mt-0.5">Manage coding agent containers on your host</p>
           </div>
           <nav className="flex shrink-0 rounded-lg border border-slate-700 overflow-hidden">
             {NAV_SEGMENTS.map(({ label, to, isActive }) => {

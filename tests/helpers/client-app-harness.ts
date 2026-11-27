@@ -51,7 +51,7 @@ const apiStubs: Record<string, unknown> = {
   "/api/tasks": [],
   "/api/quick-prompts": [],
   "/api/tasks/task-1": stubTask,
-  "/api/configs": { configurations: [{ name: "default" }] },
+  "/api/configs": { configurations: [{ name: "default", agent: "claude" }] },
   "/api/build-info": { buildId: "0000000" },
   "/api/root-domain": { rootDomain: "example.test" },
   "/api/github/repos": { repos: [] },

@@ -3,7 +3,7 @@ const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSy
 const os = require("node:os");
 const path = require("node:path");
 
-const HOOK_SCRIPT = path.join(__dirname, "..", "..", "claude", "hooks", "git-hygiene.js");
+const HOOK_SCRIPT = path.join(__dirname, "..", "..", "agent-hooks", "hooks", "git-hygiene.js");
 
 const NO_OUTPUT_STUB = "#!/bin/bash\nexit 0\n";
 
@@ -66,9 +66,9 @@ function statusPathFor(root) {
   return path.join(root, "crc-instance-status.json");
 }
 
-function runHook({ root, bin, workspace, payload, env = {} }) {
+function runHook({ root, bin, workspace, payload, env = {}, args = [] }) {
   const statusPath = statusPathFor(root);
-  const result = execFileSync("node", [HOOK_SCRIPT], {
+  const result = execFileSync("node", [HOOK_SCRIPT, ...args], {
     input: JSON.stringify(payload),
     encoding: "utf-8",
     env: {

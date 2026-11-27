@@ -1,0 +1,8 @@
+{
+  "name": "@crc/agent-hooks",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "for f in hooks/*.js; do node --check \"$f\" || exit 1; done"
+  }
+}

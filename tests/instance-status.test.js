@@ -4,9 +4,9 @@ const { execFileSync } = require("node:child_process");
 const { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { ACTIVITY_REFRESH_MS, INSTANCE_STATES, instanceStatusPath, writeInstanceStatus } = require("../claude/hooks/instance-status.js");
+const { ACTIVITY_REFRESH_MS, INSTANCE_STATES, instanceStatusPath, writeInstanceStatus } = require("../agent-hooks/hooks/instance-status.js");
 
-const HOOK_SCRIPT = path.join(__dirname, "..", "claude", "hooks", "instance-status.js");
+const HOOK_SCRIPT = path.join(__dirname, "..", "agent-hooks", "hooks", "instance-status.js");
 
 describe("instance-status hook", () => {
   let root;
@@ -206,7 +206,7 @@ describe("instance status states", () => {
   });
 
   test("the session script treats only the finished state as a finished task", () => {
-    const script = readRepoFile("docker", "start-claude-session.sh");
+    const script = readRepoFile("docker", "start-agent-session.sh");
 
     assert.match(script, /grep -q '"state"\[\[:space:\]\]\*:\[\[:space:\]\]\*"finished"'/);
   });

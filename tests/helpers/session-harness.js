@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 
-const START_SESSION_SCRIPT = path.join(__dirname, "..", "..", "docker", "start-claude-session.sh");
+const START_SESSION_SCRIPT = path.join(__dirname, "..", "..", "docker", "start-agent-session.sh");
 
 const RECORD_ARGV = `record_argv() {
   local file="$1"
@@ -23,6 +23,8 @@ record_argv "$CRC_TEST_DIR/tmux-argv" "$@"
 shift 4
 exec "$@"
 `;
+
+const HOOKS_DIR = path.join(__dirname, "..", "..", "agent-hooks", "hooks");
 
 const CLAUDE_STUB = `#!/bin/bash
 ${RECORD_ARGV}
@@ -46,11 +48,13 @@ function prepare({
   initialPrompt,
   instanceStatus,
   claudeExitStatus,
+  agent = "claude",
+  lastConversations,
 }) {
   const root = mkdtempSync(path.join(os.tmpdir(), "crc-session-test-"));
   const bin = path.join(root, "bin");
   mkdirSync(bin);
-  writeStub(bin, "claude", CLAUDE_STUB);
+  writeStub(bin, agent === "antigravity" ? "agy" : "claude", CLAUDE_STUB);
 
   const transcriptDir = path.join(root, "projects", "-workspace");
   if (createTranscriptDir) {
@@ -68,14 +72,22 @@ function prepare({
     writeFileSync(instanceStatusPath, typeof instanceStatus === "string" ? instanceStatus : `${JSON.stringify(instanceStatus)}\n`);
   }
 
+  const lastConversationsPath = path.join(root, "last_conversations.json");
+  if (lastConversations !== undefined) {
+    writeFileSync(lastConversationsPath, `${JSON.stringify(lastConversations, null, 2)}\n`);
+  }
+
   const env = {
     PATH: `${bin}:${process.env.PATH}`,
     HOME: root,
     CRC_TEST_DIR: root,
     CRC_TRANSCRIPT_DIR: transcriptDir,
+    CRC_ANTIGRAVITY_LAST_CONVERSATIONS_PATH: lastConversationsPath,
+    CRC_HOOKS_DIR: HOOKS_DIR,
     CRC_INSTANCE_STATUS_PATH: instanceStatusPath,
     CRC_RUN_DIR: root,
   };
+  if (agent !== null) env.CRC_AGENT = agent;
   if (initialPrompt !== undefined) env.CRC_INITIAL_PROMPT = initialPrompt;
   if (claudeExitStatus !== undefined) env.CRC_TEST_CLAUDE_EXIT_STATUS = String(claudeExitStatus);
 
@@ -101,6 +113,7 @@ function collect(root) {
     claudeResumePromptEnv: read("claude-resume-prompt-env", (file) => readFileSync(file, "utf-8")),
     claudeInitialPromptEnv: read("claude-initial-prompt-env", (file) => readFileSync(file, "utf-8")),
     sessionStartedAt: read("crc-session-started-at", (file) => readFileSync(file, "utf-8")),
+    instanceStatus: read("crc-instance-status.json", (file) => JSON.parse(readFileSync(file, "utf-8"))),
   };
 }
 

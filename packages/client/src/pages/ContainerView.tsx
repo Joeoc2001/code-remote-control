@@ -1,6 +1,6 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect, useMemo } from "react";
-import type { ManagedContainer, ContainerCodeStatus } from "../types";
+import { AGENT_DISPLAY_NAMES, type ManagedContainer, type ContainerCodeStatus } from "../types";
 import { fetchIframeDomain, fetchContainerCodeStatus, fetchContainerInstanceStatus, deleteContainer } from "../api";
 import usePolledContainerData from "../hooks/usePolledContainerData";
 import InstanceStatusBadge from "../components/InstanceStatusBadge";
@@ -185,6 +185,7 @@ export default function ContainerView() {
               <>
                 <div className="max-w-7xl mx-auto px-4 pb-2 text-sm flex flex-wrap gap-x-6 gap-y-1">
                   <span><span className="text-slate-400">Config:</span> {container.configName || "-"}</span>
+                  <span><span className="text-slate-400">Agent:</span> {AGENT_DISPLAY_NAMES[container.agent]}</span>
                   <span><span className="text-slate-400">Repo:</span> {codeStatus ? (codeStatus.orgName && codeStatus.repoName ? `${codeStatus.orgName}/${codeStatus.repoName}` : codeStatus.repoName || "-") : "-"}</span>
                   <span><span className="text-slate-400">Branch:</span> {codeStatus?.branch || "-"}</span>
                   <span><span className="text-slate-400">Commit:</span> <span className="font-mono text-xs">{codeStatus?.commitSha || "-"}</span></span>

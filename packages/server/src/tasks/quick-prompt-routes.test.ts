@@ -16,8 +16,8 @@ const CONFIG_FILE: ResolvedConfigFile = {
   root_domain: "example.com",
   git: { email: "bot@example.com", username: "bot" },
   configurations: [
-    { name: "default", oauth: { accessToken: "token" } },
-    { name: "big", oauth: { accessToken: "token" } },
+    { name: "default", agent: "claude", oauth: { accessToken: "token" } },
+    { name: "big", agent: "claude", oauth: { accessToken: "token" } },
   ],
 };
 

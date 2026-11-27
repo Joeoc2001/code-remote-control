@@ -1,13 +1,15 @@
 # code-remote-control
 
-A web app for managing Docker containers that each run Claude Code inside a mobile-friendly web terminal.
+A web app for managing Docker containers that each run a coding agent — Claude Code or the Google Antigravity CLI (`agy`) — inside a mobile-friendly web terminal.
 
 ## Prerequisites
 
 - Docker
 - GitHub token for repository access
 - A Claude OAuth token per configuration (run `claude setup-token`, or copy the
-  `claudeAiOauth` block from a logged-in `~/.claude/.credentials.json`)
+  `claudeAiOauth` block from a logged-in `~/.claude/.credentials.json`) for
+  configurations that run Claude Code
+- A Gemini API key per configuration that runs the Antigravity CLI
 
 ## Setup
 
@@ -54,18 +56,36 @@ Create your environment configuration file to specify the modes a container can 
             "claude": {
                 "model": "claude-opus-4-8"
             }
+        },
+        {
+            "name": "gemini-default",
+            "agent": "antigravity",
+            "gemini": {
+                "api_key": "..."
+            },
+            "antigravity": {
+                "model": "..."
+            }
         }
     ]
 }
 ```
 
-The `oauth`, `claude`, `env`, and `docker` blocks can also appear at the top
-level of the file, where they act as defaults for every configuration. A
+The `agent` key and the `oauth`, `claude`, `gemini`, `antigravity`, `env`, and
+`docker` blocks can also appear at the top level of the file, where they act as defaults for every configuration. A
 configuration's own block is merged over the top-level one key by key — e.g. a
 top-level `env` of `{"FOO": "1", "BAR": "2"}` combined with a configuration
 `env` of `{"BAR": "3", "BAZ": "4"}` yields `{"FOO": "1", "BAR": "3", "BAZ":
-"4"}`. Each configuration must end up with an `oauth` block, either its own or
-the top-level default.
+"4"}`.
+
+Each configuration runs one agent harness, chosen by `agent`: `claude` (the
+default, so files written before this key existed keep working) or
+`antigravity`. A `claude` configuration must end up with an `oauth` block and an
+`antigravity` configuration with a `gemini` block, either its own or the
+top-level default; the file is rejected at load time otherwise. The UI shows the
+agent next to each configuration name and on each container. Because a task
+picks a configuration per step, a task can mix agents — for example Antigravity
+for `create_issue` and `review`, Claude Code for everything else.
 
 The `docker` block accepts both `binds` (Docker's short-form `"src:dst[:opts]"`
 strings) and `mounts`, which follows Docker's structured `HostConfig.Mounts` with
@@ -91,7 +111,46 @@ The optional `claude` block is merged into the container's `~/.claude/settings.j
 (the server force-injects the git-hygiene/task/instance-status hooks and an
 autonomous permission mode). Put any Claude Code settings here, e.g. `model`.
 
-The instance-status hooks record what Claude is doing, as one of four states:
+### Antigravity configurations
+
+An `antigravity` configuration authenticates with the Gemini API key in
+`gemini.api_key`, which the server passes to the container as `GEMINI_API_KEY`
+(billed per token through the Gemini API; the Google-account login is not
+supported because the CLI keeps it in the OS keyring, which the container does
+not have). The optional `antigravity` block is merged into the container's
+`~/.gemini/antigravity-cli/settings.json`; the server forces
+`modelProvider: "gemini"` (without it the CLI ignores the API key),
+`toolPermission: "always-proceed"`, `/workspace` in `trustedWorkspaces`, and
+adds `command(*)`, `write_file(*)`, `read_file(*)`, `read_url(*)` and `mcp(*)`
+to `permissions.allow`. It also writes
+`~/.gemini/antigravity-cli/cache/onboarding.json` with onboarding marked
+complete, which skips the CLI's first-run colour-scheme and Terms of Service
+screens — by configuring an `antigravity` configuration you are accepting
+Google's Antigravity CLI terms yourself.
+
+The same hook scripts serve both harnesses, started with `--harness antigravity`
+from `~/.gemini/config/hooks.json`. Antigravity has fewer events than Claude
+Code, so the mapping is:
+
+| Behaviour | Claude Code | Antigravity |
+|---|---|---|
+| Record the task description, mark working | `UserPromptSubmit` | `PreInvocation` (before every model call) |
+| Mark waiting on a question | `PreToolUse` on `AskUserQuestion` | `PreToolUse` on `ask_question` / `ask_permission` |
+| Mark waiting on a permission prompt | `Notification` | none — `always-proceed` means none should appear |
+| Mark working after a tool, activity heartbeat | `PostToolUse` | `PostToolUse` |
+| Git hygiene and CI watch at the end of a turn | `Stop`, replying `block` | `Stop`, replying `continue` |
+| Nag once per turn | `stop_hook_active` | `executionNum > 0` |
+| `awaiting-background` | transcript scan, with a task list | `fullyIdle: false`, without a task list |
+| Mark finished when the session goes away | `SessionEnd` | the session launcher, after `agy` exits cleanly |
+
+Known limitations under Antigravity: the status never lists the individual
+background tasks (so the "stop your idle shells" reminder never fires and the
+stall poke falls back to its generic wording); a turn the user cancels is
+recorded as `waiting` rather than nagged about; and Antigravity only reads
+`AGENTS.md` / `GEMINI.md`, so a repository whose only instructions are in
+`CLAUDE.md` gives it none.
+
+The instance-status hooks record what the agent is doing, as one of four states:
 `working`, `waiting`, `awaiting-background`, or `finished`. Submitting a prompt
 marks the instance as working; an AskUserQuestion or permission prompt marks it
 `waiting` until the answer resumes the turn; the Stop hook marks it finished once
@@ -114,7 +173,7 @@ Background shells are different from agents: a shell that never exits (a "wait
 until X" loop, a watcher, a dev server) never notifies, so it would hold the
 container on `awaiting-background` forever. So the first time a turn ends with
 background shells still running, the hook blocks the stop and lists them,
-asking the agent to `TaskStop` any it is no longer waiting on. If the agent ends
+asking the agent to stop any it is no longer waiting on. If the agent ends
 its turn again with the same shells running, the hook accepts that it really is
 waiting on them and records `awaiting-background`.
 
@@ -208,8 +267,8 @@ to stop (hence `stop_grace_period: 30s` above, which is longer than Docker's
 
 When a container restarts — a host reboot, a `docker restart`, or a restart policy
 firing after a crash — the writable layer survives, so `/workspace` and
-`/root/.claude` still hold the previous run's work and conversation. The
-entrypoint hands the session launch to `docker/start-claude-session.sh`, which
+`/root/.claude` (or `/root/.gemini`) still hold the previous run's work and conversation. The
+entrypoint hands the session launch to `docker/start-agent-session.sh`, which
 checks for a Claude Code transcript in `/root/.claude/projects/-workspace` and,
 if one exists, starts the session with `claude --continue` plus a prompt telling
 the agent that the container restarted and to carry on from where it left off.
@@ -222,6 +281,13 @@ previous task had already finished, the session is reopened with a bare
 `claude --continue` instead. The conversation is still there to read in the web
 terminal, but the agent is not prompted, so a host reboot does not wake every
 completed container back up.
+
+An Antigravity container follows the same three paths. `CRC_AGENT` tells the
+launcher which harness to start; it looks for a `/workspace` entry in
+`~/.gemini/antigravity-cli/cache/last_conversations.json` rather than relying on
+`agy --continue`, which silently starts a fresh conversation when there is
+nothing to resume, and seeds the session with
+`agy --dangerously-skip-permissions [--continue] --prompt-interactive "<prompt>"`.
 
 The resume prompt is exported as `CRC_RESUME_PROMPT` so the task-description hook
 can ignore it and keep showing the real task in the UI.
@@ -423,5 +489,5 @@ npm test
 ```
 
 The suite covers the container session/restart logic (including a pass that drives
-real `tmux`, so `tmux` must be installed), the Claude hooks, and the configuration
+real `tmux`, so `tmux` must be installed), the agent hooks for both harnesses, and the configuration
 schema.

@@ -42,7 +42,7 @@ const CONTAINER_NAME = "crc-test-c0ffee";
 const CONFIG_FILE: ResolvedConfigFile = {
   root_domain: "example.com",
   git: { email: "bot@example.com", username: "bot" },
-  configurations: [{ name: "default", oauth: { accessToken: "token" } }],
+  configurations: [{ name: "default", agent: "claude", oauth: { accessToken: "token" } }],
 };
 
 function makeContainer(id: string, name: string, status = "running"): ManagedContainer {
@@ -50,9 +50,10 @@ function makeContainer(id: string, name: string, status = "running"): ManagedCon
     id,
     name,
     configName: "default",
+    agent: "claude",
     repoName: "acme/widgets",
     status,
-    health: { container: "running", claude: "healthy" },
+    health: { container: "running", agent: "healthy" },
     subdomain: name,
     createdAt: RECENT_START,
   };
@@ -754,7 +755,7 @@ describe("scheduler: watching a running agent", () => {
     assert.equal(harness.pokes[0].containerId, CONTAINER_ID);
     assert.match(harness.pokes[0].message, /waiting on background work for over 30 minutes/);
     assert.match(harness.pokes[0].message, /shell "Wait for CI", agent "Review the diff"/);
-    assert.match(harness.pokes[0].message, /TaskStop/);
+    assert.match(harness.pokes[0].message, /Stop any that are hung/);
     assert.equal(task.attempts[0].pokeCount, 1);
     assert.equal(task.attempts[0].lastPokedAt, NOW.toISOString());
     assert.equal(task.phase, "agent_running");

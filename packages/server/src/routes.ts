@@ -421,7 +421,7 @@ router.get("/api/configs", async (_req, res) => {
     const configs = await loadConfigurations();
     const summary: ConfigSummaryFile = {
       root_domain: configs.root_domain,
-      configurations: configs.configurations.map((c) => ({ name: c.name })),
+      configurations: configs.configurations.map((c) => ({ name: c.name, agent: c.agent })),
     };
     res.json(summary);
   } catch (err) {

@@ -1,4 +1,4 @@
-export const CLAUDE_TMUX_SESSION = "crc";
+export const AGENT_TMUX_SESSION = "crc";
 
 export function buildPokeCommands(session: string, message: string): { type: string[]; submit: string[] } {
   if (message.length === 0 || /[\r\n]/.test(message)) {

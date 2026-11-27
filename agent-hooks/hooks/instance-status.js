@@ -1,4 +1,5 @@
 const { readFileSync, renameSync, writeFileSync } = require("node:fs");
+const { harnessFromArgv, optionFromArgv, reply } = require("./harness.js");
 
 const INSTANCE_STATES = ["working", "waiting", "awaiting-background", "finished"];
 const ACTIVITY_REFRESH_MS = 60_000;
@@ -47,5 +48,7 @@ function writeInstanceStatus(state, details = {}) {
 module.exports = { ACTIVITY_REFRESH_MS, INSTANCE_STATES, instanceStatusPath, writeInstanceStatus };
 
 if (require.main === module) {
+  const harness = harnessFromArgv(process.argv);
   writeInstanceStatus(process.argv[2]);
+  process.stdout.write(reply(harness).event(optionFromArgv(process.argv, "--event")));
 }
